@@ -109,6 +109,30 @@ impl InternedTheory {
             &mut self.fresh_counter,
         )
     }
+
+    /// Check a derivation with a pre-interned goal and assumptions.
+    /// Bypasses tree construction entirely — the term never exists as an Expr.
+    pub fn check_h(
+        &mut self,
+        h_goal: HExpr,
+        derivation: &Derivation,
+        h_assumptions: &[HExpr],
+    ) -> Result<()> {
+        check_inner(
+            &mut self.arena,
+            &self.rule_cache,
+            h_goal,
+            derivation,
+            h_assumptions,
+            &mut HashMap::new(),
+            &mut self.fresh_counter,
+        )
+    }
+
+    /// Mutable access to the arena for direct term construction.
+    pub fn arena_mut(&mut self) -> &mut Arena {
+        &mut self.arena
+    }
 }
 
 /// Check a derivation using the interned (hash-consed) checker.

@@ -1,0 +1,86 @@
+;; Torture Test: Exponential Sharing via Doubling
+;;
+;; This theory is designed to stress-test hash-consing performance.
+;; The Rust benchmark (tests/integration/bench.rs) constructs terms
+;; via doubling that are O(k) in the DAG but O(2^k) as a tree.
+;;
+;; At depth 20, a doubled term has ~3 million tree nodes.
+;; At depth 50, it has ~3 * 10^15 tree nodes (impossible to construct).
+;; In the interned arena, depth 50 requires only ~52 unique nodes.
+
+(theory TortureArith
+  (sort Nat)
+
+  (constructor z : Nat)
+  (constructor s : (-> Nat Nat))
+  (constructor add : (-> Nat Nat Nat))
+
+  ;; Equality judgment
+  (judgment (eq ?a ?b) :where a : Nat b : Nat)
+
+  ;; Reflexivity: anything equals itself
+  (rule eq-refl
+    :premises ()
+    :conclusion (eq ?a ?a))
+
+  ;; Symmetry
+  (rule eq-symm
+    :premises ((eq ?a ?b))
+    :conclusion (eq ?b ?a))
+
+  ;; Transitivity (implicit middle term)
+  (rule eq-trans
+    :premises ((eq ?a ?b) (eq ?b ?c))
+    :conclusion (eq ?a ?c)
+    :implicit (?b))
+
+  ;; Congruence for successor
+  (rule cong-s
+    :premises ((eq ?a ?b))
+    :conclusion (eq (s ?a) (s ?b)))
+
+  ;; Congruence for addition
+  (rule cong-add
+    :premises ((eq ?a1 ?a2) (eq ?b1 ?b2))
+    :conclusion (eq (add ?a1 ?b1) (add ?a2 ?b2))))
+
+(check-theory TortureArith)
+
+;; --- Small proofs (verify theory works) ---
+
+(proof zero-eq-zero
+  :theory TortureArith
+  :goal (eq z z)
+  :derivation (eq-refl))
+
+;; add(z, z) = add(z, z) via reflexivity
+(proof add-refl
+  :theory TortureArith
+  :goal (eq (add z z) (add z z))
+  :derivation (eq-refl))
+
+;; Depth 2 doubling: add(add(z,z), add(z,z)) = add(add(z,z), add(z,z))
+(proof double-2
+  :theory TortureArith
+  :goal (eq (add (add z z) (add z z)) (add (add z z) (add z z)))
+  :derivation (eq-refl))
+
+;; Depth 3 doubling
+(proof double-3
+  :theory TortureArith
+  :goal (eq
+    (add (add (add z z) (add z z)) (add (add z z) (add z z)))
+    (add (add (add z z) (add z z)) (add (add z z) (add z z))))
+  :derivation (eq-refl))
+
+;; Congruence: from z=z, derive s(z)=s(z)
+(proof cong-succ-zero
+  :theory TortureArith
+  :goal (eq (s z) (s z))
+  :derivation (cong-s (eq-refl)))
+
+;; Congruence for add: from z=z and z=z, derive add(z,z)=add(z,z)
+(proof cong-add-zero
+  :theory TortureArith
+  :goal (eq (add z z) (add z z))
+  :derivation (cong-add (eq-refl) (eq-refl)))

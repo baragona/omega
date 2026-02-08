@@ -93,3 +93,15 @@ fn implicit_demo_example() {
     assert!(results.iter().any(|r| r.contains("Proof trans-trivial: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof double-cong: VALID")));
 }
+
+#[test]
+fn torture_example() {
+    let results = check_example("examples/torture.omega");
+    assert!(results.iter().any(|r| r.contains("Theory TortureArith: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof zero-eq-zero: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof add-refl: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof double-2: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof double-3: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof cong-succ-zero: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof cong-add-zero: VALID")));
+}
