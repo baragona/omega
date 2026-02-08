@@ -220,6 +220,10 @@ impl Arena {
                 if let Some(&existing) = subst.get(name) {
                     existing == b
                 } else {
+                    // Occurs check: prevent circular bindings like ?n → (s ?n)
+                    if self.meta_vars(b).contains(name) {
+                        return false;
+                    }
                     subst.insert(name.clone(), b);
                     true
                 }
@@ -228,6 +232,9 @@ impl Arena {
                 if let Some(&existing) = subst.get(name) {
                     existing == a
                 } else {
+                    if self.meta_vars(a).contains(name) {
+                        return false;
+                    }
                     subst.insert(name.clone(), a);
                     true
                 }

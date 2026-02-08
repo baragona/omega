@@ -44,9 +44,20 @@ impl InternedTheory {
             let h_conclusion = arena.from_expr(&rule.conclusion);
             let h_premises: Vec<HExpr> =
                 rule.premises.iter().map(|p| arena.from_expr(p)).collect();
+            let h_context_extensions: Vec<(usize, HExpr)> = rule.context_extensions
+                .iter()
+                .map(|(idx, expr)| (*idx, arena.from_expr(expr)))
+                .collect();
             let mut meta_names = arena.meta_vars(h_conclusion);
             for hp in &h_premises {
                 for m in arena.meta_vars(*hp) {
+                    if !meta_names.contains(&m) {
+                        meta_names.push(m);
+                    }
+                }
+            }
+            for (_, hce) in &h_context_extensions {
+                for m in arena.meta_vars(*hce) {
                     if !meta_names.contains(&m) {
                         meta_names.push(m);
                     }
@@ -60,6 +71,7 @@ impl InternedTheory {
                     premises: h_premises,
                     implicit_args: rule.implicit_args.clone(),
                     meta_names,
+                    context_extensions: h_context_extensions,
                 },
             );
         }
@@ -89,9 +101,20 @@ impl InternedTheory {
             .iter()
             .map(|p| self.arena.from_expr(p))
             .collect();
+        let h_context_extensions: Vec<(usize, HExpr)> = rule.context_extensions
+            .iter()
+            .map(|(idx, expr)| (*idx, self.arena.from_expr(expr)))
+            .collect();
         let mut meta_names = self.arena.meta_vars(h_conclusion);
         for hp in &h_premises {
             for m in self.arena.meta_vars(*hp) {
+                if !meta_names.contains(&m) {
+                    meta_names.push(m);
+                }
+            }
+        }
+        for (_, hce) in &h_context_extensions {
+            for m in self.arena.meta_vars(*hce) {
                 if !meta_names.contains(&m) {
                     meta_names.push(m);
                 }
@@ -105,6 +128,7 @@ impl InternedTheory {
                 premises: h_premises,
                 implicit_args: rule.implicit_args.clone(),
                 meta_names,
+                context_extensions: h_context_extensions,
             },
         );
     }
@@ -190,6 +214,8 @@ struct InternedRule {
     implicit_args: Vec<Name>,
     /// Pre-cached meta-variable names (avoids tree conversion during freshening).
     meta_names: Vec<Name>,
+    /// Context extensions: (premise_index, assumption_to_add).
+    context_extensions: Vec<(usize, HExpr)>,
 }
 
 fn freshen_interned_rule(
@@ -204,6 +230,7 @@ fn freshen_interned_rule(
             premises: rule.premises.clone(),
             implicit_args: rule.implicit_args.clone(),
             meta_names: rule.meta_names.clone(),
+            context_extensions: rule.context_extensions.clone(),
         };
     }
 
@@ -229,16 +256,21 @@ fn freshen_interned_rule(
             .map(|a| format!("{}{}", a, suffix))
             .collect(),
         meta_names: rule.meta_names.iter().map(|m| format!("{}{}", m, suffix)).collect(),
+        context_extensions: rule.context_extensions
+            .iter()
+            .map(|(idx, h)| (*idx, arena.apply_meta_subst(*h, &rename)))
+            .collect(),
     }
 }
 
 /// Apply substitution with fixpoint iteration for transitive chains.
+/// Capped at 100 iterations to prevent divergence from cross-proof meta bindings.
 fn apply_fixpoint(arena: &mut Arena, h: HExpr, subst: &HSubst) -> HExpr {
     let mut result = arena.apply_meta_subst(h, subst);
-    loop {
+    for _ in 0..100 {
         let next = arena.apply_meta_subst(result, subst);
         if next == result {
-            break;
+            return result;
         }
         result = next;
     }
@@ -488,6 +520,7 @@ fn check_inner(
                         premise_derivation,
                         assumptions,
                         global_subst,
+                        fresh_counter,
                     ) {
                         if let Some(s) = unify_h(arena, premise_goal, inferred) {
                             for (k, v) in &s {
@@ -499,6 +532,26 @@ fn check_inner(
                     }
                 }
 
+                // Build extended assumptions if this premise has context extensions
+                let ext_assumptions: Vec<HExpr>;
+                let premise_assumptions = {
+                    let extensions: Vec<HExpr> = rule.context_extensions.iter()
+                        .filter(|(idx, _)| *idx == i)
+                        .map(|(_, h)| {
+                            let resolved = arena.apply_meta_subst(*h, &local_subst);
+                            arena.apply_meta_subst(resolved, global_subst)
+                        })
+                        .collect();
+                    if extensions.is_empty() {
+                        assumptions
+                    } else {
+                        ext_assumptions = assumptions.iter().copied()
+                            .chain(extensions)
+                            .collect();
+                        &ext_assumptions
+                    }
+                };
+
                 check_inner(
                     arena,
                     rule_cache,
@@ -508,7 +561,7 @@ fn check_inner(
                     context_mode,
                     premise_goal,
                     premise_derivation,
-                    assumptions,
+                    premise_assumptions,
                     global_subst,
                     fresh_counter,
                     consumed,
@@ -542,6 +595,7 @@ fn infer_conclusion_h(
     derivation: &Derivation,
     assumptions: &[HExpr],
     subst: &HSubst,
+    fresh_counter: &mut usize,
 ) -> Option<HExpr> {
     match derivation {
         Derivation::Assumption => None,
@@ -554,13 +608,15 @@ fn infer_conclusion_h(
             rule_name,
             premises,
         } => {
-            let rule = rule_cache.get(rule_name)?;
+            let orig_rule = rule_cache.get(rule_name)?;
+            // Freshen to avoid meta-variable collisions with the goal's metas
+            let rule = freshen_interned_rule(arena, orig_rule, fresh_counter);
             let mut rule_subst = HSubst::new();
             for (premise_deriv, &premise_pattern) in
                 premises.iter().zip(rule.premises.iter())
             {
                 if let Some(inferred) =
-                    infer_conclusion_h(arena, rule_cache, premise_deriv, assumptions, subst)
+                    infer_conclusion_h(arena, rule_cache, premise_deriv, assumptions, subst, fresh_counter)
                 {
                     if let Ok(s) = arena.match_expr(premise_pattern, inferred) {
                         for (k, v) in s {

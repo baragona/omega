@@ -152,7 +152,9 @@ fn freshen_rule(rule: &crate::judgment::Rule, counter: &mut usize) -> crate::jud
         reflected: rule.reflected,
         provenance: rule.provenance.clone(),
         implicit_args: rule.implicit_args.iter().map(|a| format!("{}{}", a, suffix)).collect(),
-        context_extensions: rule.context_extensions.clone(),
+        context_extensions: rule.context_extensions.iter()
+            .map(|(idx, expr)| (*idx, apply_meta_subst(expr, &rename)))
+            .collect(),
     }
 }
 
@@ -176,6 +178,10 @@ fn unify_inner(a: &Expr, b: &Expr, subst: &mut Substitution) -> bool {
             if let Some(existing) = subst.get(name) {
                 existing == b
             } else {
+                // Occurs check: prevent circular bindings like ?n → (s ?n)
+                if b.meta_vars().contains(name) {
+                    return false;
+                }
                 subst.insert(name.clone(), b.clone());
                 true
             }
@@ -184,6 +190,9 @@ fn unify_inner(a: &Expr, b: &Expr, subst: &mut Substitution) -> bool {
             if let Some(existing) = subst.get(name) {
                 existing == a
             } else {
+                if a.meta_vars().contains(name) {
+                    return false;
+                }
                 subst.insert(name.clone(), a.clone());
                 true
             }
@@ -226,6 +235,7 @@ fn infer_conclusion(
     derivation: &Derivation,
     ctx: &Context,
     subst: &Substitution,
+    fresh_counter: &mut usize,
 ) -> Option<Expr> {
     match derivation {
         Derivation::Assumption => {
@@ -236,11 +246,14 @@ fn infer_conclusion(
             ctx.assumptions.get(*idx).map(|a| apply_meta_subst(a, subst))
         }
         Derivation::RuleApp { rule_name, premises } => {
-            let rule = theory.get_rule(rule_name)?;
+            let rule_orig = theory.get_rule(rule_name)?;
+            // Freshen the rule to avoid meta-variable name collisions
+            // with the goal's metas (which could cause circular bindings).
+            let rule = freshen_rule(rule_orig, fresh_counter);
             // Match the premises recursively to fill in the rule's metas
             let mut rule_subst = Substitution::new();
             for (premise_deriv, premise_pattern) in premises.iter().zip(rule.premises.iter()) {
-                if let Some(inferred) = infer_conclusion(theory, premise_deriv, ctx, subst) {
+                if let Some(inferred) = infer_conclusion(theory, premise_deriv, ctx, subst, fresh_counter) {
                     // Try to match the premise pattern against what we inferred
                     if let Ok(s) = match_expr(premise_pattern, &inferred) {
                         for (k, v) in s {
@@ -423,7 +436,7 @@ fn check_derivation_inner(
                 // conclusion first, then unify it with the goal to solve metas,
                 // and finally verify the derivation against the now-concrete goal.
                 if premise_goal.has_metas() {
-                    if let Some(inferred) = infer_conclusion(theory, premise_derivation, ctx, global_subst) {
+                    if let Some(inferred) = infer_conclusion(theory, premise_derivation, ctx, global_subst, fresh_counter) {
                         // Use unification to solve metas in the premise goal
                         let solved = unify_exprs(&premise_goal, &inferred);
                         if let Some(s) = solved {
@@ -436,11 +449,32 @@ fn check_derivation_inner(
                     }
                 }
 
+                // Build extended context if this premise has context extensions
+                let ext_ctx: Context;
+                let premise_ctx = {
+                    let extensions: Vec<&Expr> = rule.context_extensions.iter()
+                        .filter(|(idx, _)| *idx == i)
+                        .map(|(_, expr)| expr)
+                        .collect();
+                    if extensions.is_empty() {
+                        ctx
+                    } else {
+                        let mut new_assumptions = ctx.assumptions.clone();
+                        for ext in extensions {
+                            let mut resolved = apply_meta_subst(ext, &local_subst);
+                            resolved = apply_meta_subst(&resolved, global_subst);
+                            new_assumptions.push(resolved);
+                        }
+                        ext_ctx = Context::with_assumptions(new_assumptions);
+                        &ext_ctx
+                    }
+                };
+
                 check_derivation_inner(
                     theory,
                     &premise_goal,
                     premise_derivation,
-                    ctx,
+                    premise_ctx,
                     global_subst,
                     fresh_counter,
                     consumed,
