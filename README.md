@@ -22,7 +22,7 @@ Omega's kernel operates on a **hash-consed, arena-allocated** term representatio
 | System | Term Size | Time | Result |
 | :--- | :--- | :--- | :--- |
 | Tree-Based Checker | 2^100,001 nodes | — | OOM (would require >10^30 PB) |
-| **Omega (Interned)** | 2^100,001 nodes | **~24 µs** | Verified |
+| **Omega (Interned)** | 2^100,001 nodes | **~3 µs** | Verified |
 
 > Benchmark: structural verification of a recursively doubled term at depth 100,000. See `examples/torture.omega`.
 
@@ -100,7 +100,7 @@ Prove a metatheorem about a theory's rules via case analysis, then **reflect** i
 | | **Omega** | **Lean 4 / Coq** | **Dedukti / Lambdapi** |
 | :--- | :--- | :--- | :--- |
 | Logic | User-defined, reflective | Fixed (CIC) | User-defined (rewrite rules) |
-| Kernel language | Rust (zero deps) | C++ / OCaml | OCaml |
+| Kernel language | Rust (zero deps) | Lean / OCaml | OCaml |
 | Term representation | Interned DAG (maximal sharing) | Tree-based | Mixed |
 | Equality check | O(1) (pointer comparison) | O(n) | O(n) |
 | Surface syntax | S-expressions | Algol-style | Algol-style |
@@ -129,14 +129,15 @@ cargo run --release -- check examples/torture.omega
 
 | File | Description |
 | :--- | :--- |
-| `prop-logic.omega` | Classical propositional logic |
+| `prop-logic.omega` | Propositional logic |
 | `first-order.omega` | First-order predicate logic |
 | `zfc.omega` | ZFC set theory fragment |
-| `peano.omega` | Peano arithmetic with implicit arguments |
+| `peano.omega` | Peano arithmetic |
 | `stlc.omega` | Simply-typed lambda calculus |
 | `modal-logic.omega` | S5 modal logic |
 | `linear-logic.omega` | Linear logic (tensor, bang, lolli) |
 | `implicit-demo.omega` | Implicit argument inference |
+| `peano-compute.omega` | Peano arithmetic with definitional equality |
 | `reflection-demo.omega` | Proof by reflection |
 | `torture.omega` | Exponential term stress test |
 
@@ -151,7 +152,7 @@ omega-cli              Command-line interface
        │    └─ omega-core
        ├─ omega-syntax      S-expression parser, locally nameless encoding
        │    └─ omega-core
-       └─ omega-core          Trusted kernel (~4800 LOC, zero dependencies)
+       └─ omega-core          Trusted kernel (~5100 LOC, zero dependencies)
 ```
 
 **`omega-core`** is the trusted computing base. It has no external dependencies and implements four operations: `register_theory`, `check_derivation`, `check_metatheorem`, and `reflect`. Everything above it is untrusted elaboration.
@@ -161,7 +162,7 @@ omega-cli              Command-line interface
 - [x] User-defined binding specifications
 - [x] Hash-consed interned kernel
 - [x] Constraint unification and implicit arguments
-- [ ] Definitional equality (delta reduction)
+- [x] Definitional equality (delta reduction)
 
 ## License
 
