@@ -10,12 +10,12 @@ use crate::derivation::{self, Context, Derivation};
 use crate::error::{OmegaError, Result};
 use crate::expr::Name;
 use crate::expr::Expr;
+use crate::interned_check;
 use crate::metatheorem::{self, MetaTheorem};
 use crate::reflection::{self, ReflectionRecord};
 use crate::theory::Theory;
 
 /// The kernel state.
-#[derive(Debug)]
 pub struct Kernel {
     /// Registered theories, keyed by name.
     theories: HashMap<Name, Theory>,
@@ -23,6 +23,10 @@ pub struct Kernel {
     verified_metatheorems: HashMap<Name, MetaTheorem>,
     /// Reflection records for audit trail.
     reflections: Vec<ReflectionRecord>,
+    /// Use the interned (hash-consed) derivation checker for O(1) equality.
+    pub use_interned: bool,
+    /// Cached interned theories for O(1) equality during proof checking.
+    interned_cache: HashMap<Name, interned_check::InternedTheory>,
 }
 
 impl Kernel {
@@ -32,6 +36,8 @@ impl Kernel {
             theories: HashMap::new(),
             verified_metatheorems: HashMap::new(),
             reflections: Vec::new(),
+            use_interned: true,
+            interned_cache: HashMap::new(),
         }
     }
 
@@ -40,13 +46,17 @@ impl Kernel {
         theory.validate()?;
 
         let name = theory.name.clone();
+        if self.use_interned {
+            self.interned_cache
+                .insert(name.clone(), interned_check::InternedTheory::new(&theory));
+        }
         self.theories.insert(name, theory);
         Ok(())
     }
 
     /// Operation 2: Check a derivation against a goal in a theory.
     pub fn check_derivation(
-        &self,
+        &mut self,
         theory_name: &str,
         goal: &Expr,
         deriv: &Derivation,
@@ -57,7 +67,17 @@ impl Kernel {
             .get(theory_name)
             .ok_or_else(|| OmegaError::UnknownTheory(theory_name.to_string()))?;
 
-        derivation::check_derivation(theory, goal, deriv, ctx)
+        if self.use_interned {
+            // Use cached InternedTheory for amortized O(1) rule interning
+            if let Some(cached) = self.interned_cache.get_mut(theory_name) {
+                cached.check(goal, deriv, ctx)
+            } else {
+                // Fallback: create a fresh one (shouldn't happen if registered properly)
+                interned_check::check_derivation_interned(theory, goal, deriv, ctx)
+            }
+        } else {
+            derivation::check_derivation(theory, goal, deriv, ctx)
+        }
     }
 
     /// Operation 3: Verify a metatheorem.
@@ -100,6 +120,11 @@ impl Kernel {
             .get_mut(&mt.theory_name)
             .ok_or_else(|| OmegaError::UnknownTheory(mt.theory_name.clone()))?;
 
+        if self.use_interned {
+            if let Some(cached) = self.interned_cache.get_mut(&mt.theory_name) {
+                cached.add_rule(&rule);
+            }
+        }
         theory.add_rule(rule)?;
         self.reflections.push(record);
 
@@ -344,7 +369,7 @@ mod tests {
 
     #[test]
     fn reject_unregistered_theory() {
-        let kernel = Kernel::new();
+        let mut kernel = Kernel::new();
         let goal = Expr::sym("whatever");
         let deriv = Derivation::Assumption;
         let ctx = Context::new();

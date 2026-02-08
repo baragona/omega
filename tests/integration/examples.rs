@@ -55,6 +55,16 @@ fn zfc_example() {
     assert!(results.iter().any(|r| r.contains("Proof elem-pair-left: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof both-in-pair: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof subset-refl: VALID")));
+    // Von Neumann ordinals
+    assert!(results.iter().any(|r| r.contains("Proof zero-in-one: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof zero-in-five: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof one-in-two: VALID")));
+    // Equality chains (tests freshened metas in nested eq-trans)
+    assert!(results.iter().any(|r| r.contains("Proof eq-chain-2: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof eq-chain-3: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof eq-trans-trivial: VALID")));
+    // Deep conjunction trees
+    assert!(results.iter().any(|r| r.contains("Proof zero-in-ordinals: VALID")));
 }
 
 #[test]

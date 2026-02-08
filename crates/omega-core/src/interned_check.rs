@@ -1,0 +1,552 @@
+/// Interned derivation checker: wraps the proof checking hot path
+/// with hash-consing so that equality is O(1) and substitution
+/// produces maximally shared results.
+///
+/// Performance wins:
+/// - O(1) structural equality via handle comparison (vs O(n) tree walk)
+/// - `has_metas` cached per node (vs O(n) recursive check)
+/// - Substitution with maximal sharing (unchanged subtrees aren't cloned)
+/// - Pre-interned theory rules (no re-interning on each check)
+use std::collections::HashMap;
+
+use crate::derivation::{Context, Derivation};
+use crate::error::{OmegaError, Result};
+use crate::expr::{Expr, Name};
+use crate::intern::{Arena, HExpr};
+use crate::theory::Theory;
+
+type HSubst = HashMap<Name, HExpr>;
+
+/// A cached interned representation of a theory.
+/// Build once, reuse for many proof checks to avoid re-interning overhead.
+pub struct InternedTheory {
+    arena: Arena,
+    rule_cache: HashMap<String, InternedRule>,
+    fresh_counter: usize,
+}
+
+impl InternedTheory {
+    /// Build an interned theory from a regular theory.
+    pub fn new(theory: &Theory) -> Self {
+        let mut arena = Arena::new();
+        let mut rule_cache: HashMap<String, InternedRule> = HashMap::new();
+        for rule in &theory.rules {
+            let h_conclusion = arena.from_expr(&rule.conclusion);
+            let h_premises: Vec<HExpr> =
+                rule.premises.iter().map(|p| arena.from_expr(p)).collect();
+            let mut meta_names = arena.meta_vars(h_conclusion);
+            for hp in &h_premises {
+                for m in arena.meta_vars(*hp) {
+                    if !meta_names.contains(&m) {
+                        meta_names.push(m);
+                    }
+                }
+            }
+            rule_cache.insert(
+                rule.name.clone(),
+                InternedRule {
+                    name: rule.name.clone(),
+                    conclusion: h_conclusion,
+                    premises: h_premises,
+                    implicit_args: rule.implicit_args.clone(),
+                    meta_names,
+                },
+            );
+        }
+        InternedTheory {
+            arena,
+            rule_cache,
+            fresh_counter: 0,
+        }
+    }
+
+    /// Add a new rule (e.g., from reflection) to the cached theory.
+    pub fn add_rule(&mut self, rule: &crate::judgment::Rule) {
+        let h_conclusion = self.arena.from_expr(&rule.conclusion);
+        let h_premises: Vec<HExpr> = rule
+            .premises
+            .iter()
+            .map(|p| self.arena.from_expr(p))
+            .collect();
+        let mut meta_names = self.arena.meta_vars(h_conclusion);
+        for hp in &h_premises {
+            for m in self.arena.meta_vars(*hp) {
+                if !meta_names.contains(&m) {
+                    meta_names.push(m);
+                }
+            }
+        }
+        self.rule_cache.insert(
+            rule.name.clone(),
+            InternedRule {
+                name: rule.name.clone(),
+                conclusion: h_conclusion,
+                premises: h_premises,
+                implicit_args: rule.implicit_args.clone(),
+                meta_names,
+            },
+        );
+    }
+
+    /// Check a derivation using the cached arena and rules.
+    pub fn check(
+        &mut self,
+        goal: &Expr,
+        derivation: &Derivation,
+        ctx: &Context,
+    ) -> Result<()> {
+        let h_goal = self.arena.from_expr(goal);
+        let h_assumptions: Vec<HExpr> =
+            ctx.assumptions.iter().map(|a| self.arena.from_expr(a)).collect();
+
+        check_inner(
+            &mut self.arena,
+            &self.rule_cache,
+            h_goal,
+            derivation,
+            &h_assumptions,
+            &mut HashMap::new(),
+            &mut self.fresh_counter,
+        )
+    }
+}
+
+/// Check a derivation using the interned (hash-consed) checker.
+/// Creates a fresh arena per call — use `InternedTheory` for repeated checks.
+pub fn check_derivation_interned(
+    theory: &Theory,
+    goal: &Expr,
+    derivation: &Derivation,
+    ctx: &Context,
+) -> Result<()> {
+    let mut cached = InternedTheory::new(theory);
+    cached.check(goal, derivation, ctx)
+}
+
+struct InternedRule {
+    name: Name,
+    conclusion: HExpr,
+    premises: Vec<HExpr>,
+    implicit_args: Vec<Name>,
+    /// Pre-cached meta-variable names (avoids tree conversion during freshening).
+    meta_names: Vec<Name>,
+}
+
+fn freshen_interned_rule(
+    arena: &mut Arena,
+    rule: &InternedRule,
+    counter: &mut usize,
+) -> InternedRule {
+    if rule.meta_names.is_empty() {
+        return InternedRule {
+            name: rule.name.clone(),
+            conclusion: rule.conclusion,
+            premises: rule.premises.clone(),
+            implicit_args: rule.implicit_args.clone(),
+            meta_names: rule.meta_names.clone(),
+        };
+    }
+
+    *counter += 1;
+    let suffix = format!("${}", counter);
+
+    let mut rename = HSubst::new();
+    for m in &rule.meta_names {
+        rename.insert(m.clone(), arena.meta(&format!("{}{}", m, suffix)));
+    }
+
+    InternedRule {
+        name: rule.name.clone(),
+        conclusion: arena.apply_meta_subst(rule.conclusion, &rename),
+        premises: rule
+            .premises
+            .iter()
+            .map(|p| arena.apply_meta_subst(*p, &rename))
+            .collect(),
+        implicit_args: rule
+            .implicit_args
+            .iter()
+            .map(|a| format!("{}{}", a, suffix))
+            .collect(),
+        meta_names: rule.meta_names.iter().map(|m| format!("{}{}", m, suffix)).collect(),
+    }
+}
+
+/// Apply substitution with fixpoint iteration for transitive chains.
+fn apply_fixpoint(arena: &mut Arena, h: HExpr, subst: &HSubst) -> HExpr {
+    let mut result = arena.apply_meta_subst(h, subst);
+    loop {
+        let next = arena.apply_meta_subst(result, subst);
+        if next == result {
+            break;
+        }
+        result = next;
+    }
+    result
+}
+
+/// Bidirectional unification on HExprs using native Arena method.
+fn unify_h(arena: &Arena, a: HExpr, b: HExpr) -> Option<HSubst> {
+    let mut subst = HSubst::new();
+    if arena.unify_exprs(a, b, &mut subst) {
+        Some(subst)
+    } else {
+        None
+    }
+}
+
+fn check_inner(
+    arena: &mut Arena,
+    rule_cache: &HashMap<String, InternedRule>,
+    goal: HExpr,
+    derivation: &Derivation,
+    assumptions: &[HExpr],
+    global_subst: &mut HSubst,
+    fresh_counter: &mut usize,
+) -> Result<()> {
+    match derivation {
+        Derivation::Assumption => {
+            let goal_resolved = apply_fixpoint(arena, goal, global_subst);
+
+            for &assumption in assumptions {
+                let assumption_resolved = apply_fixpoint(arena, assumption, global_subst);
+
+                // O(1) equality check!
+                if assumption_resolved == goal_resolved {
+                    return Ok(());
+                }
+
+                if let Ok(sub) = arena.match_expr(assumption_resolved, goal_resolved) {
+                    for (k, v) in sub {
+                        global_subst.insert(k, v);
+                    }
+                    return Ok(());
+                }
+                if let Ok(sub) = arena.match_expr(goal_resolved, assumption_resolved) {
+                    for (k, v) in sub {
+                        global_subst.insert(k, v);
+                    }
+                    return Ok(());
+                }
+            }
+            Err(OmegaError::AssumptionMismatch {
+                goal: arena.to_expr(goal_resolved),
+            })
+        }
+
+        Derivation::AssumptionIdx(idx) => {
+            if *idx >= assumptions.len() {
+                return Err(OmegaError::MalformedDerivation(format!(
+                    "assumption index {} out of bounds ({} assumptions)",
+                    idx,
+                    assumptions.len()
+                )));
+            }
+            let assumption = apply_fixpoint(arena, assumptions[*idx], global_subst);
+            let goal_resolved = apply_fixpoint(arena, goal, global_subst);
+
+            if assumption == goal_resolved {
+                return Ok(());
+            }
+            if let Ok(sub) = arena.match_expr(goal_resolved, assumption) {
+                for (k, v) in sub {
+                    global_subst.insert(k, v);
+                }
+                return Ok(());
+            }
+            if let Ok(sub) = arena.match_expr(assumption, goal_resolved) {
+                for (k, v) in sub {
+                    global_subst.insert(k, v);
+                }
+                return Ok(());
+            }
+            Err(OmegaError::GoalMismatch {
+                expected: arena.to_expr(goal_resolved),
+                got: arena.to_expr(assumption),
+            })
+        }
+
+        Derivation::RuleApp {
+            rule_name,
+            premises,
+        } => {
+            let orig_rule = rule_cache
+                .get(rule_name)
+                .ok_or_else(|| OmegaError::UnknownRule(rule_name.clone()))?;
+
+            if premises.len() != orig_rule.premises.len() {
+                return Err(OmegaError::PremiseCountMismatch {
+                    rule: rule_name.clone(),
+                    expected: orig_rule.premises.len(),
+                    got: premises.len(),
+                });
+            }
+
+            let rule = freshen_interned_rule(arena, orig_rule, fresh_counter);
+            let goal_resolved = apply_fixpoint(arena, goal, global_subst);
+
+            let mut local_subst: HSubst =
+                match arena.match_expr(rule.conclusion, goal_resolved) {
+                    Ok(s) => s,
+                    Err(_cause) => {
+                        if arena.has_metas(goal_resolved) {
+                            arena
+                                .match_expr(goal_resolved, rule.conclusion)
+                                .map_err(|_| OmegaError::PatternMatchFailed {
+                                    rule: rule_name.clone(),
+                                    expected: arena.to_expr(rule.conclusion),
+                                    got: arena.to_expr(goal_resolved),
+                                    cause: crate::pattern::MatchError::Mismatch {
+                                        pattern: arena.to_expr(rule.conclusion),
+                                        expr: arena.to_expr(goal_resolved),
+                                    },
+                                })?
+                        } else {
+                            return Err(OmegaError::PatternMatchFailed {
+                                rule: rule_name.clone(),
+                                expected: arena.to_expr(rule.conclusion),
+                                got: arena.to_expr(goal_resolved),
+                                cause: crate::pattern::MatchError::Mismatch {
+                                    pattern: arena.to_expr(rule.conclusion),
+                                    expr: arena.to_expr(goal_resolved),
+                                },
+                            });
+                        }
+                    }
+                };
+
+            for (i, (premise_derivation, &premise_pattern)) in
+                premises.iter().zip(rule.premises.iter()).enumerate()
+            {
+                let mut premise_goal =
+                    arena.apply_meta_subst(premise_pattern, &local_subst);
+                premise_goal = arena.apply_meta_subst(premise_goal, global_subst);
+
+                // Bidirectional: infer conclusion and unify when metas remain
+                if arena.has_metas(premise_goal) {
+                    if let Some(inferred) = infer_conclusion_h(
+                        arena,
+                        rule_cache,
+                        premise_derivation,
+                        assumptions,
+                        global_subst,
+                    ) {
+                        if let Some(s) = unify_h(arena, premise_goal, inferred) {
+                            for (k, v) in &s {
+                                local_subst.insert(k.clone(), *v);
+                                global_subst.insert(k.clone(), *v);
+                            }
+                            premise_goal = arena.apply_meta_subst(premise_goal, &s);
+                        }
+                    }
+                }
+
+                check_inner(
+                    arena,
+                    rule_cache,
+                    premise_goal,
+                    premise_derivation,
+                    assumptions,
+                    global_subst,
+                    fresh_counter,
+                )
+                .map_err(|e| {
+                    OmegaError::MalformedDerivation(format!(
+                        "in premise {} of rule {}: {}",
+                        i, rule_name, e
+                    ))
+                })?;
+
+                for (k, v) in global_subst.iter() {
+                    if !local_subst.contains_key(k) {
+                        local_subst.insert(k.clone(), *v);
+                    }
+                }
+            }
+
+            for (k, v) in local_subst {
+                global_subst.insert(k, v);
+            }
+
+            Ok(())
+        }
+    }
+}
+
+fn infer_conclusion_h(
+    arena: &mut Arena,
+    rule_cache: &HashMap<String, InternedRule>,
+    derivation: &Derivation,
+    assumptions: &[HExpr],
+    subst: &HSubst,
+) -> Option<HExpr> {
+    match derivation {
+        Derivation::Assumption => None,
+        Derivation::AssumptionIdx(idx) => {
+            assumptions
+                .get(*idx)
+                .map(|&a| arena.apply_meta_subst(a, subst))
+        }
+        Derivation::RuleApp {
+            rule_name,
+            premises,
+        } => {
+            let rule = rule_cache.get(rule_name)?;
+            let mut rule_subst = HSubst::new();
+            for (premise_deriv, &premise_pattern) in
+                premises.iter().zip(rule.premises.iter())
+            {
+                if let Some(inferred) =
+                    infer_conclusion_h(arena, rule_cache, premise_deriv, assumptions, subst)
+                {
+                    if let Ok(s) = arena.match_expr(premise_pattern, inferred) {
+                        for (k, v) in s {
+                            rule_subst.insert(k, v);
+                        }
+                    }
+                }
+            }
+            Some(arena.apply_meta_subst(rule.conclusion, &rule_subst))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::derivation::{check_derivation, Context, Derivation};
+    use crate::expr::Expr;
+    use crate::judgment::{ConstructorDecl, JudgmentForm, Rule, SortDecl};
+    use crate::theory::Theory;
+
+    fn make_prop_logic() -> Theory {
+        let mut theory = Theory::new("PropLogic");
+        theory.sorts.push(SortDecl {
+            name: "Prop".to_string(),
+        });
+        theory.constructors.push(ConstructorDecl {
+            name: "and".to_string(),
+            ty: Expr::app(vec![
+                Expr::sym("->"),
+                Expr::sym("Prop"),
+                Expr::sym("Prop"),
+                Expr::sym("Prop"),
+            ]),
+        });
+        theory.judgments.push(JudgmentForm {
+            name: "proves".to_string(),
+            pattern: Expr::app(vec![Expr::sym("proves"), Expr::meta("P")]),
+            constraints: vec![],
+        });
+        theory.rules.push(Rule {
+            name: "and-intro".to_string(),
+            premises: vec![
+                Expr::app(vec![Expr::sym("proves"), Expr::meta("A")]),
+                Expr::app(vec![Expr::sym("proves"), Expr::meta("B")]),
+            ],
+            conclusion: Expr::app(vec![
+                Expr::sym("proves"),
+                Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
+            ]),
+            reflected: false,
+            provenance: None,
+            implicit_args: vec![],
+            context_extensions: vec![],
+        });
+        theory.rules.push(Rule {
+            name: "and-elim-l".to_string(),
+            premises: vec![Expr::app(vec![
+                Expr::sym("proves"),
+                Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
+            ])],
+            conclusion: Expr::app(vec![Expr::sym("proves"), Expr::meta("A")]),
+            reflected: false,
+            provenance: None,
+            implicit_args: vec![],
+            context_extensions: vec![],
+        });
+        theory.rules.push(Rule {
+            name: "and-elim-r".to_string(),
+            premises: vec![Expr::app(vec![
+                Expr::sym("proves"),
+                Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
+            ])],
+            conclusion: Expr::app(vec![Expr::sym("proves"), Expr::meta("B")]),
+            reflected: false,
+            provenance: None,
+            implicit_args: vec![],
+            context_extensions: vec![],
+        });
+        theory.compute_hash();
+        theory
+    }
+
+    #[test]
+    fn interned_and_intro() {
+        let theory = make_prop_logic();
+        let goal = Expr::app(vec![
+            Expr::sym("proves"),
+            Expr::app(vec![Expr::sym("and"), Expr::free("p"), Expr::free("q")]),
+        ]);
+        let derivation = Derivation::RuleApp {
+            rule_name: "and-intro".to_string(),
+            premises: vec![Derivation::Assumption, Derivation::Assumption],
+        };
+        let ctx = Context::with_assumptions(vec![
+            Expr::app(vec![Expr::sym("proves"), Expr::free("p")]),
+            Expr::app(vec![Expr::sym("proves"), Expr::free("q")]),
+        ]);
+
+        assert!(check_derivation(&theory, &goal, &derivation, &ctx).is_ok());
+        assert!(check_derivation_interned(&theory, &goal, &derivation, &ctx).is_ok());
+    }
+
+    #[test]
+    fn interned_and_comm() {
+        let theory = make_prop_logic();
+        let goal = Expr::app(vec![
+            Expr::sym("proves"),
+            Expr::app(vec![Expr::sym("and"), Expr::free("q"), Expr::free("p")]),
+        ]);
+        let ctx = Context::with_assumptions(vec![Expr::app(vec![
+            Expr::sym("proves"),
+            Expr::app(vec![Expr::sym("and"), Expr::free("p"), Expr::free("q")]),
+        ])]);
+        let derivation = Derivation::RuleApp {
+            rule_name: "and-intro".to_string(),
+            premises: vec![
+                Derivation::RuleApp {
+                    rule_name: "and-elim-r".to_string(),
+                    premises: vec![Derivation::Assumption],
+                },
+                Derivation::RuleApp {
+                    rule_name: "and-elim-l".to_string(),
+                    premises: vec![Derivation::Assumption],
+                },
+            ],
+        };
+
+        assert!(check_derivation(&theory, &goal, &derivation, &ctx).is_ok());
+        assert!(check_derivation_interned(&theory, &goal, &derivation, &ctx).is_ok());
+    }
+
+    #[test]
+    fn interned_reject_invalid() {
+        let theory = make_prop_logic();
+        let goal = Expr::app(vec![
+            Expr::sym("proves"),
+            Expr::app(vec![Expr::sym("and"), Expr::free("p"), Expr::free("q")]),
+        ]);
+        // Wrong number of premises
+        let derivation = Derivation::RuleApp {
+            rule_name: "and-intro".to_string(),
+            premises: vec![Derivation::Assumption],
+        };
+        let ctx = Context::with_assumptions(vec![
+            Expr::app(vec![Expr::sym("proves"), Expr::free("p")]),
+        ]);
+
+        assert!(check_derivation(&theory, &goal, &derivation, &ctx).is_err());
+        assert!(check_derivation_interned(&theory, &goal, &derivation, &ctx).is_err());
+    }
+}

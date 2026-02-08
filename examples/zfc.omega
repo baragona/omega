@@ -1,128 +1,504 @@
-;; ZFC Set Theory (fragment) in Omega
+;; ZFC Set Theory in Omega
 ;;
-;; Defines sets, membership, and the core ZFC axioms as inference rules.
-;; This is a first-order axiomatization — we represent formulas as terms.
+;; A serious formalization of Zermelo-Fraenkel set theory.
+;; Tests: deep proof trees, implicit argument inference (eq-trans chains),
+;; von Neumann ordinal encoding, union/powerset reasoning.
+;;
+;; Von Neumann ordinals:
+;;   0 = ∅
+;;   1 = {0} = {∅}
+;;   2 = {0, 1} = {∅, {∅}}
+;;   3 = {0, 1, 2}
+;;   n+1 = n ∪ {n}
 
 (theory ZFC
   (sort Set)
   (sort Formula)
 
-  ;; Set constructors
-  (constructor empty     : Set)
-  (constructor pair      : (-> Set Set Set))
-  (constructor union     : (-> Set Set))
-  (constructor powerset  : (-> Set Set))
-  (constructor sep       : (-> Set Formula Set))
+  ;; === Set constructors ===
+  (constructor empty     : Set)                        ;; ∅
+  (constructor pair      : (-> Set Set Set))           ;; {a, b}
+  (constructor singleton : (-> Set Set))               ;; {a} = pair(a, a)
+  (constructor union-bin : (-> Set Set Set))           ;; A ∪ B
+  (constructor powerset  : (-> Set Set))               ;; P(A)
+  (constructor succ-set  : (-> Set Set))               ;; S(n) = n ∪ {n}
 
-  ;; Formula constructors
-  (constructor elem      : (-> Set Set Formula))
-  (constructor subset    : (-> Set Set Formula))
-  (constructor eq-set    : (-> Set Set Formula))
+  ;; === Formula constructors ===
+  (constructor elem      : (-> Set Set Formula))       ;; x ∈ A
+  (constructor not-elem  : (-> Set Set Formula))       ;; x ∉ A
+  (constructor subset    : (-> Set Set Formula))       ;; A ⊆ B
+  (constructor eq-set    : (-> Set Set Formula))       ;; A = B
   (constructor and-f     : (-> Formula Formula Formula))
   (constructor or-f      : (-> Formula Formula Formula))
   (constructor imp-f     : (-> Formula Formula Formula))
+  (constructor iff-f     : (-> Formula Formula Formula))
   (constructor not-f     : (-> Formula Formula))
   (constructor true-f    : Formula)
   (constructor false-f   : Formula)
 
-  ;; Judgment: provability
-  (judgment (proves ?P) :where P : Formula)
+  ;; === Judgment ===
+  (judgment (holds ?P) :where P : Formula)
 
-  ;; Logic rules
+  ;; === Propositional logic ===
   (rule truth
     :premises ()
-    :conclusion (proves true-f))
+    :conclusion (holds true-f))
 
   (rule and-intro
-    :premises ((proves ?A) (proves ?B))
-    :conclusion (proves (and-f ?A ?B)))
+    :premises ((holds ?A) (holds ?B))
+    :conclusion (holds (and-f ?A ?B)))
 
   (rule and-elim-l
-    :premises ((proves (and-f ?A ?B)))
-    :conclusion (proves ?A))
+    :premises ((holds (and-f ?A ?B)))
+    :conclusion (holds ?A))
 
   (rule and-elim-r
-    :premises ((proves (and-f ?A ?B)))
-    :conclusion (proves ?B))
+    :premises ((holds (and-f ?A ?B)))
+    :conclusion (holds ?B))
+
+  (rule or-intro-l
+    :premises ((holds ?A))
+    :conclusion (holds (or-f ?A ?B)))
+
+  (rule or-intro-r
+    :premises ((holds ?B))
+    :conclusion (holds (or-f ?A ?B)))
 
   (rule imp-intro
-    :premises ((proves ?B))
-    :conclusion (proves (imp-f ?A ?B)))
+    :premises ((holds ?B))
+    :conclusion (holds (imp-f ?A ?B)))
 
   (rule imp-elim
-    :premises ((proves (imp-f ?A ?B)) (proves ?A))
-    :conclusion (proves ?B))
+    :premises ((holds (imp-f ?A ?B)) (holds ?A))
+    :conclusion (holds ?B))
 
-  ;; Extensionality: sets are equal iff they have the same elements
+  (rule iff-intro
+    :premises ((holds (imp-f ?A ?B)) (holds (imp-f ?B ?A)))
+    :conclusion (holds (iff-f ?A ?B)))
+
+  (rule iff-elim-l
+    :premises ((holds (iff-f ?A ?B)) (holds ?A))
+    :conclusion (holds ?B))
+
+  (rule iff-elim-r
+    :premises ((holds (iff-f ?A ?B)) (holds ?B))
+    :conclusion (holds ?A))
+
+  ;; === Set equality ===
+  ;; Reflexivity
+  (rule eq-refl
+    :premises ()
+    :conclusion (holds (eq-set ?a ?a)))
+
+  ;; Symmetry
+  (rule eq-symm
+    :premises ((holds (eq-set ?a ?b)))
+    :conclusion (holds (eq-set ?b ?a)))
+
+  ;; Transitivity (implicit middle term ?b)
+  (rule eq-trans
+    :premises ((holds (eq-set ?a ?b)) (holds (eq-set ?b ?c)))
+    :conclusion (holds (eq-set ?a ?c))
+    :implicit (?b))
+
+  ;; Substitution: if a = b and x ∈ a, then x ∈ b
+  (rule eq-elem-subst
+    :premises ((holds (eq-set ?a ?b)) (holds (elem ?x ?a)))
+    :conclusion (holds (elem ?x ?b)))
+
+  ;; Congruence for pair
+  (rule eq-pair-cong
+    :premises ((holds (eq-set ?a1 ?a2)) (holds (eq-set ?b1 ?b2)))
+    :conclusion (holds (eq-set (pair ?a1 ?b1) (pair ?a2 ?b2))))
+
+  ;; Congruence for singleton
+  (rule eq-singleton-cong
+    :premises ((holds (eq-set ?a ?b)))
+    :conclusion (holds (eq-set (singleton ?a) (singleton ?b))))
+
+  ;; Congruence for union
+  (rule eq-union-cong
+    :premises ((holds (eq-set ?a1 ?a2)) (holds (eq-set ?b1 ?b2)))
+    :conclusion (holds (eq-set (union-bin ?a1 ?b1) (union-bin ?a2 ?b2))))
+
+  ;; Congruence for succ-set
+  (rule eq-succ-cong
+    :premises ((holds (eq-set ?a ?b)))
+    :conclusion (holds (eq-set (succ-set ?a) (succ-set ?b))))
+
+  ;; === Extensionality ===
+  ;; If A ⊆ B and B ⊆ A then A = B
   (rule extensionality
-    :premises ((proves (imp-f (elem ?z ?A) (elem ?z ?B)))
-               (proves (imp-f (elem ?z ?B) (elem ?z ?A))))
-    :conclusion (proves (eq-set ?A ?B)))
+    :premises ((holds (subset ?A ?B)) (holds (subset ?B ?A)))
+    :conclusion (holds (eq-set ?A ?B)))
 
-  ;; Empty set axiom
+  ;; === Empty set axiom ===
+  ;; Nothing is an element of ∅
   (rule empty-axiom
     :premises ()
-    :conclusion (proves (not-f (elem ?x empty))))
+    :conclusion (holds (not-elem ?x empty)))
 
-  ;; Pair axiom: x ∈ {a, b} ↔ (x = a ∨ x = b)
-  ;; Simplified: we can prove membership in pairs
+  ;; === Pairing axiom ===
+  ;; a ∈ {a, b}
   (rule pair-left
-    :premises ((proves (eq-set ?x ?a)))
-    :conclusion (proves (elem ?x (pair ?a ?b))))
+    :premises ((holds (eq-set ?x ?a)))
+    :conclusion (holds (elem ?x (pair ?a ?b))))
 
+  ;; b ∈ {a, b}
   (rule pair-right
-    :premises ((proves (eq-set ?x ?b)))
-    :conclusion (proves (elem ?x (pair ?a ?b))))
+    :premises ((holds (eq-set ?x ?b)))
+    :conclusion (holds (elem ?x (pair ?a ?b))))
 
-  ;; Set equality is reflexive
-  (rule eq-set-refl
+  ;; === Singleton ===
+  ;; singleton(a) = pair(a, a)
+  (rule singleton-def
     :premises ()
-    :conclusion (proves (eq-set ?a ?a)))
+    :conclusion (holds (eq-set (singleton ?a) (pair ?a ?a))))
 
-  ;; Subset
+  ;; a ∈ {a}
+  (rule singleton-mem
+    :premises ((holds (eq-set ?x ?a)))
+    :conclusion (holds (elem ?x (singleton ?a))))
+
+  ;; === Union axiom ===
+  ;; x ∈ A → x ∈ (A ∪ B)
+  (rule union-left
+    :premises ((holds (elem ?x ?A)))
+    :conclusion (holds (elem ?x (union-bin ?A ?B))))
+
+  ;; x ∈ B → x ∈ (A ∪ B)
+  (rule union-right
+    :premises ((holds (elem ?x ?B)))
+    :conclusion (holds (elem ?x (union-bin ?A ?B))))
+
+  ;; === Successor set ===
+  ;; succ(n) = n ∪ {n}
+  ;; x ∈ n → x ∈ succ(n)
+  (rule succ-from-pred
+    :premises ((holds (elem ?x ?n)))
+    :conclusion (holds (elem ?x (succ-set ?n))))
+
+  ;; n ∈ succ(n)
+  (rule succ-self
+    :premises ((holds (eq-set ?x ?n)))
+    :conclusion (holds (elem ?x (succ-set ?n))))
+
+  ;; === Subset ===
+  ;; Subset introduction: if elem implies elem, then subset
   (rule subset-intro
-    :premises ((proves (imp-f (elem ?x ?A) (elem ?x ?B))))
-    :conclusion (proves (subset ?A ?B))))
+    :premises ((holds (imp-f (elem ?x ?A) (elem ?x ?B))))
+    :conclusion (holds (subset ?A ?B)))
+
+  ;; Subset elimination: if A ⊆ B and x ∈ A, then x ∈ B
+  (rule subset-elim
+    :premises ((holds (subset ?A ?B)) (holds (elem ?x ?A)))
+    :conclusion (holds (elem ?x ?B)))
+
+  ;; === Powerset ===
+  ;; A ⊆ B → A ∈ P(B)
+  (rule powerset-intro
+    :premises ((holds (subset ?A ?B)))
+    :conclusion (holds (elem ?A (powerset ?B))))
+
+  ;; Empty set is a subset of everything
+  (rule empty-subset
+    :premises ()
+    :conclusion (holds (subset empty ?A))))
 
 (check-theory ZFC)
+
+;; =====================================================
+;; BASIC PROOFS
+;; =====================================================
 
 ;; Prove: true
 (proof trivial
   :theory ZFC
-  :goal (proves true-f)
+  :goal (holds true-f)
   :derivation (truth))
 
-;; Prove: a ∈ {a, b}  (left element of pair)
+;; Prove: ∅ = ∅
+(proof empty-eq-self
+  :theory ZFC
+  :goal (holds (eq-set empty empty))
+  :derivation (eq-refl))
+
+;; =====================================================
+;; PAIRING PROOFS
+;; =====================================================
+
+;; Prove: a ∈ {a, b}
 (proof elem-pair-left
   :theory ZFC
-  :goal (proves (elem a (pair a b)))
-  :derivation (pair-left (eq-set-refl)))
+  :goal (holds (elem a (pair a b)))
+  :derivation (pair-left (eq-refl)))
 
-;; Prove: b ∈ {a, b}  (right element of pair)
+;; Prove: b ∈ {a, b}
 (proof elem-pair-right
   :theory ZFC
-  :goal (proves (elem b (pair a b)))
-  :derivation (pair-right (eq-set-refl)))
+  :goal (holds (elem b (pair a b)))
+  :derivation (pair-right (eq-refl)))
 
 ;; Prove: a ∈ {a, b} ∧ b ∈ {a, b}
 (proof both-in-pair
   :theory ZFC
-  :goal (proves (and-f (elem a (pair a b)) (elem b (pair a b))))
+  :goal (holds (and-f (elem a (pair a b)) (elem b (pair a b))))
   :derivation (and-intro
-    (pair-left (eq-set-refl))
-    (pair-right (eq-set-refl))))
+    (pair-left (eq-refl))
+    (pair-right (eq-refl))))
 
-;; Prove: {a, b} = {a, b}  (reflexivity)
+;; Prove: {a, b} = {a, b}
 (proof pair-eq-refl
   :theory ZFC
-  :goal (proves (eq-set (pair a b) (pair a b)))
-  :derivation (eq-set-refl))
+  :goal (holds (eq-set (pair a b) (pair a b)))
+  :derivation (eq-refl))
 
-;; Prove: A ⊆ A (every set is a subset of itself)
-;; This requires: (imp (elem ?x A) (elem ?x A))
-;; Which is just imp-intro with the hypothesis itself
+;; Prove: if a = b then {a, c} = {b, c}
+(proof pair-cong-left
+  :theory ZFC
+  :assumptions ((holds (eq-set a b)))
+  :goal (holds (eq-set (pair a c) (pair b c)))
+  :derivation (eq-pair-cong (assumption) (eq-refl)))
+
+;; =====================================================
+;; SINGLETON PROOFS
+;; =====================================================
+
+;; Prove: a ∈ {a}
+(proof elem-singleton
+  :theory ZFC
+  :goal (holds (elem a (singleton a)))
+  :derivation (singleton-mem (eq-refl)))
+
+;; Prove: {a} = {a, a}
+(proof singleton-is-pair
+  :theory ZFC
+  :goal (holds (eq-set (singleton a) (pair a a)))
+  :derivation (singleton-def))
+
+;; =====================================================
+;; VON NEUMANN ORDINALS
+;; =====================================================
+
+;; Define: 0 = ∅, 1 = succ(0) = {0}, 2 = succ(1) = {0, 1}, 3 = succ(2)
+
+;; Prove: 0 ∈ succ(0)  i.e., ∅ ∈ {∅} i.e., 0 ∈ 1
+(proof zero-in-one
+  :theory ZFC
+  :goal (holds (elem empty (succ-set empty)))
+  :derivation (succ-self (eq-refl)))
+
+;; Prove: 0 ∈ succ(succ(0))  i.e., 0 ∈ 2
+;; 0 ∈ 1 and 1 ⊆ 2, so 0 ∈ 2.  More directly: 0 ∈ 1 → 0 ∈ succ(1)
+(proof zero-in-two
+  :theory ZFC
+  :goal (holds (elem empty (succ-set (succ-set empty))))
+  :derivation (succ-from-pred (succ-self (eq-refl))))
+
+;; Prove: 1 ∈ 2  i.e., succ(0) ∈ succ(succ(0))
+(proof one-in-two
+  :theory ZFC
+  :goal (holds (elem (succ-set empty) (succ-set (succ-set empty))))
+  :derivation (succ-self (eq-refl)))
+
+;; Prove: 0 ∈ 3  (three levels of succ)
+;; 0 ∈ 1, 1 ⊆ 2 ⊆ 3
+(proof zero-in-three
+  :theory ZFC
+  :goal (holds (elem empty (succ-set (succ-set (succ-set empty)))))
+  :derivation (succ-from-pred (succ-from-pred (succ-self (eq-refl)))))
+
+;; Prove: 1 ∈ 3
+(proof one-in-three
+  :theory ZFC
+  :goal (holds (elem (succ-set empty) (succ-set (succ-set (succ-set empty)))))
+  :derivation (succ-from-pred (succ-self (eq-refl))))
+
+;; Prove: 2 ∈ 3
+(proof two-in-three
+  :theory ZFC
+  :goal (holds (elem (succ-set (succ-set empty)) (succ-set (succ-set (succ-set empty)))))
+  :derivation (succ-self (eq-refl)))
+
+;; =====================================================
+;; SUBSET PROOFS
+;; =====================================================
+
+;; Prove: ∅ ⊆ A (empty set is subset of everything)
+(proof empty-subset-any
+  :theory ZFC
+  :goal (holds (subset empty A))
+  :derivation (empty-subset))
+
+;; Prove: A ⊆ A (subset reflexivity, requires assumption)
 (proof subset-refl
   :theory ZFC
-  :assumptions ((proves (imp-f (elem ?x A) (elem ?x A))))
-  :goal (proves (subset A A))
+  :assumptions ((holds (imp-f (elem ?x A) (elem ?x A))))
+  :goal (holds (subset A A))
   :derivation (subset-intro (assumption)))
+
+;; =====================================================
+;; UNION PROOFS
+;; =====================================================
+
+;; Prove: a ∈ (A ∪ B) from a ∈ A
+(proof union-from-left
+  :theory ZFC
+  :assumptions ((holds (elem a A)))
+  :goal (holds (elem a (union-bin A B)))
+  :derivation (union-left (assumption)))
+
+;; Prove: b ∈ (A ∪ B) from b ∈ B
+(proof union-from-right
+  :theory ZFC
+  :assumptions ((holds (elem b B)))
+  :goal (holds (elem b (union-bin A B)))
+  :derivation (union-right (assumption)))
+
+;; =====================================================
+;; POWERSET PROOFS
+;; =====================================================
+
+;; Prove: ∅ ∈ P(A) (empty set is in every powerset)
+(proof empty-in-powerset
+  :theory ZFC
+  :goal (holds (elem empty (powerset A)))
+  :derivation (powerset-intro (empty-subset)))
+
+;; =====================================================
+;; SET EQUALITY CHAINS (stress test for eq-trans unifier)
+;; =====================================================
+
+;; Prove: if a=b and b=c then a=c (eq-trans with implicit middle)
+(proof eq-chain-2
+  :theory ZFC
+  :assumptions ((holds (eq-set a b)) (holds (eq-set b c)))
+  :goal (holds (eq-set a c))
+  :derivation (eq-trans (assumption) (assumption)))
+
+;; Prove: if a=b and b=c and c=d then a=d (two eq-trans steps)
+(proof eq-chain-3
+  :theory ZFC
+  :assumptions ((holds (eq-set a b)) (holds (eq-set b c)) (holds (eq-set c d)))
+  :goal (holds (eq-set a d))
+  :derivation (eq-trans
+    (eq-trans (assumption) (assumption))
+    (assumption)))
+
+;; Prove: if a=b then succ(a) = succ(b) (congruence)
+(proof succ-cong-proof
+  :theory ZFC
+  :assumptions ((holds (eq-set a b)))
+  :goal (holds (eq-set (succ-set a) (succ-set b)))
+  :derivation (eq-succ-cong (assumption)))
+
+;; Prove: if a=b then {a} = {b} (singleton congruence)
+(proof singleton-cong-proof
+  :theory ZFC
+  :assumptions ((holds (eq-set a b)))
+  :goal (holds (eq-set (singleton a) (singleton b)))
+  :derivation (eq-singleton-cong (assumption)))
+
+;; =====================================================
+;; COMBINED DEEP PROOFS
+;; =====================================================
+
+;; Prove: 0 ∈ 1 ∧ 1 ∈ 2  (ordinal membership chain)
+(proof ordinal-chain-and
+  :theory ZFC
+  :goal (holds (and-f
+    (elem empty (succ-set empty))
+    (elem (succ-set empty) (succ-set (succ-set empty)))))
+  :derivation (and-intro
+    (succ-self (eq-refl))
+    (succ-self (eq-refl))))
+
+;; Prove: 0 ∈ 1 ∧ 0 ∈ 2 ∧ 0 ∈ 3  (deep tree, 7 rule applications)
+(proof zero-in-ordinals
+  :theory ZFC
+  :goal (holds (and-f
+    (elem empty (succ-set empty))
+    (and-f
+      (elem empty (succ-set (succ-set empty)))
+      (elem empty (succ-set (succ-set (succ-set empty)))))))
+  :derivation (and-intro
+    (succ-self (eq-refl))
+    (and-intro
+      (succ-from-pred (succ-self (eq-refl)))
+      (succ-from-pred (succ-from-pred (succ-self (eq-refl)))))))
+
+;; Prove: ∅ ∈ P(A) ∧ ∅ ∈ P(B) (powerset + conjunction)
+(proof empty-in-two-powersets
+  :theory ZFC
+  :goal (holds (and-f (elem empty (powerset A)) (elem empty (powerset B))))
+  :derivation (and-intro
+    (powerset-intro (empty-subset))
+    (powerset-intro (empty-subset))))
+
+;; Prove: symmetry of set equality via eq-trans chain
+;; a=b → b=a (derived via eq-symm, but let's also do it as eq-trans(a=b, b=b) — wait, that gives a=b)
+;; Actually: a=a via eq-trans(a=b, b=a) tests that the unifier infers the middle term
+(proof eq-trans-trivial
+  :theory ZFC
+  :assumptions ((holds (eq-set a b)))
+  :goal (holds (eq-set a a))
+  :derivation (eq-trans (assumption) (eq-symm (assumption))))
+
+;; Prove: if a=b and c=d then {a,c} = {b,d}  (pair congruence from assumptions)
+(proof pair-cong-both
+  :theory ZFC
+  :assumptions ((holds (eq-set a b)) (holds (eq-set c d)))
+  :goal (holds (eq-set (pair a c) (pair b d)))
+  :derivation (eq-pair-cong (assumption) (assumption)))
+
+;; Prove: if a=b then union(X,{a}) = union(X,{b})
+(proof union-singleton-cong
+  :theory ZFC
+  :assumptions ((holds (eq-set a b)))
+  :goal (holds (eq-set (union-bin X (singleton a)) (union-bin X (singleton b))))
+  :derivation (eq-union-cong (eq-refl) (eq-singleton-cong (assumption))))
+
+;; Prove: 0 ∈ {0} ∧ 0 ∈ {0,1} ∧ ∅ ∈ P(A) — deep conjunction tree
+(proof deep-conjunction
+  :theory ZFC
+  :goal (holds (and-f
+    (elem empty (singleton empty))
+    (and-f
+      (elem empty (pair empty (succ-set empty)))
+      (elem empty (powerset A)))))
+  :derivation (and-intro
+    (singleton-mem (eq-refl))
+    (and-intro
+      (pair-left (eq-refl))
+      (powerset-intro (empty-subset)))))
+
+;; Prove: elem via subset elimination
+;; If A ⊆ B and x ∈ A then x ∈ B
+(proof subset-transfer
+  :theory ZFC
+  :assumptions ((holds (subset A B)) (holds (elem x A)))
+  :goal (holds (elem x B))
+  :derivation (subset-elim (assumption) (assumption)))
+
+;; Prove: if a=b, then a ∈ S implies b ∈ S (substitution)
+(proof elem-subst-proof
+  :theory ZFC
+  :assumptions ((holds (eq-set a b)) (holds (elem x a)))
+  :goal (holds (elem x b))
+  :derivation (eq-elem-subst (assumption) (assumption)))
+
+;; =====================================================
+;; DEEP ORDINAL PROOF: 0 ∈ 5 (5 levels of nesting)
+;; =====================================================
+
+;; 0 ∈ 5 = 0 ∈ succ(succ(succ(succ(succ(∅)))))
+;; Proof: succ-from-pred^4(succ-self(eq-refl))
+(proof zero-in-five
+  :theory ZFC
+  :goal (holds (elem empty
+    (succ-set (succ-set (succ-set (succ-set (succ-set empty)))))))
+  :derivation (succ-from-pred
+    (succ-from-pred
+      (succ-from-pred
+        (succ-from-pred
+          (succ-self (eq-refl)))))))

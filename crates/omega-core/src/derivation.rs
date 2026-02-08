@@ -58,7 +58,46 @@ pub fn check_derivation(
     derivation: &Derivation,
     ctx: &Context,
 ) -> Result<()> {
-    check_derivation_inner(theory, goal, derivation, ctx, &mut HashMap::new())
+    let mut fresh_counter = 0usize;
+    check_derivation_inner(theory, goal, derivation, ctx, &mut HashMap::new(), &mut fresh_counter)
+}
+
+/// Freshen all meta-variables in a rule by appending a unique suffix.
+/// This prevents collisions when the same rule is used multiple times
+/// (e.g., nested eq-trans calls).
+fn freshen_rule(rule: &crate::judgment::Rule, counter: &mut usize) -> crate::judgment::Rule {
+    *counter += 1;
+    let suffix = format!("${}", counter);
+
+    // Collect all meta-variable names used in the rule
+    let mut metas = rule.conclusion.meta_vars();
+    for p in &rule.premises {
+        for m in p.meta_vars() {
+            if !metas.contains(&m) {
+                metas.push(m);
+            }
+        }
+    }
+
+    if metas.is_empty() {
+        return rule.clone();
+    }
+
+    // Build a renaming substitution
+    let mut rename = HashMap::new();
+    for m in &metas {
+        rename.insert(m.clone(), Expr::Meta(format!("{}{}", m, suffix)));
+    }
+
+    crate::judgment::Rule {
+        name: rule.name.clone(),
+        premises: rule.premises.iter().map(|p| apply_meta_subst(p, &rename)).collect(),
+        conclusion: apply_meta_subst(&rule.conclusion, &rename),
+        reflected: rule.reflected,
+        provenance: rule.provenance.clone(),
+        implicit_args: rule.implicit_args.iter().map(|a| format!("{}{}", a, suffix)).collect(),
+        context_extensions: rule.context_extensions.clone(),
+    }
 }
 
 /// Simple bidirectional unification: try to make `a` and `b` equal by
@@ -165,6 +204,7 @@ fn check_derivation_inner(
     derivation: &Derivation,
     ctx: &Context,
     global_subst: &mut Substitution,
+    fresh_counter: &mut usize,
 ) -> Result<()> {
     match derivation {
         Derivation::Assumption => {
@@ -232,9 +272,13 @@ fn check_derivation_inner(
             premises,
         } => {
             // Look up the rule
-            let rule = theory
+            let rule_orig = theory
                 .get_rule(rule_name)
                 .ok_or_else(|| OmegaError::UnknownRule(rule_name.clone()))?;
+
+            // Freshen the rule's meta-variables to avoid collisions
+            // when the same rule is used multiple times (e.g., nested eq-trans)
+            let rule = freshen_rule(rule_orig, fresh_counter);
 
             // Check premise count
             if premises.len() != rule.premises.len() {
@@ -307,6 +351,7 @@ fn check_derivation_inner(
                     premise_derivation,
                     ctx,
                     global_subst,
+                    fresh_counter,
                 )
                 .map_err(|e| {
                     OmegaError::MalformedDerivation(format!(

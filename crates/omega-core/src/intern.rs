@@ -154,6 +154,109 @@ impl Arena {
         result
     }
 
+    /// Collect meta-variable names from an HExpr (no tree conversion).
+    pub fn meta_vars(&self, h: HExpr) -> Vec<Name> {
+        let mut result = Vec::new();
+        self.meta_vars_inner(h, &mut result);
+        result
+    }
+
+    fn meta_vars_inner(&self, h: HExpr, acc: &mut Vec<Name>) {
+        match self.node(h) {
+            HNode::Meta(n) => {
+                if !acc.contains(n) {
+                    acc.push(n.clone());
+                }
+            }
+            HNode::Free(_) | HNode::Bound(_) | HNode::Sym(_) => {}
+            HNode::App(args) => {
+                let args = args.clone();
+                for a in &args {
+                    self.meta_vars_inner(*a, acc);
+                }
+            }
+            HNode::Binder { ty, body, .. } => {
+                let (ty, body) = (*ty, *body);
+                self.meta_vars_inner(ty, acc);
+                self.meta_vars_inner(body, acc);
+            }
+            HNode::UserBind { params, body, .. } => {
+                let params = params.clone();
+                let body = *body;
+                for p in &params {
+                    self.meta_vars_inner(*p, acc);
+                }
+                self.meta_vars_inner(body, acc);
+            }
+        }
+    }
+
+    /// Bidirectional unification on HExprs (no tree conversion).
+    /// Both sides can have metas; returns a substitution if successful.
+    pub fn unify_exprs(
+        &self,
+        a: HExpr,
+        b: HExpr,
+        subst: &mut HashMap<Name, HExpr>,
+    ) -> bool {
+        if a == b {
+            return true;
+        }
+        match (self.node(a), self.node(b)) {
+            (HNode::Meta(name), _) => {
+                if let Some(&existing) = subst.get(name) {
+                    existing == b
+                } else {
+                    subst.insert(name.clone(), b);
+                    true
+                }
+            }
+            (_, HNode::Meta(name)) => {
+                if let Some(&existing) = subst.get(name) {
+                    existing == a
+                } else {
+                    subst.insert(name.clone(), a);
+                    true
+                }
+            }
+            (HNode::Sym(a_n), HNode::Sym(b_n)) => a_n == b_n,
+            (HNode::Free(a_n), HNode::Free(b_n)) => a_n == b_n,
+            (HNode::Bound(a_i), HNode::Bound(b_i)) => a_i == b_i,
+            (HNode::App(aa), HNode::App(ba)) => {
+                if aa.len() != ba.len() {
+                    return false;
+                }
+                let aa = aa.clone();
+                let ba = ba.clone();
+                aa.iter()
+                    .zip(ba.iter())
+                    .all(|(&x, &y)| self.unify_exprs(x, y, subst))
+            }
+            (
+                HNode::Binder {
+                    kind: k1,
+                    ty: t1,
+                    body: b1,
+                    ..
+                },
+                HNode::Binder {
+                    kind: k2,
+                    ty: t2,
+                    body: b2,
+                    ..
+                },
+            ) => {
+                if k1 != k2 {
+                    return false;
+                }
+                let (t1, b1) = (*t1, *b1);
+                let (t2, b2) = (*t2, *b2);
+                self.unify_exprs(t1, t2, subst) && self.unify_exprs(b1, b2, subst)
+            }
+            _ => false,
+        }
+    }
+
     /// Convert a tree-based Expr into a hash-consed HExpr.
     pub fn from_expr(&mut self, expr: &Expr) -> HExpr {
         match expr {

@@ -11,3 +11,4 @@ pub mod error;
 pub mod intern;
 pub mod binding_spec;
 pub mod unify;
+pub mod interned_check;
