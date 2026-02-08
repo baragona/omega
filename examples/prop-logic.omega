@@ -1,0 +1,66 @@
+;; Propositional Logic in Omega
+;;
+;; Defines a simple propositional logic with conjunction, implication,
+;; and proves several theorems.
+
+(theory PropLogic
+  (sort Prop)
+
+  (constructor true  : Prop)
+  (constructor false : Prop)
+  (constructor and   : (-> Prop Prop Prop))
+  (constructor or    : (-> Prop Prop Prop))
+  (constructor imp   : (-> Prop Prop Prop))
+  (constructor not   : (-> Prop Prop))
+
+  (judgment (proves ?P) :where P : Prop)
+
+  ;; Conjunction rules
+  (rule and-intro
+    :premises ((proves ?A) (proves ?B))
+    :conclusion (proves (and ?A ?B)))
+
+  (rule and-elim-l
+    :premises ((proves (and ?A ?B)))
+    :conclusion (proves ?A))
+
+  (rule and-elim-r
+    :premises ((proves (and ?A ?B)))
+    :conclusion (proves ?B))
+
+  ;; Implication rules
+  (rule imp-intro
+    :premises ((proves ?B))
+    :conclusion (proves (imp ?A ?B)))
+
+  (rule imp-elim
+    :premises ((proves (imp ?A ?B)) (proves ?A))
+    :conclusion (proves ?B))
+
+  ;; Disjunction rules
+  (rule or-intro-l
+    :premises ((proves ?A))
+    :conclusion (proves (or ?A ?B)))
+
+  (rule or-intro-r
+    :premises ((proves ?B))
+    :conclusion (proves (or ?A ?B))))
+
+(check-theory PropLogic)
+
+;; Proof: (and A B) implies (and B A) — explicit derivation tree
+(proof and-comm
+  :theory PropLogic
+  :assumptions ((proves (and p q)))
+  :goal (proves (and q p))
+  :derivation (and-intro
+    (and-elim-r (assumption))
+    (and-elim-l (assumption))))
+
+;; Proof: A implies (A and A) — tactic style
+(proof self-and
+  :theory PropLogic
+  :assumptions ((proves p))
+  :goal (proves (and p p))
+  :tactics
+    (apply and-intro) assumption assumption qed)

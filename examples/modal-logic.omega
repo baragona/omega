@@ -1,0 +1,104 @@
+;; Modal Logic (S5) in Omega
+;;
+;; Defines the modal operators □ (necessarily) and ◇ (possibly)
+;; along with the S5 axioms.
+
+(theory ModalS5
+  (sort Prop)
+
+  ;; Propositional connectives
+  (constructor true  : Prop)
+  (constructor false : Prop)
+  (constructor and   : (-> Prop Prop Prop))
+  (constructor or    : (-> Prop Prop Prop))
+  (constructor imp   : (-> Prop Prop Prop))
+  (constructor not   : (-> Prop Prop))
+
+  ;; Modal operators
+  (constructor box   : (-> Prop Prop))    ;; necessarily
+  (constructor dia   : (-> Prop Prop))    ;; possibly
+
+  ;; Judgment
+  (judgment (proves ?P) :where P : Prop)
+
+  ;; Propositional logic
+  (rule and-intro
+    :premises ((proves ?A) (proves ?B))
+    :conclusion (proves (and ?A ?B)))
+
+  (rule and-elim-l
+    :premises ((proves (and ?A ?B)))
+    :conclusion (proves ?A))
+
+  (rule and-elim-r
+    :premises ((proves (and ?A ?B)))
+    :conclusion (proves ?B))
+
+  (rule imp-intro
+    :premises ((proves ?B))
+    :conclusion (proves (imp ?A ?B)))
+
+  (rule imp-elim
+    :premises ((proves (imp ?A ?B)) (proves ?A))
+    :conclusion (proves ?B))
+
+  ;; Axiom K: □(A → B) → (□A → □B)
+  (rule axiom-K
+    :premises ((proves (box (imp ?A ?B))) (proves (box ?A)))
+    :conclusion (proves (box ?B)))
+
+  ;; Axiom T: □A → A (what is necessary is true)
+  (rule axiom-T
+    :premises ((proves (box ?A)))
+    :conclusion (proves ?A))
+
+  ;; Axiom 5: ◇A → □◇A (what is possible is necessarily possible)
+  (rule axiom-5
+    :premises ((proves (dia ?A)))
+    :conclusion (proves (box (dia ?A))))
+
+  ;; Necessitation: if A is provable, then □A
+  (rule necessitation
+    :premises ((proves ?A))
+    :conclusion (proves (box ?A)))
+
+  ;; Duality: ◇A = ¬□¬A
+  (rule dia-intro
+    :premises ((proves ?A))
+    :conclusion (proves (dia ?A))))
+
+(check-theory ModalS5)
+
+;; Prove: □A ∧ □B → □(A ∧ B)
+;; Strategy: from □A and □B, we need □(A ∧ B)
+;; First prove □(A → (B → A∧B)) by necessitation of imp-intro of and-intro
+;; Then use axiom-K twice
+
+;; Simpler proof: □A → A, □B → B, so A∧B, so □(A∧B)
+(proof box-and
+  :theory ModalS5
+  :assumptions ((proves (box p)) (proves (box q)))
+  :goal (proves (box (and p q)))
+  :derivation (necessitation (and-intro (axiom-T (assumption)) (axiom-T (assumption)))))
+
+;; Prove: □A → □□A (positive introspection — valid in S4/S5)
+;; In S5 with necessitation: □A → A, so prove □A, then necessitate
+(proof box-box
+  :theory ModalS5
+  :assumptions ((proves (box p)))
+  :goal (proves (box (box p)))
+  :derivation (necessitation (assumption)))
+
+;; Prove: A → ◇A (what is actual is possible)
+(proof actual-possible
+  :theory ModalS5
+  :assumptions ((proves p))
+  :goal (proves (dia p))
+  :derivation (dia-intro (assumption)))
+
+;; Prove: □A → ◇A
+(proof necessary-possible
+  :theory ModalS5
+  :assumptions ((proves (box p)))
+  :goal (proves (dia p))
+  :derivation (dia-intro (axiom-T (assumption))))

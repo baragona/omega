@@ -1,0 +1,7 @@
+[package]
+name = "omega-core"
+version = "0.1.0"
+edition = "2021"
+
+# Zero external dependencies — this is the trusted kernel.
+[dependencies]

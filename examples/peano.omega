@@ -1,0 +1,124 @@
+;; Peano Arithmetic in Omega
+;;
+;; Defines natural numbers, addition, multiplication, and proves
+;; basic theorems about arithmetic.
+
+(theory Peano
+  (sort Nat)
+  (sort Prop)
+
+  ;; Natural number constructors
+  (constructor zero : Nat)
+  (constructor succ : (-> Nat Nat))
+
+  ;; Arithmetic operations (as constructors in the logic)
+  (constructor plus  : (-> Nat Nat Nat))
+  (constructor times : (-> Nat Nat Nat))
+
+  ;; Logical connectives
+  (constructor true  : Prop)
+  (constructor and   : (-> Prop Prop Prop))
+  (constructor imp   : (-> Prop Prop Prop))
+  (constructor eq    : (-> Nat Nat Prop))
+  (constructor forall-nat : (-> Prop Prop))
+
+  ;; Judgments
+  (judgment (proves ?P) :where P : Prop)
+
+  ;; Equality rules
+  (rule eq-refl
+    :premises ()
+    :conclusion (proves (eq ?n ?n)))
+
+  (rule eq-symm
+    :premises ((proves (eq ?a ?b)))
+    :conclusion (proves (eq ?b ?a)))
+
+  (rule eq-trans
+    :premises ((proves (eq ?a ?b)) (proves (eq ?b ?c)))
+    :conclusion (proves (eq ?a ?c)))
+
+  ;; Congruence for succ
+  (rule eq-succ
+    :premises ((proves (eq ?a ?b)))
+    :conclusion (proves (eq (succ ?a) (succ ?b))))
+
+  ;; Peano axioms for addition
+  (rule plus-zero
+    :premises ()
+    :conclusion (proves (eq (plus ?n zero) ?n)))
+
+  (rule plus-succ
+    :premises ()
+    :conclusion (proves (eq (plus ?n (succ ?m)) (succ (plus ?n ?m)))))
+
+  ;; Peano axioms for multiplication
+  (rule times-zero
+    :premises ()
+    :conclusion (proves (eq (times ?n zero) zero)))
+
+  (rule times-succ
+    :premises ()
+    :conclusion (proves (eq (times ?n (succ ?m)) (plus (times ?n ?m) ?n))))
+
+  ;; Conjunction
+  (rule and-intro
+    :premises ((proves ?A) (proves ?B))
+    :conclusion (proves (and ?A ?B)))
+
+  (rule and-elim-l
+    :premises ((proves (and ?A ?B)))
+    :conclusion (proves ?A))
+
+  (rule and-elim-r
+    :premises ((proves (and ?A ?B)))
+    :conclusion (proves ?B)))
+
+(check-theory Peano)
+
+;; Prove: 0 + 0 = 0
+(proof zero-plus-zero
+  :theory Peano
+  :goal (proves (eq (plus zero zero) zero))
+  :derivation (plus-zero))
+
+;; Prove: succ(0) + 0 = succ(0)
+(proof succ-zero-plus-zero
+  :theory Peano
+  :goal (proves (eq (plus (succ zero) zero) (succ zero)))
+  :derivation (plus-zero))
+
+;; Prove: 0 + succ(0) = succ(0 + 0)
+(proof zero-plus-one-step
+  :theory Peano
+  :goal (proves (eq (plus zero (succ zero)) (succ (plus zero zero))))
+  :derivation (plus-succ))
+
+;; Prove: 0 + succ(0) = succ(0)  (combining plus-succ and plus-zero)
+(proof zero-plus-one
+  :theory Peano
+  :goal (proves (eq (plus zero (succ zero)) (succ zero)))
+  :derivation (eq-trans
+    (plus-succ)
+    (eq-succ (plus-zero))))
+
+;; Prove: 0 * 0 = 0
+(proof zero-times-zero
+  :theory Peano
+  :goal (proves (eq (times zero zero) zero))
+  :derivation (times-zero))
+
+;; Prove: n = n (for any n) — just reflexivity
+(proof refl-any
+  :theory Peano
+  :goal (proves (eq ?n ?n))
+  :derivation (eq-refl))
+
+;; Prove: if a = b then succ(a) = succ(b) and b = a
+(proof eq-combined
+  :theory Peano
+  :assumptions ((proves (eq a b)))
+  :goal (proves (and (eq (succ a) (succ b)) (eq b a)))
+  :derivation (and-intro
+    (eq-succ (assumption))
+    (eq-symm (assumption))))

@@ -1,0 +1,27 @@
+[workspace]
+members = [
+    "crates/omega-core",
+    "crates/omega-syntax",
+    "crates/omega-elaborate",
+    "crates/omega-driver",
+    ".",
+]
+resolver = "2"
+
+[package]
+name = "omega-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "omega"
+path = "src/main.rs"
+
+[dependencies]
+omega-driver = { path = "crates/omega-driver" }
+clap = { version = "4", features = ["derive"] }
+rustyline = "14"
+
+[dev-dependencies]
+omega-core = { path = "crates/omega-core" }
+omega-syntax = { path = "crates/omega-syntax" }

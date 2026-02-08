@@ -1,0 +1,200 @@
+/// Error types for the Omega kernel.
+use std::fmt;
+
+use crate::expr::{Expr, Name};
+use crate::pattern::MatchError;
+
+/// All errors that can originate from the kernel.
+#[derive(Debug, Clone)]
+pub enum OmegaError {
+    // --- Theory errors ---
+    /// A sort was declared more than once.
+    DuplicateSort(Name),
+    /// A constructor was declared more than once.
+    DuplicateConstructor(Name),
+    /// A rule was declared more than once.
+    DuplicateRule(Name),
+    /// A judgment form was declared more than once.
+    DuplicateJudgment(Name),
+    /// Referenced sort does not exist.
+    UnknownSort(Name),
+    /// Referenced constructor does not exist.
+    UnknownConstructor(Name),
+    /// Referenced rule does not exist.
+    UnknownRule(Name),
+    /// Referenced theory does not exist.
+    UnknownTheory(Name),
+    /// Referenced judgment form does not exist.
+    UnknownJudgment(Name),
+    /// Theory has no rules.
+    EmptyTheory(Name),
+
+    // --- Derivation errors ---
+    /// The derivation tree is malformed.
+    MalformedDerivation(String),
+    /// Pattern matching failed during proof checking.
+    PatternMatchFailed {
+        rule: Name,
+        expected: Expr,
+        got: Expr,
+        cause: MatchError,
+    },
+    /// A rule requires N premises but the derivation provides a different number.
+    PremiseCountMismatch {
+        rule: Name,
+        expected: usize,
+        got: usize,
+    },
+    /// The conclusion of a derivation doesn't match the goal.
+    GoalMismatch { expected: Expr, got: Expr },
+    /// An assumption was used but doesn't match the goal.
+    AssumptionMismatch { goal: Expr },
+    /// Unresolved meta-variables remain after checking.
+    UnresolvedMetas(Vec<Name>),
+
+    // --- Metatheorem errors ---
+    /// Case analysis is not exhaustive.
+    NonExhaustiveCases {
+        missing_rules: Vec<Name>,
+    },
+    /// Inductive call is not on a structural sub-derivation.
+    NonStructuralRecursion {
+        metatheorem: Name,
+        detail: String,
+    },
+    /// Metatheorem proof uses a rule not in the theory.
+    RuleNotInTheory {
+        rule: Name,
+        theory: Name,
+    },
+
+    // --- Reflection errors ---
+    /// Attempted to reflect a metatheorem that hasn't been proven.
+    UnprovenMetatheorem(Name),
+    /// Attempted self-strengthening (using reflected rules in their own proof).
+    SelfStrengthening {
+        reflected_rule: Name,
+        metatheorem: Name,
+    },
+    /// Theory has been modified since the metatheorem was proven.
+    StaleReflection {
+        metatheorem: Name,
+        theory: Name,
+    },
+
+    /// A named declaration was duplicated (generic).
+    DuplicateName { kind: String, name: Name },
+
+    // --- General ---
+    /// Internal error (should never happen in correct code).
+    Internal(String),
+}
+
+impl fmt::Display for OmegaError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            OmegaError::DuplicateSort(n) => write!(f, "duplicate sort: {}", n),
+            OmegaError::DuplicateConstructor(n) => write!(f, "duplicate constructor: {}", n),
+            OmegaError::DuplicateRule(n) => write!(f, "duplicate rule: {}", n),
+            OmegaError::DuplicateJudgment(n) => write!(f, "duplicate judgment form: {}", n),
+            OmegaError::UnknownSort(n) => write!(f, "unknown sort: {}", n),
+            OmegaError::UnknownConstructor(n) => write!(f, "unknown constructor: {}", n),
+            OmegaError::UnknownRule(n) => write!(f, "unknown rule: {}", n),
+            OmegaError::UnknownTheory(n) => write!(f, "unknown theory: {}", n),
+            OmegaError::UnknownJudgment(n) => write!(f, "unknown judgment form: {}", n),
+            OmegaError::EmptyTheory(n) => write!(f, "theory {} has no rules", n),
+            OmegaError::MalformedDerivation(s) => write!(f, "malformed derivation: {}", s),
+            OmegaError::PatternMatchFailed {
+                rule,
+                expected,
+                got,
+                cause,
+            } => {
+                write!(
+                    f,
+                    "pattern match failed for rule {}: expected {}, got {} ({})",
+                    rule, expected, got, cause
+                )
+            }
+            OmegaError::PremiseCountMismatch {
+                rule,
+                expected,
+                got,
+            } => {
+                write!(
+                    f,
+                    "rule {} expects {} premises, but {} were provided",
+                    rule, expected, got
+                )
+            }
+            OmegaError::GoalMismatch { expected, got } => {
+                write!(f, "goal mismatch: expected {}, got {}", expected, got)
+            }
+            OmegaError::AssumptionMismatch { goal } => {
+                write!(f, "no matching assumption for goal {}", goal)
+            }
+            OmegaError::UnresolvedMetas(ms) => {
+                write!(f, "unresolved meta-variables: ")?;
+                for (i, m) in ms.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "?{}", m)?;
+                }
+                Ok(())
+            }
+            OmegaError::NonExhaustiveCases { missing_rules } => {
+                write!(f, "non-exhaustive case analysis, missing: ")?;
+                for (i, r) in missing_rules.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", r)?;
+                }
+                Ok(())
+            }
+            OmegaError::NonStructuralRecursion {
+                metatheorem,
+                detail,
+            } => {
+                write!(
+                    f,
+                    "non-structural recursion in metatheorem {}: {}",
+                    metatheorem, detail
+                )
+            }
+            OmegaError::RuleNotInTheory { rule, theory } => {
+                write!(f, "rule {} is not in theory {}", rule, theory)
+            }
+            OmegaError::UnprovenMetatheorem(n) => write!(f, "unproven metatheorem: {}", n),
+            OmegaError::SelfStrengthening {
+                reflected_rule,
+                metatheorem,
+            } => {
+                write!(
+                    f,
+                    "self-strengthening: reflected rule {} cannot be used in proof of {}",
+                    reflected_rule, metatheorem
+                )
+            }
+            OmegaError::StaleReflection {
+                metatheorem,
+                theory,
+            } => {
+                write!(
+                    f,
+                    "stale reflection: theory {} modified since metatheorem {} was proven",
+                    theory, metatheorem
+                )
+            }
+            OmegaError::DuplicateName { kind, name } => {
+                write!(f, "duplicate {}: {}", kind, name)
+            }
+            OmegaError::Internal(s) => write!(f, "internal error: {}", s),
+        }
+    }
+}
+
+impl std::error::Error for OmegaError {}
+
+pub type Result<T> = std::result::Result<T, OmegaError>;

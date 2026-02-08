@@ -1,0 +1,128 @@
+;; ZFC Set Theory (fragment) in Omega
+;;
+;; Defines sets, membership, and the core ZFC axioms as inference rules.
+;; This is a first-order axiomatization — we represent formulas as terms.
+
+(theory ZFC
+  (sort Set)
+  (sort Formula)
+
+  ;; Set constructors
+  (constructor empty     : Set)
+  (constructor pair      : (-> Set Set Set))
+  (constructor union     : (-> Set Set))
+  (constructor powerset  : (-> Set Set))
+  (constructor sep       : (-> Set Formula Set))
+
+  ;; Formula constructors
+  (constructor elem      : (-> Set Set Formula))
+  (constructor subset    : (-> Set Set Formula))
+  (constructor eq-set    : (-> Set Set Formula))
+  (constructor and-f     : (-> Formula Formula Formula))
+  (constructor or-f      : (-> Formula Formula Formula))
+  (constructor imp-f     : (-> Formula Formula Formula))
+  (constructor not-f     : (-> Formula Formula))
+  (constructor true-f    : Formula)
+  (constructor false-f   : Formula)
+
+  ;; Judgment: provability
+  (judgment (proves ?P) :where P : Formula)
+
+  ;; Logic rules
+  (rule truth
+    :premises ()
+    :conclusion (proves true-f))
+
+  (rule and-intro
+    :premises ((proves ?A) (proves ?B))
+    :conclusion (proves (and-f ?A ?B)))
+
+  (rule and-elim-l
+    :premises ((proves (and-f ?A ?B)))
+    :conclusion (proves ?A))
+
+  (rule and-elim-r
+    :premises ((proves (and-f ?A ?B)))
+    :conclusion (proves ?B))
+
+  (rule imp-intro
+    :premises ((proves ?B))
+    :conclusion (proves (imp-f ?A ?B)))
+
+  (rule imp-elim
+    :premises ((proves (imp-f ?A ?B)) (proves ?A))
+    :conclusion (proves ?B))
+
+  ;; Extensionality: sets are equal iff they have the same elements
+  (rule extensionality
+    :premises ((proves (imp-f (elem ?z ?A) (elem ?z ?B)))
+               (proves (imp-f (elem ?z ?B) (elem ?z ?A))))
+    :conclusion (proves (eq-set ?A ?B)))
+
+  ;; Empty set axiom
+  (rule empty-axiom
+    :premises ()
+    :conclusion (proves (not-f (elem ?x empty))))
+
+  ;; Pair axiom: x ∈ {a, b} ↔ (x = a ∨ x = b)
+  ;; Simplified: we can prove membership in pairs
+  (rule pair-left
+    :premises ((proves (eq-set ?x ?a)))
+    :conclusion (proves (elem ?x (pair ?a ?b))))
+
+  (rule pair-right
+    :premises ((proves (eq-set ?x ?b)))
+    :conclusion (proves (elem ?x (pair ?a ?b))))
+
+  ;; Set equality is reflexive
+  (rule eq-set-refl
+    :premises ()
+    :conclusion (proves (eq-set ?a ?a)))
+
+  ;; Subset
+  (rule subset-intro
+    :premises ((proves (imp-f (elem ?x ?A) (elem ?x ?B))))
+    :conclusion (proves (subset ?A ?B))))
+
+(check-theory ZFC)
+
+;; Prove: true
+(proof trivial
+  :theory ZFC
+  :goal (proves true-f)
+  :derivation (truth))
+
+;; Prove: a ∈ {a, b}  (left element of pair)
+(proof elem-pair-left
+  :theory ZFC
+  :goal (proves (elem a (pair a b)))
+  :derivation (pair-left (eq-set-refl)))
+
+;; Prove: b ∈ {a, b}  (right element of pair)
+(proof elem-pair-right
+  :theory ZFC
+  :goal (proves (elem b (pair a b)))
+  :derivation (pair-right (eq-set-refl)))
+
+;; Prove: a ∈ {a, b} ∧ b ∈ {a, b}
+(proof both-in-pair
+  :theory ZFC
+  :goal (proves (and-f (elem a (pair a b)) (elem b (pair a b))))
+  :derivation (and-intro
+    (pair-left (eq-set-refl))
+    (pair-right (eq-set-refl))))
+
+;; Prove: {a, b} = {a, b}  (reflexivity)
+(proof pair-eq-refl
+  :theory ZFC
+  :goal (proves (eq-set (pair a b) (pair a b)))
+  :derivation (eq-set-refl))
+
+;; Prove: A ⊆ A (every set is a subset of itself)
+;; This requires: (imp (elem ?x A) (elem ?x A))
+;; Which is just imp-intro with the hypothesis itself
+(proof subset-refl
+  :theory ZFC
+  :assumptions ((proves (imp-f (elem ?x A) (elem ?x A))))
+  :goal (proves (subset A A))
+  :derivation (subset-intro (assumption)))

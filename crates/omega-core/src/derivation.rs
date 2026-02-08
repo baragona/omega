@@ -1,0 +1,548 @@
+/// Derivation trees and proof checking.
+///
+/// A derivation tree records the proof structure: each node is a rule application
+/// with sub-derivations for the premises. The kernel walks the tree and verifies
+/// that each step is valid.
+use std::collections::HashMap;
+
+use crate::binding::apply_meta_subst;
+use crate::error::{OmegaError, Result};
+use crate::expr::{Expr, Name};
+use crate::pattern::{match_expr, Substitution};
+use crate::theory::Theory;
+
+/// A derivation tree node.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Derivation {
+    /// Apply a rule with sub-derivations for each premise.
+    RuleApp {
+        rule_name: Name,
+        /// Sub-derivations, one for each premise of the rule.
+        premises: Vec<Derivation>,
+    },
+    /// An assumption: the goal must appear in the current context.
+    Assumption,
+    /// An assumption identified by index in the context.
+    AssumptionIdx(usize),
+}
+
+/// Context for proof checking: a list of assumed judgments.
+#[derive(Debug, Clone)]
+pub struct Context {
+    pub assumptions: Vec<Expr>,
+}
+
+impl Context {
+    pub fn new() -> Self {
+        Context {
+            assumptions: Vec::new(),
+        }
+    }
+
+    pub fn with_assumptions(assumptions: Vec<Expr>) -> Self {
+        Context { assumptions }
+    }
+
+    pub fn push(&mut self, assumption: Expr) {
+        self.assumptions.push(assumption);
+    }
+}
+
+/// Check that a derivation proves the given goal in the given theory.
+///
+/// This is the main verification function. It walks the derivation tree
+/// top-down, checking that each rule application is valid.
+pub fn check_derivation(
+    theory: &Theory,
+    goal: &Expr,
+    derivation: &Derivation,
+    ctx: &Context,
+) -> Result<()> {
+    check_derivation_inner(theory, goal, derivation, ctx, &mut HashMap::new())
+}
+
+/// Simple bidirectional unification: try to make `a` and `b` equal by
+/// solving meta-variables in both sides.
+fn unify_exprs(a: &Expr, b: &Expr) -> Option<Substitution> {
+    let mut subst = Substitution::new();
+    if unify_inner(a, b, &mut subst) {
+        Some(subst)
+    } else {
+        None
+    }
+}
+
+fn unify_inner(a: &Expr, b: &Expr, subst: &mut Substitution) -> bool {
+    if a == b {
+        return true;
+    }
+    match (a, b) {
+        (Expr::Meta(name), _) => {
+            if let Some(existing) = subst.get(name) {
+                existing == b
+            } else {
+                subst.insert(name.clone(), b.clone());
+                true
+            }
+        }
+        (_, Expr::Meta(name)) => {
+            if let Some(existing) = subst.get(name) {
+                existing == a
+            } else {
+                subst.insert(name.clone(), a.clone());
+                true
+            }
+        }
+        (Expr::Sym(a_name), Expr::Sym(b_name)) => a_name == b_name,
+        (Expr::Free(a_name), Expr::Free(b_name)) => a_name == b_name,
+        (Expr::Bound(a_idx), Expr::Bound(b_idx)) => a_idx == b_idx,
+        (Expr::App(args_a), Expr::App(args_b)) => {
+            if args_a.len() != args_b.len() {
+                return false;
+            }
+            args_a
+                .iter()
+                .zip(args_b.iter())
+                .all(|(x, y)| unify_inner(x, y, subst))
+        }
+        (
+            Expr::Binder {
+                kind: k1,
+                ty: t1,
+                body: b1,
+                ..
+            },
+            Expr::Binder {
+                kind: k2,
+                ty: t2,
+                body: b2,
+                ..
+            },
+        ) => k1 == k2 && unify_inner(t1, t2, subst) && unify_inner(b1, b2, subst),
+        _ => false,
+    }
+}
+
+/// Infer what a derivation proves (bottom-up), returning the conclusion.
+/// This is used when we need to determine what a sub-derivation produces
+/// so we can solve unification variables.
+fn infer_conclusion(
+    theory: &Theory,
+    derivation: &Derivation,
+    ctx: &Context,
+    subst: &Substitution,
+) -> Option<Expr> {
+    match derivation {
+        Derivation::Assumption => {
+            // We can't infer from an assumption alone without knowing which one
+            None
+        }
+        Derivation::AssumptionIdx(idx) => {
+            ctx.assumptions.get(*idx).map(|a| apply_meta_subst(a, subst))
+        }
+        Derivation::RuleApp { rule_name, premises } => {
+            let rule = theory.get_rule(rule_name)?;
+            // Match the premises recursively to fill in the rule's metas
+            let mut rule_subst = Substitution::new();
+            for (premise_deriv, premise_pattern) in premises.iter().zip(rule.premises.iter()) {
+                if let Some(inferred) = infer_conclusion(theory, premise_deriv, ctx, subst) {
+                    // Try to match the premise pattern against what we inferred
+                    if let Ok(s) = match_expr(premise_pattern, &inferred) {
+                        for (k, v) in s {
+                            rule_subst.insert(k, v);
+                        }
+                    }
+                }
+            }
+            Some(apply_meta_subst(&rule.conclusion, &rule_subst))
+        }
+    }
+}
+
+fn check_derivation_inner(
+    theory: &Theory,
+    goal: &Expr,
+    derivation: &Derivation,
+    ctx: &Context,
+    global_subst: &mut Substitution,
+) -> Result<()> {
+    match derivation {
+        Derivation::Assumption => {
+            // The goal must match one of the assumptions in the context
+            let goal_resolved = apply_meta_subst(goal, global_subst);
+            for assumption in &ctx.assumptions {
+                let assumption_resolved = apply_meta_subst(assumption, global_subst);
+                if assumption_resolved == goal_resolved {
+                    return Ok(());
+                }
+                // Also try matching (the assumption might have metas)
+                if let Ok(sub) = match_expr(&assumption_resolved, &goal_resolved) {
+                    // Merge into global subst
+                    for (k, v) in sub {
+                        global_subst.insert(k, v);
+                    }
+                    return Ok(());
+                }
+                if let Ok(sub) = match_expr(&goal_resolved, &assumption_resolved) {
+                    for (k, v) in sub {
+                        global_subst.insert(k, v);
+                    }
+                    return Ok(());
+                }
+            }
+            Err(OmegaError::AssumptionMismatch {
+                goal: goal_resolved,
+            })
+        }
+
+        Derivation::AssumptionIdx(idx) => {
+            if *idx >= ctx.assumptions.len() {
+                return Err(OmegaError::MalformedDerivation(format!(
+                    "assumption index {} out of bounds (context has {} assumptions)",
+                    idx,
+                    ctx.assumptions.len()
+                )));
+            }
+            let assumption = apply_meta_subst(&ctx.assumptions[*idx], global_subst);
+            let goal_resolved = apply_meta_subst(goal, global_subst);
+            if assumption == goal_resolved {
+                return Ok(());
+            }
+            // Try matching
+            if let Ok(sub) = match_expr(&goal_resolved, &assumption) {
+                for (k, v) in sub {
+                    global_subst.insert(k, v);
+                }
+                return Ok(());
+            }
+            if let Ok(sub) = match_expr(&assumption, &goal_resolved) {
+                for (k, v) in sub {
+                    global_subst.insert(k, v);
+                }
+                return Ok(());
+            }
+            Err(OmegaError::GoalMismatch {
+                expected: goal_resolved,
+                got: assumption,
+            })
+        }
+
+        Derivation::RuleApp {
+            rule_name,
+            premises,
+        } => {
+            // Look up the rule
+            let rule = theory
+                .get_rule(rule_name)
+                .ok_or_else(|| OmegaError::UnknownRule(rule_name.clone()))?;
+
+            // Check premise count
+            if premises.len() != rule.premises.len() {
+                return Err(OmegaError::PremiseCountMismatch {
+                    rule: rule_name.clone(),
+                    expected: rule.premises.len(),
+                    got: premises.len(),
+                });
+            }
+
+            // Match the rule's conclusion against the goal to determine meta-variable bindings.
+            // Some metas may remain unsolved (e.g., the "middle" term in eq-trans).
+            let goal_resolved = apply_meta_subst(goal, global_subst);
+            let mut local_subst = match match_expr(&rule.conclusion, &goal_resolved) {
+                Ok(s) => s,
+                Err(cause) => {
+                    // If the goal itself has metas, try matching the other direction too
+                    if goal_resolved.has_metas() {
+                        match match_expr(&goal_resolved, &rule.conclusion) {
+                            Ok(s) => s,
+                            Err(_) => {
+                                return Err(OmegaError::PatternMatchFailed {
+                                    rule: rule_name.clone(),
+                                    expected: rule.conclusion.clone(),
+                                    got: goal_resolved,
+                                    cause,
+                                });
+                            }
+                        }
+                    } else {
+                        return Err(OmegaError::PatternMatchFailed {
+                            rule: rule_name.clone(),
+                            expected: rule.conclusion.clone(),
+                            got: goal_resolved,
+                            cause,
+                        });
+                    }
+                }
+            };
+
+            // Now check each premise recursively.
+            // If a premise goal still has unsolved metas, we first try to infer
+            // the conclusion of the sub-derivation and use it to solve those metas.
+            for (i, (premise_derivation, premise_pattern)) in
+                premises.iter().zip(rule.premises.iter()).enumerate()
+            {
+                let mut premise_goal = apply_meta_subst(premise_pattern, &local_subst);
+                premise_goal = apply_meta_subst(&premise_goal, global_subst);
+
+                // If the premise goal has unsolved metas, infer the derivation's
+                // conclusion first, then unify it with the goal to solve metas,
+                // and finally verify the derivation against the now-concrete goal.
+                if premise_goal.has_metas() {
+                    if let Some(inferred) = infer_conclusion(theory, premise_derivation, ctx, global_subst) {
+                        // Use unification to solve metas in the premise goal
+                        let solved = unify_exprs(&premise_goal, &inferred);
+                        if let Some(s) = solved {
+                            for (k, v) in &s {
+                                local_subst.insert(k.clone(), v.clone());
+                                global_subst.insert(k.clone(), v.clone());
+                            }
+                            premise_goal = apply_meta_subst(&premise_goal, &s);
+                        }
+                    }
+                }
+
+                check_derivation_inner(
+                    theory,
+                    &premise_goal,
+                    premise_derivation,
+                    ctx,
+                    global_subst,
+                )
+                .map_err(|e| {
+                    OmegaError::MalformedDerivation(format!(
+                        "in premise {} of rule {}: {}",
+                        i, rule_name, e
+                    ))
+                })?;
+
+                // After checking a premise, pick up any new meta bindings discovered
+                for (k, v) in global_subst.iter() {
+                    if !local_subst.contains_key(k) {
+                        local_subst.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+
+            // Merge local bindings back into global
+            for (k, v) in local_subst {
+                global_subst.insert(k, v);
+            }
+
+            Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::expr::Expr;
+    use crate::judgment::{ConstructorDecl, JudgmentForm, Rule, SortDecl};
+    use crate::theory::Theory;
+
+    fn make_prop_logic() -> Theory {
+        let mut theory = Theory::new("PropLogic");
+
+        theory.sorts.push(SortDecl {
+            name: "Prop".to_string(),
+        });
+
+        theory.constructors.push(ConstructorDecl {
+            name: "true".to_string(),
+            ty: Expr::sym("Prop"),
+        });
+        theory.constructors.push(ConstructorDecl {
+            name: "and".to_string(),
+            ty: Expr::app(vec![
+                Expr::sym("->"),
+                Expr::sym("Prop"),
+                Expr::sym("Prop"),
+                Expr::sym("Prop"),
+            ]),
+        });
+        theory.constructors.push(ConstructorDecl {
+            name: "imp".to_string(),
+            ty: Expr::app(vec![
+                Expr::sym("->"),
+                Expr::sym("Prop"),
+                Expr::sym("Prop"),
+                Expr::sym("Prop"),
+            ]),
+        });
+
+        theory.judgments.push(JudgmentForm {
+            name: "proves".to_string(),
+            pattern: Expr::app(vec![Expr::sym("proves"), Expr::meta("P")]),
+            constraints: vec![("P".to_string(), "Prop".to_string())],
+        });
+
+        theory.rules.push(Rule {
+            name: "and-intro".to_string(),
+            premises: vec![
+                Expr::app(vec![Expr::sym("proves"), Expr::meta("A")]),
+                Expr::app(vec![Expr::sym("proves"), Expr::meta("B")]),
+            ],
+            conclusion: Expr::app(vec![
+                Expr::sym("proves"),
+                Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
+            ]),
+            reflected: false,
+            provenance: None,
+            implicit_args: vec![],
+            context_extensions: vec![],
+        });
+
+        theory.rules.push(Rule {
+            name: "and-elim-l".to_string(),
+            premises: vec![Expr::app(vec![
+                Expr::sym("proves"),
+                Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
+            ])],
+            conclusion: Expr::app(vec![Expr::sym("proves"), Expr::meta("A")]),
+            reflected: false,
+            provenance: None,
+            implicit_args: vec![],
+            context_extensions: vec![],
+        });
+
+        theory.rules.push(Rule {
+            name: "and-elim-r".to_string(),
+            premises: vec![Expr::app(vec![
+                Expr::sym("proves"),
+                Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
+            ])],
+            conclusion: Expr::app(vec![Expr::sym("proves"), Expr::meta("B")]),
+            reflected: false,
+            provenance: None,
+            implicit_args: vec![],
+            context_extensions: vec![],
+        });
+
+        theory.rules.push(Rule {
+            name: "imp-intro".to_string(),
+            premises: vec![
+                // For imp-intro: if assuming A we can prove B, then we prove A -> B.
+                // This rule uses a contextual premise represented as:
+                // we add (proves ?A) to context and must derive (proves ?B)
+                Expr::app(vec![Expr::sym("proves"), Expr::meta("B")]),
+            ],
+            conclusion: Expr::app(vec![
+                Expr::sym("proves"),
+                Expr::app(vec![Expr::sym("imp"), Expr::meta("A"), Expr::meta("B")]),
+            ]),
+            reflected: false,
+            provenance: None,
+            implicit_args: vec![],
+            context_extensions: vec![],
+        });
+
+        theory.rules.push(Rule {
+            name: "imp-elim".to_string(),
+            premises: vec![
+                Expr::app(vec![
+                    Expr::sym("proves"),
+                    Expr::app(vec![Expr::sym("imp"), Expr::meta("A"), Expr::meta("B")]),
+                ]),
+                Expr::app(vec![Expr::sym("proves"), Expr::meta("A")]),
+            ],
+            conclusion: Expr::app(vec![Expr::sym("proves"), Expr::meta("B")]),
+            reflected: false,
+            provenance: None,
+            implicit_args: vec![],
+            context_extensions: vec![],
+        });
+
+        theory.compute_hash();
+        theory
+    }
+
+    #[test]
+    fn check_and_intro_simple() {
+        let theory = make_prop_logic();
+
+        // Prove: (proves (and p q)) from assumptions (proves p) and (proves q)
+        let goal = Expr::app(vec![
+            Expr::sym("proves"),
+            Expr::app(vec![Expr::sym("and"), Expr::free("p"), Expr::free("q")]),
+        ]);
+
+        let derivation = Derivation::RuleApp {
+            rule_name: "and-intro".to_string(),
+            premises: vec![Derivation::Assumption, Derivation::Assumption],
+        };
+
+        let ctx = Context::with_assumptions(vec![
+            Expr::app(vec![Expr::sym("proves"), Expr::free("p")]),
+            Expr::app(vec![Expr::sym("proves"), Expr::free("q")]),
+        ]);
+
+        assert!(check_derivation(&theory, &goal, &derivation, &ctx).is_ok());
+    }
+
+    #[test]
+    fn check_and_comm() {
+        let theory = make_prop_logic();
+
+        // Prove: (proves (and q p)) from assumption (proves (and p q))
+        let goal = Expr::app(vec![
+            Expr::sym("proves"),
+            Expr::app(vec![Expr::sym("and"), Expr::free("q"), Expr::free("p")]),
+        ]);
+
+        let ctx = Context::with_assumptions(vec![Expr::app(vec![
+            Expr::sym("proves"),
+            Expr::app(vec![Expr::sym("and"), Expr::free("p"), Expr::free("q")]),
+        ])]);
+
+        // Derivation: and-intro(and-elim-r(assumption), and-elim-l(assumption))
+        let derivation = Derivation::RuleApp {
+            rule_name: "and-intro".to_string(),
+            premises: vec![
+                Derivation::RuleApp {
+                    rule_name: "and-elim-r".to_string(),
+                    premises: vec![Derivation::Assumption],
+                },
+                Derivation::RuleApp {
+                    rule_name: "and-elim-l".to_string(),
+                    premises: vec![Derivation::Assumption],
+                },
+            ],
+        };
+
+        assert!(check_derivation(&theory, &goal, &derivation, &ctx).is_ok());
+    }
+
+    #[test]
+    fn reject_wrong_rule() {
+        let theory = make_prop_logic();
+
+        // Try to use and-intro with wrong number of premises
+        let goal = Expr::app(vec![
+            Expr::sym("proves"),
+            Expr::app(vec![Expr::sym("and"), Expr::free("p"), Expr::free("q")]),
+        ]);
+
+        let derivation = Derivation::RuleApp {
+            rule_name: "and-intro".to_string(),
+            premises: vec![Derivation::Assumption], // Only 1 premise, need 2
+        };
+
+        let ctx = Context::with_assumptions(vec![
+            Expr::app(vec![Expr::sym("proves"), Expr::free("p")]),
+        ]);
+
+        assert!(check_derivation(&theory, &goal, &derivation, &ctx).is_err());
+    }
+
+    #[test]
+    fn reject_unknown_rule() {
+        let theory = make_prop_logic();
+        let goal = Expr::app(vec![Expr::sym("proves"), Expr::free("p")]);
+        let derivation = Derivation::RuleApp {
+            rule_name: "nonexistent".to_string(),
+            premises: vec![],
+        };
+        let ctx = Context::new();
+        assert!(check_derivation(&theory, &goal, &derivation, &ctx).is_err());
+    }
+}

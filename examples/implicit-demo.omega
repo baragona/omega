@@ -1,0 +1,101 @@
+;; Implicit Arguments Demo
+;;
+;; Demonstrates how Omega handles rules with implicit arguments
+;; that are inferred from context rather than stated explicitly.
+
+(theory ImplicitDemo
+  (sort Tm)
+  (sort Ty)
+
+  ;; Types
+  (constructor Nat : Ty)
+  (constructor Bool : Ty)
+  (constructor Arrow : (-> Ty Ty Ty))
+
+  ;; Terms
+  (constructor zero : Tm)
+  (constructor succ : (-> Tm Tm))
+  (constructor tru  : Tm)
+  (constructor fls  : Tm)
+
+  ;; Typing judgment: (has-type t T) means t has type T
+  (judgment (has-type ?t ?T) :where t : Tm T : Ty)
+
+  ;; Typing rules
+  (rule t-zero
+    :premises ()
+    :conclusion (has-type zero Nat))
+
+  (rule t-succ
+    :premises ((has-type ?n Nat))
+    :conclusion (has-type (succ ?n) Nat))
+
+  (rule t-true
+    :premises ()
+    :conclusion (has-type tru Bool))
+
+  (rule t-false
+    :premises ()
+    :conclusion (has-type fls Bool))
+
+  ;; Equality judgment with implicit type
+  ;; When we write (eq ?a ?b), the type is implicit
+  (judgment (eq ?a ?b) :where a : Tm b : Tm)
+
+  ;; Reflexivity: anything equals itself
+  (rule eq-refl
+    :premises ()
+    :conclusion (eq ?a ?a))
+
+  ;; Symmetry: if a = b then b = a
+  (rule eq-symm
+    :premises ((eq ?a ?b))
+    :conclusion (eq ?b ?a))
+
+  ;; Transitivity: if a = b and b = c then a = c
+  ;; Here ?b is implicit — it appears in premises but determined from context
+  (rule eq-trans
+    :premises ((eq ?a ?b) (eq ?b ?c))
+    :conclusion (eq ?a ?c)
+    :implicit (?b))
+
+  ;; Congruence for succ
+  (rule cong-succ
+    :premises ((eq ?a ?b))
+    :conclusion (eq (succ ?a) (succ ?b))))
+
+(check-theory ImplicitDemo)
+
+;; Prove: zero = zero
+(proof zero-eq-zero
+  :theory ImplicitDemo
+  :goal (eq zero zero)
+  :derivation (eq-refl))
+
+;; Prove: succ(zero) = succ(zero)
+(proof succ-zero-eq
+  :theory ImplicitDemo
+  :goal (eq (succ zero) (succ zero))
+  :derivation (cong-succ (eq-refl)))
+
+;; Prove: symmetry of succ equality
+;; Given succ(zero) = succ(succ(zero)), prove succ(succ(zero)) = succ(zero)
+(proof symm-succ
+  :theory ImplicitDemo
+  :assumptions ((eq (succ zero) (succ (succ zero))))
+  :goal (eq (succ (succ zero)) (succ zero))
+  :derivation (eq-symm (assumption)))
+
+;; Prove: transitivity — zero = zero = zero via eq-trans
+;; The middle term ?b = zero is inferred from the sub-derivations
+(proof trans-trivial
+  :theory ImplicitDemo
+  :goal (eq zero zero)
+  :derivation (eq-trans (eq-refl) (eq-refl)))
+
+;; Prove: congruence chain
+;; succ(succ(zero)) = succ(succ(zero)) by double congruence
+(proof double-cong
+  :theory ImplicitDemo
+  :goal (eq (succ (succ zero)) (succ (succ zero)))
+  :derivation (cong-succ (cong-succ (eq-refl))))

@@ -1,0 +1,65 @@
+;; First-Order Logic (fragment) in Omega
+;;
+;; Defines propositions, terms, and basic FOL rules.
+
+(theory FOL
+  (sort Prop)
+  (sort Term)
+
+  ;; Logical connectives
+  (constructor true  : Prop)
+  (constructor false : Prop)
+  (constructor and   : (-> Prop Prop Prop))
+  (constructor or    : (-> Prop Prop Prop))
+  (constructor imp   : (-> Prop Prop Prop))
+  (constructor not   : (-> Prop Prop))
+
+  ;; Quantifiers (simplified — no real binding here)
+  (constructor forall-prop : (-> Prop Prop))
+  (constructor exists-prop : (-> Prop Prop))
+
+  ;; Predicates and terms
+  (constructor eq    : (-> Term Term Prop))
+  (constructor zero  : Term)
+  (constructor succ  : (-> Term Term))
+
+  ;; Judgment: provability
+  (judgment (proves ?P) :where P : Prop)
+
+  ;; Basic rules
+  (rule true-intro
+    :premises ()
+    :conclusion (proves true))
+
+  (rule and-intro
+    :premises ((proves ?A) (proves ?B))
+    :conclusion (proves (and ?A ?B)))
+
+  (rule and-elim-l
+    :premises ((proves (and ?A ?B)))
+    :conclusion (proves ?A))
+
+  (rule and-elim-r
+    :premises ((proves (and ?A ?B)))
+    :conclusion (proves ?B))
+
+  (rule imp-intro
+    :premises ((proves ?B))
+    :conclusion (proves (imp ?A ?B)))
+
+  (rule imp-elim
+    :premises ((proves (imp ?A ?B)) (proves ?A))
+    :conclusion (proves ?B))
+
+  ;; Equality
+  (rule eq-refl
+    :premises ()
+    :conclusion (proves (eq ?t ?t))))
+
+(check-theory FOL)
+
+;; Prove: true and (0 = 0)
+(proof true-and-refl
+  :theory FOL
+  :goal (proves (and true (eq zero zero)))
+  :derivation (and-intro (true-intro) (eq-refl)))

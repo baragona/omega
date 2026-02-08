@@ -1,0 +1,9 @@
+[package]
+name = "omega-driver"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+omega-core = { path = "../omega-core" }
+omega-syntax = { path = "../omega-syntax" }
+omega-elaborate = { path = "../omega-elaborate" }

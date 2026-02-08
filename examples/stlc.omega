@@ -1,0 +1,41 @@
+;; Simply Typed Lambda Calculus (STLC) in Omega
+;;
+;; Defines types, terms, and a typing judgment for STLC.
+
+(theory STLC
+  (sort Ty)
+  (sort Tm)
+
+  ;; Types
+  (constructor Base : Ty)
+  (constructor Arrow : (-> Ty Ty Ty))
+
+  ;; Terms
+  (constructor var   : (-> Tm))
+  (constructor lam   : (-> Ty Tm Tm))
+  (constructor app   : (-> Tm Tm Tm))
+
+  ;; Typing judgment: (has-type ?e ?T) means term e has type T
+  (judgment (has-type ?e ?T) :where e : Tm T : Ty)
+
+  ;; Typing rules
+  (rule t-var
+    :premises ()
+    :conclusion (has-type (var) ?T))
+
+  (rule t-app
+    :premises ((has-type ?e1 (Arrow ?A ?B)) (has-type ?e2 ?A))
+    :conclusion (has-type (app ?e1 ?e2) ?B))
+
+  (rule t-abs
+    :premises ((has-type ?e ?B))
+    :conclusion (has-type (lam ?A ?e) (Arrow ?A ?B))))
+
+(check-theory STLC)
+
+;; Prove that the identity function (\x:A. x) has type A -> A
+;; Represented as: (lam A (var)) where (var) stands for the bound variable
+(proof identity-typing
+  :theory STLC
+  :goal (has-type (lam ?A (var)) (Arrow ?A ?A))
+  :derivation (t-abs (t-var)))

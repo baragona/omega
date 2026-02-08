@@ -1,0 +1,46 @@
+;; Reflection Demo
+;;
+;; Demonstrates how to prove a metatheorem about a theory,
+;; then reflect it as a new inference rule.
+
+(theory SimpleLogic
+  (sort Prop)
+
+  (constructor and : (-> Prop Prop Prop))
+
+  (judgment (proves ?P) :where P : Prop)
+
+  (rule and-intro
+    :premises ((proves ?A) (proves ?B))
+    :conclusion (proves (and ?A ?B)))
+
+  (rule and-elim-l
+    :premises ((proves (and ?A ?B)))
+    :conclusion (proves ?A))
+
+  (rule and-elim-r
+    :premises ((proves (and ?A ?B)))
+    :conclusion (proves ?B)))
+
+(check-theory SimpleLogic)
+
+;; Prove commutativity of 'and' as a metatheorem:
+;; For any derivation D of (proves (and A B)),
+;; there exists a derivation D' of (proves (and B A)).
+(meta-theorem and-comm-meta
+  :theory SimpleLogic
+  :forall ((D (proves (and ?A ?B))))
+  :exists ((D' (proves (and ?B ?A))))
+  :proof (case-analysis D
+    (case and-intro (D1 D2)
+      (by-rule and-intro D2 D1))))
+
+;; Reflect the metatheorem as a new rule
+(reflect and-comm-meta :as proves/and-comm :theory SimpleLogic)
+
+;; Now use the reflected rule in a proof!
+(proof comm-test
+  :theory SimpleLogic
+  :assumptions ((proves (and p q)))
+  :goal (proves (and q p))
+  :derivation (proves/and-comm (assumption)))
