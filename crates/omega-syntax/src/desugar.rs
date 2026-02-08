@@ -2,7 +2,7 @@
 use omega_core::binding_spec::BindingSpec;
 use omega_core::derivation::Derivation;
 use omega_core::expr::Expr;
-use omega_core::judgment::{ConstructorDecl, JudgmentForm, Rule, SortDecl};
+use omega_core::judgment::{ConstructorDecl, JudgmentForm, RewriteRule, Rule, SortDecl};
 use omega_core::metatheorem::{MetaCase, MetaProof, MetaTheorem};
 use omega_core::theory::Theory;
 
@@ -219,6 +219,23 @@ fn desugar_theory(items: &[Sexp], span: Span) -> Result<Command> {
             "binding-spec" => {
                 let bs = desugar_binding_spec(decl)?;
                 theory.binding_specs.push(bs);
+            }
+            "rewrite" => {
+                // (rewrite name lhs rhs)
+                if decl.len() != 4 {
+                    return Err(DesugarError {
+                        message: "rewrite expects name, lhs, and rhs".to_string(),
+                        span: decl[0].span(),
+                    });
+                }
+                let rw_name = expect_atom(&decl[1])?;
+                let lhs = desugar_expr(&decl[2])?;
+                let rhs = desugar_expr(&decl[3])?;
+                theory.rewrites.push(RewriteRule {
+                    name: rw_name.to_string(),
+                    lhs,
+                    rhs,
+                });
             }
             _ => {
                 return Err(DesugarError {

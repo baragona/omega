@@ -1,0 +1,55 @@
+;;; Peano arithmetic with definitional equality via rewrite rules.
+;;; The kernel normalizes terms before equality checking, so
+;;; (add (s z) (s z)) computes to (s (s z)) and eq-refl suffices.
+
+(theory PeanoCompute
+  (sort Nat)
+  (constructor z : Nat)
+  (constructor s : (-> Nat Nat))
+  (constructor add : (-> Nat Nat Nat))
+  (constructor mul : (-> Nat Nat Nat))
+
+  (judgment (eq ?a ?b) :where a : Nat b : Nat)
+  (rule eq-refl :premises () :conclusion (eq ?a ?a))
+
+  ;; Computation rules (rewrite rules for delta reduction)
+  (rewrite add-z (add z ?n) ?n)
+  (rewrite add-s (add (s ?n) ?m) (s (add ?n ?m)))
+  (rewrite mul-z (mul z ?n) z)
+  (rewrite mul-s (mul (s ?n) ?m) (add ?m (mul ?n ?m))))
+
+;; 0 + 0 = 0
+(proof zero-plus-zero
+  :theory PeanoCompute
+  :goal (eq (add z z) z)
+  :derivation (eq-refl))
+
+;; 1 + 1 = 2 (by computation + reflexivity!)
+(proof one-plus-one
+  :theory PeanoCompute
+  :goal (eq (add (s z) (s z)) (s (s z)))
+  :derivation (eq-refl))
+
+;; 2 + 1 = 3
+(proof two-plus-one
+  :theory PeanoCompute
+  :goal (eq (add (s (s z)) (s z)) (s (s (s z))))
+  :derivation (eq-refl))
+
+;; 2 + 3 = 5
+(proof two-plus-three
+  :theory PeanoCompute
+  :goal (eq (add (s (s z)) (s (s (s z)))) (s (s (s (s (s z))))))
+  :derivation (eq-refl))
+
+;; 2 * 3 = 6
+(proof two-times-three
+  :theory PeanoCompute
+  :goal (eq (mul (s (s z)) (s (s (s z)))) (s (s (s (s (s (s z)))))))
+  :derivation (eq-refl))
+
+;; 3 * 3 = 9
+(proof three-times-three
+  :theory PeanoCompute
+  :goal (eq (mul (s (s (s z))) (s (s (s z)))) (s (s (s (s (s (s (s (s (s z))))))))))
+  :derivation (eq-refl))

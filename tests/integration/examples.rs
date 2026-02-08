@@ -95,6 +95,18 @@ fn implicit_demo_example() {
 }
 
 #[test]
+fn peano_compute_example() {
+    let results = check_example("examples/peano-compute.omega");
+    assert!(results.iter().any(|r| r.contains("Theory PeanoCompute: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof zero-plus-zero: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof one-plus-one: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof two-plus-one: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof two-plus-three: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof two-times-three: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof three-times-three: VALID")));
+}
+
+#[test]
 fn torture_example() {
     let results = check_example("examples/torture.omega");
     assert!(results.iter().any(|r| r.contains("Theory TortureArith: registered OK")));

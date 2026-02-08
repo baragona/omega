@@ -51,6 +51,18 @@ pub struct ConstructorDecl {
     pub ty: Expr,
 }
 
+/// A rewrite rule for definitional equality via delta reduction.
+/// The kernel normalizes terms using these rules before equality checking.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RewriteRule {
+    /// Name of this rewrite rule, e.g. "add-zero"
+    pub name: Name,
+    /// Left-hand side pattern with metas, e.g. `(add z ?n)`
+    pub lhs: Expr,
+    /// Right-hand side replacement, e.g. `?n`
+    pub rhs: Expr,
+}
+
 impl Rule {
     /// Collect all meta-variables mentioned in this rule.
     pub fn meta_vars(&self) -> Vec<Name> {

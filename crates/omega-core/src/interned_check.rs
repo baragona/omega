@@ -17,11 +17,20 @@ use crate::theory::Theory;
 
 type HSubst = HashMap<Name, HExpr>;
 
+/// A pre-interned rewrite rule for normalization.
+struct InternedRewrite {
+    lhs: HExpr,
+    rhs: HExpr,
+}
+
 /// A cached interned representation of a theory.
 /// Build once, reuse for many proof checks to avoid re-interning overhead.
 pub struct InternedTheory {
     arena: Arena,
     rule_cache: HashMap<String, InternedRule>,
+    rewrites: Vec<InternedRewrite>,
+    reduce_cache: HashMap<HExpr, HExpr>,
+    pub reduce_fuel: usize,
     fresh_counter: usize,
 }
 
@@ -53,9 +62,19 @@ impl InternedTheory {
                 },
             );
         }
+        let mut rewrites = Vec::new();
+        for rw in &theory.rewrites {
+            let lhs = arena.from_expr(&rw.lhs);
+            let rhs = arena.from_expr(&rw.rhs);
+            rewrites.push(InternedRewrite { lhs, rhs });
+        }
+
         InternedTheory {
             arena,
             rule_cache,
+            rewrites,
+            reduce_cache: HashMap::new(),
+            reduce_fuel: 10_000,
             fresh_counter: 0,
         }
     }
@@ -98,10 +117,14 @@ impl InternedTheory {
         let h_goal = self.arena.from_expr(goal);
         let h_assumptions: Vec<HExpr> =
             ctx.assumptions.iter().map(|a| self.arena.from_expr(a)).collect();
+        let fuel = self.reduce_fuel;
 
         check_inner(
             &mut self.arena,
             &self.rule_cache,
+            &self.rewrites,
+            &mut self.reduce_cache,
+            fuel,
             h_goal,
             derivation,
             &h_assumptions,
@@ -118,9 +141,14 @@ impl InternedTheory {
         derivation: &Derivation,
         h_assumptions: &[HExpr],
     ) -> Result<()> {
+        let fuel = self.reduce_fuel;
+
         check_inner(
             &mut self.arena,
             &self.rule_cache,
+            &self.rewrites,
+            &mut self.reduce_cache,
+            fuel,
             h_goal,
             derivation,
             h_assumptions,
@@ -219,34 +247,97 @@ fn unify_h(arena: &Arena, a: HExpr, b: HExpr) -> Option<HSubst> {
     }
 }
 
+/// Normalize an HExpr by exhaustively applying rewrite rules (innermost strategy).
+/// Memoized via reduce_cache. Returns early if fuel is exhausted.
+fn normalize(
+    arena: &mut Arena,
+    rewrites: &[InternedRewrite],
+    cache: &mut HashMap<HExpr, HExpr>,
+    h: HExpr,
+    fuel: &mut usize,
+) -> HExpr {
+    if rewrites.is_empty() || *fuel == 0 {
+        return h;
+    }
+    if let Some(&cached) = cache.get(&h) {
+        return cached;
+    }
+
+    // Step 1: Normalize children
+    let children_normalized = if let Some(args) = arena.app_args(h) {
+        let new_args: Vec<HExpr> = args
+            .iter()
+            .map(|&a| normalize(arena, rewrites, cache, a, fuel))
+            .collect();
+        if new_args == args {
+            h
+        } else {
+            arena.app(new_args)
+        }
+    } else {
+        h
+    };
+
+    // Step 2: Try rewrite rules at the head
+    let mut current = children_normalized;
+    loop {
+        if *fuel == 0 {
+            break;
+        }
+        let mut matched = false;
+        for rw in rewrites {
+            if let Ok(subst) = arena.match_expr(rw.lhs, current) {
+                *fuel = fuel.saturating_sub(1);
+                let replaced = arena.apply_meta_subst(rw.rhs, &subst);
+                // Normalize the result recursively
+                current = normalize(arena, rewrites, cache, replaced, fuel);
+                matched = true;
+                break;
+            }
+        }
+        if !matched {
+            break;
+        }
+    }
+
+    cache.insert(h, current);
+    current
+}
+
 fn check_inner(
     arena: &mut Arena,
     rule_cache: &HashMap<String, InternedRule>,
+    rewrites: &[InternedRewrite],
+    reduce_cache: &mut HashMap<HExpr, HExpr>,
+    reduce_fuel: usize,
     goal: HExpr,
     derivation: &Derivation,
     assumptions: &[HExpr],
     global_subst: &mut HSubst,
     fresh_counter: &mut usize,
 ) -> Result<()> {
+    let mut fuel = reduce_fuel;
     match derivation {
         Derivation::Assumption => {
             let goal_resolved = apply_fixpoint(arena, goal, global_subst);
+            let goal_norm = normalize(arena, rewrites, reduce_cache, goal_resolved, &mut fuel);
 
             for &assumption in assumptions {
                 let assumption_resolved = apply_fixpoint(arena, assumption, global_subst);
+                let assumption_norm = normalize(arena, rewrites, reduce_cache, assumption_resolved, &mut fuel);
 
                 // O(1) equality check!
-                if assumption_resolved == goal_resolved {
+                if assumption_norm == goal_norm {
                     return Ok(());
                 }
 
-                if let Ok(sub) = arena.match_expr(assumption_resolved, goal_resolved) {
+                if let Ok(sub) = arena.match_expr(assumption_norm, goal_norm) {
                     for (k, v) in sub {
                         global_subst.insert(k, v);
                     }
                     return Ok(());
                 }
-                if let Ok(sub) = arena.match_expr(goal_resolved, assumption_resolved) {
+                if let Ok(sub) = arena.match_expr(goal_norm, assumption_norm) {
                     for (k, v) in sub {
                         global_subst.insert(k, v);
                     }
@@ -254,7 +345,7 @@ fn check_inner(
                 }
             }
             Err(OmegaError::AssumptionMismatch {
-                goal: arena.to_expr(goal_resolved),
+                goal: arena.to_expr(goal_norm),
             })
         }
 
@@ -267,26 +358,28 @@ fn check_inner(
                 )));
             }
             let assumption = apply_fixpoint(arena, assumptions[*idx], global_subst);
+            let assumption_norm = normalize(arena, rewrites, reduce_cache, assumption, &mut fuel);
             let goal_resolved = apply_fixpoint(arena, goal, global_subst);
+            let goal_norm = normalize(arena, rewrites, reduce_cache, goal_resolved, &mut fuel);
 
-            if assumption == goal_resolved {
+            if assumption_norm == goal_norm {
                 return Ok(());
             }
-            if let Ok(sub) = arena.match_expr(goal_resolved, assumption) {
+            if let Ok(sub) = arena.match_expr(goal_norm, assumption_norm) {
                 for (k, v) in sub {
                     global_subst.insert(k, v);
                 }
                 return Ok(());
             }
-            if let Ok(sub) = arena.match_expr(assumption, goal_resolved) {
+            if let Ok(sub) = arena.match_expr(assumption_norm, goal_norm) {
                 for (k, v) in sub {
                     global_subst.insert(k, v);
                 }
                 return Ok(());
             }
             Err(OmegaError::GoalMismatch {
-                expected: arena.to_expr(goal_resolved),
-                got: arena.to_expr(assumption),
+                expected: arena.to_expr(goal_norm),
+                got: arena.to_expr(assumption_norm),
             })
         }
 
@@ -308,31 +401,32 @@ fn check_inner(
 
             let rule = freshen_interned_rule(arena, orig_rule, fresh_counter);
             let goal_resolved = apply_fixpoint(arena, goal, global_subst);
+            let goal_norm = normalize(arena, rewrites, reduce_cache, goal_resolved, &mut fuel);
 
             let mut local_subst: HSubst =
-                match arena.match_expr(rule.conclusion, goal_resolved) {
+                match arena.match_expr(rule.conclusion, goal_norm) {
                     Ok(s) => s,
                     Err(_cause) => {
-                        if arena.has_metas(goal_resolved) {
+                        if arena.has_metas(goal_norm) {
                             arena
-                                .match_expr(goal_resolved, rule.conclusion)
+                                .match_expr(goal_norm, rule.conclusion)
                                 .map_err(|_| OmegaError::PatternMatchFailed {
                                     rule: rule_name.clone(),
                                     expected: arena.to_expr(rule.conclusion),
-                                    got: arena.to_expr(goal_resolved),
+                                    got: arena.to_expr(goal_norm),
                                     cause: crate::pattern::MatchError::Mismatch {
                                         pattern: arena.to_expr(rule.conclusion),
-                                        expr: arena.to_expr(goal_resolved),
+                                        expr: arena.to_expr(goal_norm),
                                     },
                                 })?
                         } else {
                             return Err(OmegaError::PatternMatchFailed {
                                 rule: rule_name.clone(),
                                 expected: arena.to_expr(rule.conclusion),
-                                got: arena.to_expr(goal_resolved),
+                                got: arena.to_expr(goal_norm),
                                 cause: crate::pattern::MatchError::Mismatch {
                                     pattern: arena.to_expr(rule.conclusion),
-                                    expr: arena.to_expr(goal_resolved),
+                                    expr: arena.to_expr(goal_norm),
                                 },
                             });
                         }
@@ -368,6 +462,9 @@ fn check_inner(
                 check_inner(
                     arena,
                     rule_cache,
+                    rewrites,
+                    reduce_cache,
+                    reduce_fuel,
                     premise_goal,
                     premise_derivation,
                     assumptions,

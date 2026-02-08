@@ -135,6 +135,19 @@ impl Arena {
         &self.nodes[h.0 as usize]
     }
 
+    /// Get the children of an App node, or None if not an App.
+    pub fn app_args(&self, h: HExpr) -> Option<Vec<HExpr>> {
+        match self.node(h) {
+            HNode::App(args) => Some(args.clone()),
+            _ => None,
+        }
+    }
+
+    /// Check if this is a Sym node with the given name.
+    pub fn is_sym(&self, h: HExpr, name: &str) -> bool {
+        matches!(self.node(h), HNode::Sym(n) if n == name)
+    }
+
     /// Check if an expression contains meta-variables (cached).
     pub fn has_metas(&mut self, h: HExpr) -> bool {
         let idx = h.0 as usize;

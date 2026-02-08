@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use crate::binding::apply_meta_subst;
 use crate::error::{OmegaError, Result};
 use crate::expr::{Expr, Name};
+use crate::judgment::RewriteRule;
 use crate::pattern::{match_expr, Substitution};
 use crate::theory::Theory;
 
@@ -46,6 +47,52 @@ impl Context {
     pub fn push(&mut self, assumption: Expr) {
         self.assumptions.push(assumption);
     }
+}
+
+/// Normalize an expression by exhaustively applying rewrite rules (innermost strategy).
+fn normalize_expr(expr: &Expr, rewrites: &[RewriteRule], fuel: &mut usize) -> Expr {
+    if rewrites.is_empty() || *fuel == 0 {
+        return expr.clone();
+    }
+
+    // Step 1: Normalize children
+    let children_normalized = match expr {
+        Expr::App(args) => {
+            let new_args: Vec<Expr> = args
+                .iter()
+                .map(|a| normalize_expr(a, rewrites, fuel))
+                .collect();
+            if new_args == *args {
+                expr.clone()
+            } else {
+                Expr::App(new_args)
+            }
+        }
+        _ => expr.clone(),
+    };
+
+    // Step 2: Try rewrite rules at the head
+    let mut current = children_normalized;
+    loop {
+        if *fuel == 0 {
+            break;
+        }
+        let mut matched = false;
+        for rw in rewrites {
+            if let Ok(subst) = match_expr(&rw.lhs, &current) {
+                *fuel = fuel.saturating_sub(1);
+                let replaced = apply_meta_subst(&rw.rhs, &subst);
+                current = normalize_expr(&replaced, rewrites, fuel);
+                matched = true;
+                break;
+            }
+        }
+        if !matched {
+            break;
+        }
+    }
+
+    current
 }
 
 /// Check that a derivation proves the given goal in the given theory.
@@ -206,24 +253,25 @@ fn check_derivation_inner(
     global_subst: &mut Substitution,
     fresh_counter: &mut usize,
 ) -> Result<()> {
+    let mut fuel = 10_000usize;
     match derivation {
         Derivation::Assumption => {
             // The goal must match one of the assumptions in the context
             let goal_resolved = apply_meta_subst(goal, global_subst);
+            let goal_norm = normalize_expr(&goal_resolved, &theory.rewrites, &mut fuel);
             for assumption in &ctx.assumptions {
                 let assumption_resolved = apply_meta_subst(assumption, global_subst);
-                if assumption_resolved == goal_resolved {
+                let assumption_norm = normalize_expr(&assumption_resolved, &theory.rewrites, &mut fuel);
+                if assumption_norm == goal_norm {
                     return Ok(());
                 }
-                // Also try matching (the assumption might have metas)
-                if let Ok(sub) = match_expr(&assumption_resolved, &goal_resolved) {
-                    // Merge into global subst
+                if let Ok(sub) = match_expr(&assumption_norm, &goal_norm) {
                     for (k, v) in sub {
                         global_subst.insert(k, v);
                     }
                     return Ok(());
                 }
-                if let Ok(sub) = match_expr(&goal_resolved, &assumption_resolved) {
+                if let Ok(sub) = match_expr(&goal_norm, &assumption_norm) {
                     for (k, v) in sub {
                         global_subst.insert(k, v);
                     }
@@ -231,7 +279,7 @@ fn check_derivation_inner(
                 }
             }
             Err(OmegaError::AssumptionMismatch {
-                goal: goal_resolved,
+                goal: goal_norm,
             })
         }
 
@@ -244,26 +292,27 @@ fn check_derivation_inner(
                 )));
             }
             let assumption = apply_meta_subst(&ctx.assumptions[*idx], global_subst);
+            let assumption_norm = normalize_expr(&assumption, &theory.rewrites, &mut fuel);
             let goal_resolved = apply_meta_subst(goal, global_subst);
-            if assumption == goal_resolved {
+            let goal_norm = normalize_expr(&goal_resolved, &theory.rewrites, &mut fuel);
+            if assumption_norm == goal_norm {
                 return Ok(());
             }
-            // Try matching
-            if let Ok(sub) = match_expr(&goal_resolved, &assumption) {
+            if let Ok(sub) = match_expr(&goal_norm, &assumption_norm) {
                 for (k, v) in sub {
                     global_subst.insert(k, v);
                 }
                 return Ok(());
             }
-            if let Ok(sub) = match_expr(&assumption, &goal_resolved) {
+            if let Ok(sub) = match_expr(&assumption_norm, &goal_norm) {
                 for (k, v) in sub {
                     global_subst.insert(k, v);
                 }
                 return Ok(());
             }
             Err(OmegaError::GoalMismatch {
-                expected: goal_resolved,
-                got: assumption,
+                expected: goal_norm,
+                got: assumption_norm,
             })
         }
 
@@ -292,18 +341,19 @@ fn check_derivation_inner(
             // Match the rule's conclusion against the goal to determine meta-variable bindings.
             // Some metas may remain unsolved (e.g., the "middle" term in eq-trans).
             let goal_resolved = apply_meta_subst(goal, global_subst);
-            let mut local_subst = match match_expr(&rule.conclusion, &goal_resolved) {
+            let goal_norm = normalize_expr(&goal_resolved, &theory.rewrites, &mut fuel);
+            let mut local_subst = match match_expr(&rule.conclusion, &goal_norm) {
                 Ok(s) => s,
                 Err(cause) => {
                     // If the goal itself has metas, try matching the other direction too
-                    if goal_resolved.has_metas() {
-                        match match_expr(&goal_resolved, &rule.conclusion) {
+                    if goal_norm.has_metas() {
+                        match match_expr(&goal_norm, &rule.conclusion) {
                             Ok(s) => s,
                             Err(_) => {
                                 return Err(OmegaError::PatternMatchFailed {
                                     rule: rule_name.clone(),
                                     expected: rule.conclusion.clone(),
-                                    got: goal_resolved,
+                                    got: goal_norm,
                                     cause,
                                 });
                             }
@@ -312,7 +362,7 @@ fn check_derivation_inner(
                         return Err(OmegaError::PatternMatchFailed {
                             rule: rule_name.clone(),
                             expected: rule.conclusion.clone(),
-                            got: goal_resolved,
+                            got: goal_norm,
                             cause,
                         });
                     }

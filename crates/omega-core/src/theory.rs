@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use crate::binding_spec::BindingSpec;
 use crate::error::{OmegaError, Result};
 use crate::expr::Name;
-use crate::judgment::{ConstructorDecl, JudgmentForm, Rule, SortDecl};
+use crate::judgment::{ConstructorDecl, JudgmentForm, RewriteRule, Rule, SortDecl};
 
 /// A user-defined theory (logic).
 #[derive(Debug, Clone)]
@@ -24,6 +24,8 @@ pub struct Theory {
     pub rules: Vec<Rule>,
     /// User-defined binding specifications.
     pub binding_specs: Vec<BindingSpec>,
+    /// Rewrite rules for definitional equality (delta reduction).
+    pub rewrites: Vec<RewriteRule>,
     /// A hash of the theory content for staleness detection.
     pub content_hash: u64,
 }
@@ -38,6 +40,7 @@ impl Theory {
             judgments: Vec::new(),
             binding_specs: Vec::new(),
             rules: Vec::new(),
+            rewrites: Vec::new(),
             content_hash: 0,
         }
     }
@@ -48,6 +51,7 @@ impl Theory {
     pub fn validate(&self) -> Result<()> {
         self.check_duplicates()?;
         self.check_rule_references()?;
+        self.check_rewrites()?;
         Ok(())
     }
 
@@ -99,6 +103,22 @@ impl Theory {
         Ok(())
     }
 
+    fn check_rewrites(&self) -> Result<()> {
+        for rw in &self.rewrites {
+            let lhs_metas = rw.lhs.meta_vars();
+            let rhs_metas = rw.rhs.meta_vars();
+            for m in &rhs_metas {
+                if !lhs_metas.contains(m) {
+                    return Err(OmegaError::MalformedDerivation(format!(
+                        "rewrite rule {}: RHS meta-variable ?{} not in LHS",
+                        rw.name, m
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Look up a rule by name.
     pub fn get_rule(&self, name: &str) -> Option<&Rule> {
         self.rules.iter().find(|r| r.name == name)
@@ -140,6 +160,9 @@ impl Theory {
         for r in &self.rules {
             r.name.hash(&mut hasher);
             r.premises.len().hash(&mut hasher);
+        }
+        for rw in &self.rewrites {
+            rw.name.hash(&mut hasher);
         }
         self.content_hash = hasher.finish();
     }
