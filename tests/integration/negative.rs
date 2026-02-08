@@ -113,3 +113,75 @@ fn reject_empty_form() {
     let result = check_source("()");
     assert!(result.is_err());
 }
+
+#[test]
+fn reject_affine_double_use() {
+    // In affine mode, using the same assumption twice should fail.
+    // Only one (holds a) in context, but two `assumption` derivations.
+    let source = "
+    (theory AffineTest
+      (context-mode affine)
+      (sort Prop)
+      (constructor tensor : (-> Prop Prop Prop))
+      (judgment (holds ?A) :where A : Prop)
+      (rule tensor-intro
+        :premises ((holds ?A) (holds ?B))
+        :conclusion (holds (tensor ?A ?B))))
+    (proof bad-double-use
+      :theory AffineTest
+      :goal (holds (tensor a a))
+      :assumptions ((holds a))
+      :derivation (tensor-intro assumption assumption))
+    ";
+    let result = check_source(source);
+    assert!(result.is_err(), "affine double-use should be rejected");
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("affine violation") || err.contains("already consumed") || err.contains("no matching assumption"),
+        "expected affine error, got: {}",
+        err
+    );
+}
+
+#[test]
+fn structural_allows_double_use() {
+    // The same proof should work fine in structural mode (control test).
+    let source = "
+    (theory StructuralTest
+      (sort Prop)
+      (constructor tensor : (-> Prop Prop Prop))
+      (judgment (holds ?A) :where A : Prop)
+      (rule tensor-intro
+        :premises ((holds ?A) (holds ?B))
+        :conclusion (holds (tensor ?A ?B))))
+    (proof ok-double-use
+      :theory StructuralTest
+      :goal (holds (tensor a a))
+      :assumptions ((holds a))
+      :derivation (tensor-intro assumption assumption))
+    ";
+    let result = check_source(source);
+    assert!(result.is_ok(), "structural double-use should be allowed: {:?}", result.err());
+}
+
+#[test]
+fn reject_affine_triple_use() {
+    // Three uses of one assumption in affine mode.
+    let source = "
+    (theory AffineTriple
+      (context-mode affine)
+      (sort Prop)
+      (constructor tensor : (-> Prop Prop Prop))
+      (judgment (holds ?A) :where A : Prop)
+      (rule tensor-intro
+        :premises ((holds ?A) (holds ?B))
+        :conclusion (holds (tensor ?A ?B))))
+    (proof triple-fail
+      :theory AffineTriple
+      :goal (holds (tensor a (tensor a a)))
+      :assumptions ((holds a))
+      :derivation (tensor-intro assumption (tensor-intro assumption assumption)))
+    ";
+    let result = check_source(source);
+    assert!(result.is_err(), "triple use in affine should be rejected");
+}

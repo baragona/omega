@@ -4,7 +4,7 @@ use omega_core::derivation::Derivation;
 use omega_core::expr::Expr;
 use omega_core::judgment::{ConstructorDecl, JudgmentForm, RewriteRule, Rule, SortDecl};
 use omega_core::metatheorem::{MetaCase, MetaProof, MetaTheorem};
-use omega_core::theory::Theory;
+use omega_core::theory::{ContextMode, Theory};
 
 use crate::sexp::Sexp;
 use crate::span::Span;
@@ -219,6 +219,26 @@ fn desugar_theory(items: &[Sexp], span: Span) -> Result<Command> {
             "binding-spec" => {
                 let bs = desugar_binding_spec(decl)?;
                 theory.binding_specs.push(bs);
+            }
+            "context-mode" => {
+                // (context-mode affine) or (context-mode structural)
+                if decl.len() != 2 {
+                    return Err(DesugarError {
+                        message: "context-mode expects exactly one argument: affine or structural".to_string(),
+                        span: decl[0].span(),
+                    });
+                }
+                let mode = expect_atom(&decl[1])?;
+                match mode {
+                    "affine" => theory.context_mode = ContextMode::Affine,
+                    "structural" => theory.context_mode = ContextMode::Structural,
+                    _ => {
+                        return Err(DesugarError {
+                            message: format!("unknown context mode: {} (expected affine or structural)", mode),
+                            span: decl[1].span(),
+                        });
+                    }
+                }
             }
             "rewrite" => {
                 // (rewrite name lhs rhs)

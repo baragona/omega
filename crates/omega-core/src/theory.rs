@@ -9,6 +9,17 @@ use crate::error::{OmegaError, Result};
 use crate::expr::Name;
 use crate::judgment::{ConstructorDecl, JudgmentForm, RewriteRule, Rule, SortDecl};
 
+/// Controls the structural rules of the context.
+///
+/// - **Structural**: Contraction allowed — assumptions can be reused freely.
+/// - **Affine**: Contraction banned — each assumption can be used at most once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ContextMode {
+    #[default]
+    Structural,
+    Affine,
+}
+
 /// A user-defined theory (logic).
 #[derive(Debug, Clone)]
 pub struct Theory {
@@ -26,6 +37,8 @@ pub struct Theory {
     pub binding_specs: Vec<BindingSpec>,
     /// Rewrite rules for definitional equality (delta reduction).
     pub rewrites: Vec<RewriteRule>,
+    /// Context mode: structural (default) or affine (at-most-once usage).
+    pub context_mode: ContextMode,
     /// A hash of the theory content for staleness detection.
     pub content_hash: u64,
 }
@@ -41,6 +54,7 @@ impl Theory {
             binding_specs: Vec::new(),
             rules: Vec::new(),
             rewrites: Vec::new(),
+            context_mode: ContextMode::default(),
             content_hash: 0,
         }
     }
@@ -164,6 +178,7 @@ impl Theory {
         for rw in &self.rewrites {
             rw.name.hash(&mut hasher);
         }
+        matches!(self.context_mode, ContextMode::Affine).hash(&mut hasher);
         self.content_hash = hasher.finish();
     }
 

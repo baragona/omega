@@ -1,0 +1,66 @@
+;;; Affine logic: each assumption can be used at most once.
+;;;
+;;; (context-mode affine) enables substructural context management:
+;;; - Contraction is banned: A ⊬ A ⊗ A
+;;; - Weakening is free: unused assumptions are silently dropped
+;;; - This models "move semantics" — using a resource consumes it
+;;;
+;;; Multiplicative splitting: premises share one consumed set sequentially.
+;;; Premise 1's consumption is visible to premise 2.
+
+(theory AffineLogic
+  (context-mode affine)
+
+  (sort Prop)
+  (constructor atom : (-> Prop))
+  (constructor tensor : (-> Prop Prop Prop))
+  (constructor lolli : (-> Prop Prop Prop))
+  (constructor one : Prop)
+
+  ;; (holds A) — "A is provable"
+  (judgment (holds ?A) :where A : Prop)
+
+  ;; Unit introduction: proves (holds one) from nothing
+  (rule one-intro
+    :premises ()
+    :conclusion (holds one))
+
+  ;; Tensor introduction: if A and B are each provable (from disjoint resources),
+  ;; then (tensor A B) is provable. In affine mode, the resources used for A
+  ;; are consumed before B's premises are checked.
+  (rule tensor-intro
+    :premises ((holds ?A) (holds ?B))
+    :conclusion (holds (tensor ?A ?B))))
+
+;;; --- Valid proofs: each assumption used exactly once ---
+
+;; From (holds x), (holds y) ⊢ (holds (tensor x y))
+;; Each assumption consumed once via `assumption`.
+(proof tensor-pair
+  :theory AffineLogic
+  :goal (holds (tensor x y))
+  :assumptions ((holds x) (holds y))
+  :derivation (tensor-intro assumption assumption))
+
+;; Unit is always provable (no assumptions needed)
+(proof unit-free
+  :theory AffineLogic
+  :goal (holds one)
+  :derivation (one-intro))
+
+;; From (holds a) ⊢ (holds (tensor a one))
+;; a is used once; one-intro needs nothing.
+(proof tensor-with-unit
+  :theory AffineLogic
+  :goal (holds (tensor a one))
+  :assumptions ((holds a))
+  :derivation (tensor-intro assumption (one-intro)))
+
+;; Shadowing test: two assumptions of the same type.
+;; (holds a), (holds a) ⊢ (holds (tensor a a))
+;; First assumption takes the most recent (index 1), second takes index 0.
+(proof shadow-use
+  :theory AffineLogic
+  :goal (holds (tensor a a))
+  :assumptions ((holds a) (holds a))
+  :derivation (tensor-intro assumption assumption))

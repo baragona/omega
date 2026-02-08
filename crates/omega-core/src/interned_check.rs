@@ -7,13 +7,13 @@
 /// - `has_metas` cached per node (vs O(n) recursive check)
 /// - Substitution with maximal sharing (unchanged subtrees aren't cloned)
 /// - Pre-interned theory rules (no re-interning on each check)
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::derivation::{Context, Derivation};
 use crate::error::{OmegaError, Result};
 use crate::expr::{Expr, Name};
 use crate::intern::{Arena, HExpr};
-use crate::theory::Theory;
+use crate::theory::{ContextMode, Theory};
 
 type HSubst = HashMap<Name, HExpr>;
 
@@ -32,6 +32,7 @@ pub struct InternedTheory {
     reduce_cache: HashMap<HExpr, HExpr>,
     pub reduce_fuel: usize,
     fresh_counter: usize,
+    context_mode: ContextMode,
 }
 
 impl InternedTheory {
@@ -76,6 +77,7 @@ impl InternedTheory {
             reduce_cache: HashMap::new(),
             reduce_fuel: 10_000,
             fresh_counter: 0,
+            context_mode: theory.context_mode,
         }
     }
 
@@ -118,6 +120,7 @@ impl InternedTheory {
         let h_assumptions: Vec<HExpr> =
             ctx.assumptions.iter().map(|a| self.arena.from_expr(a)).collect();
         let fuel = self.reduce_fuel;
+        let context_mode = self.context_mode;
 
         check_inner(
             &mut self.arena,
@@ -125,11 +128,13 @@ impl InternedTheory {
             &self.rewrites,
             &mut self.reduce_cache,
             fuel,
+            context_mode,
             h_goal,
             derivation,
             &h_assumptions,
             &mut HashMap::new(),
             &mut self.fresh_counter,
+            &mut HashSet::new(),
         )
     }
 
@@ -142,6 +147,7 @@ impl InternedTheory {
         h_assumptions: &[HExpr],
     ) -> Result<()> {
         let fuel = self.reduce_fuel;
+        let context_mode = self.context_mode;
 
         check_inner(
             &mut self.arena,
@@ -149,11 +155,13 @@ impl InternedTheory {
             &self.rewrites,
             &mut self.reduce_cache,
             fuel,
+            context_mode,
             h_goal,
             derivation,
             h_assumptions,
             &mut HashMap::new(),
             &mut self.fresh_counter,
+            &mut HashSet::new(),
         )
     }
 
@@ -310,24 +318,35 @@ fn check_inner(
     rewrites: &[InternedRewrite],
     reduce_cache: &mut HashMap<HExpr, HExpr>,
     reduce_fuel: usize,
+    context_mode: ContextMode,
     goal: HExpr,
     derivation: &Derivation,
     assumptions: &[HExpr],
     global_subst: &mut HSubst,
     fresh_counter: &mut usize,
+    consumed: &mut HashSet<usize>,
 ) -> Result<()> {
+    let affine = context_mode == ContextMode::Affine;
     let mut fuel = reduce_fuel;
     match derivation {
         Derivation::Assumption => {
             let goal_resolved = apply_fixpoint(arena, goal, global_subst);
             let goal_norm = normalize(arena, rewrites, reduce_cache, goal_resolved, &mut fuel);
 
-            for &assumption in assumptions {
-                let assumption_resolved = apply_fixpoint(arena, assumption, global_subst);
+            // In affine mode, iterate from the end (most recent first),
+            // skipping consumed entries — this gives shadowing for free.
+            for idx in (0..assumptions.len()).rev() {
+                if affine && consumed.contains(&idx) {
+                    continue;
+                }
+                let assumption_resolved = apply_fixpoint(arena, assumptions[idx], global_subst);
                 let assumption_norm = normalize(arena, rewrites, reduce_cache, assumption_resolved, &mut fuel);
 
                 // O(1) equality check!
                 if assumption_norm == goal_norm {
+                    if affine {
+                        consumed.insert(idx);
+                    }
                     return Ok(());
                 }
 
@@ -335,11 +354,17 @@ fn check_inner(
                     for (k, v) in sub {
                         global_subst.insert(k, v);
                     }
+                    if affine {
+                        consumed.insert(idx);
+                    }
                     return Ok(());
                 }
                 if let Ok(sub) = arena.match_expr(goal_norm, assumption_norm) {
                     for (k, v) in sub {
                         global_subst.insert(k, v);
+                    }
+                    if affine {
+                        consumed.insert(idx);
                     }
                     return Ok(());
                 }
@@ -357,23 +382,38 @@ fn check_inner(
                     assumptions.len()
                 )));
             }
+            if affine && consumed.contains(idx) {
+                return Err(OmegaError::UseAfterMove {
+                    index: *idx,
+                    expr: arena.to_expr(assumptions[*idx]),
+                });
+            }
             let assumption = apply_fixpoint(arena, assumptions[*idx], global_subst);
             let assumption_norm = normalize(arena, rewrites, reduce_cache, assumption, &mut fuel);
             let goal_resolved = apply_fixpoint(arena, goal, global_subst);
             let goal_norm = normalize(arena, rewrites, reduce_cache, goal_resolved, &mut fuel);
 
             if assumption_norm == goal_norm {
+                if affine {
+                    consumed.insert(*idx);
+                }
                 return Ok(());
             }
             if let Ok(sub) = arena.match_expr(goal_norm, assumption_norm) {
                 for (k, v) in sub {
                     global_subst.insert(k, v);
                 }
+                if affine {
+                    consumed.insert(*idx);
+                }
                 return Ok(());
             }
             if let Ok(sub) = arena.match_expr(assumption_norm, goal_norm) {
                 for (k, v) in sub {
                     global_subst.insert(k, v);
+                }
+                if affine {
+                    consumed.insert(*idx);
                 }
                 return Ok(());
             }
@@ -465,11 +505,13 @@ fn check_inner(
                     rewrites,
                     reduce_cache,
                     reduce_fuel,
+                    context_mode,
                     premise_goal,
                     premise_derivation,
                     assumptions,
                     global_subst,
                     fresh_counter,
+                    consumed,
                 )
                 .map_err(|e| {
                     OmegaError::MalformedDerivation(format!(

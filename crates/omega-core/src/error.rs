@@ -49,6 +49,8 @@ pub enum OmegaError {
     GoalMismatch { expected: Expr, got: Expr },
     /// An assumption was used but doesn't match the goal.
     AssumptionMismatch { goal: Expr },
+    /// An assumption was already consumed (affine mode).
+    UseAfterMove { index: usize, expr: Expr },
     /// Unresolved meta-variables remain after checking.
     UnresolvedMetas(Vec<Name>),
 
@@ -132,6 +134,13 @@ impl fmt::Display for OmegaError {
             }
             OmegaError::AssumptionMismatch { goal } => {
                 write!(f, "no matching assumption for goal {}", goal)
+            }
+            OmegaError::UseAfterMove { index, expr } => {
+                write!(
+                    f,
+                    "affine violation: assumption {} ({}) already consumed",
+                    index, expr
+                )
             }
             OmegaError::UnresolvedMetas(ms) => {
                 write!(f, "unresolved meta-variables: ")?;

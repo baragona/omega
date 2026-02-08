@@ -3,14 +3,14 @@
 /// A derivation tree records the proof structure: each node is a rule application
 /// with sub-derivations for the premises. The kernel walks the tree and verifies
 /// that each step is valid.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::binding::apply_meta_subst;
 use crate::error::{OmegaError, Result};
 use crate::expr::{Expr, Name};
 use crate::judgment::RewriteRule;
 use crate::pattern::{match_expr, Substitution};
-use crate::theory::Theory;
+use crate::theory::{ContextMode, Theory};
 
 /// A derivation tree node.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,7 +106,16 @@ pub fn check_derivation(
     ctx: &Context,
 ) -> Result<()> {
     let mut fresh_counter = 0usize;
-    check_derivation_inner(theory, goal, derivation, ctx, &mut HashMap::new(), &mut fresh_counter)
+    let mut consumed = HashSet::new();
+    check_derivation_inner(
+        theory,
+        goal,
+        derivation,
+        ctx,
+        &mut HashMap::new(),
+        &mut fresh_counter,
+        &mut consumed,
+    )
 }
 
 /// Freshen all meta-variables in a rule by appending a unique suffix.
@@ -252,28 +261,45 @@ fn check_derivation_inner(
     ctx: &Context,
     global_subst: &mut Substitution,
     fresh_counter: &mut usize,
+    consumed: &mut HashSet<usize>,
 ) -> Result<()> {
+    let affine = theory.context_mode == ContextMode::Affine;
     let mut fuel = 10_000usize;
     match derivation {
         Derivation::Assumption => {
-            // The goal must match one of the assumptions in the context
+            // The goal must match one of the assumptions in the context.
+            // In affine mode, iterate from the end (most recent first),
+            // skipping consumed entries — this gives shadowing for free.
             let goal_resolved = apply_meta_subst(goal, global_subst);
             let goal_norm = normalize_expr(&goal_resolved, &theory.rewrites, &mut fuel);
-            for assumption in &ctx.assumptions {
+            for idx in (0..ctx.assumptions.len()).rev() {
+                if affine && consumed.contains(&idx) {
+                    continue;
+                }
+                let assumption = &ctx.assumptions[idx];
                 let assumption_resolved = apply_meta_subst(assumption, global_subst);
                 let assumption_norm = normalize_expr(&assumption_resolved, &theory.rewrites, &mut fuel);
                 if assumption_norm == goal_norm {
+                    if affine {
+                        consumed.insert(idx);
+                    }
                     return Ok(());
                 }
                 if let Ok(sub) = match_expr(&assumption_norm, &goal_norm) {
                     for (k, v) in sub {
                         global_subst.insert(k, v);
                     }
+                    if affine {
+                        consumed.insert(idx);
+                    }
                     return Ok(());
                 }
                 if let Ok(sub) = match_expr(&goal_norm, &assumption_norm) {
                     for (k, v) in sub {
                         global_subst.insert(k, v);
+                    }
+                    if affine {
+                        consumed.insert(idx);
                     }
                     return Ok(());
                 }
@@ -291,22 +317,37 @@ fn check_derivation_inner(
                     ctx.assumptions.len()
                 )));
             }
+            if affine && consumed.contains(idx) {
+                return Err(OmegaError::UseAfterMove {
+                    index: *idx,
+                    expr: ctx.assumptions[*idx].clone(),
+                });
+            }
             let assumption = apply_meta_subst(&ctx.assumptions[*idx], global_subst);
             let assumption_norm = normalize_expr(&assumption, &theory.rewrites, &mut fuel);
             let goal_resolved = apply_meta_subst(goal, global_subst);
             let goal_norm = normalize_expr(&goal_resolved, &theory.rewrites, &mut fuel);
             if assumption_norm == goal_norm {
+                if affine {
+                    consumed.insert(*idx);
+                }
                 return Ok(());
             }
             if let Ok(sub) = match_expr(&goal_norm, &assumption_norm) {
                 for (k, v) in sub {
                     global_subst.insert(k, v);
                 }
+                if affine {
+                    consumed.insert(*idx);
+                }
                 return Ok(());
             }
             if let Ok(sub) = match_expr(&assumption_norm, &goal_norm) {
                 for (k, v) in sub {
                     global_subst.insert(k, v);
+                }
+                if affine {
+                    consumed.insert(*idx);
                 }
                 return Ok(());
             }
@@ -402,6 +443,7 @@ fn check_derivation_inner(
                     ctx,
                     global_subst,
                     fresh_counter,
+                    consumed,
                 )
                 .map_err(|e| {
                     OmegaError::MalformedDerivation(format!(

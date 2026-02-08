@@ -107,6 +107,16 @@ fn peano_compute_example() {
 }
 
 #[test]
+fn affine_logic_example() {
+    let results = check_example("examples/affine-logic.omega");
+    assert!(results.iter().any(|r| r.contains("Theory AffineLogic: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof tensor-pair: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof unit-free: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof tensor-with-unit: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof shadow-use: VALID")));
+}
+
+#[test]
 fn torture_example() {
     let results = check_example("examples/torture.omega");
     assert!(results.iter().any(|r| r.contains("Theory TortureArith: registered OK")));
