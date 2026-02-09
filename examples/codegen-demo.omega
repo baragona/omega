@@ -1,0 +1,88 @@
+;;; Code Generation Demo — String Ropes → C Code
+;;;
+;;; Demonstrates Omega's string rope library for generating
+;;; actual C source code. The key insight:
+;;;
+;;;   1. Build code as a tree of fragments (cat, newline, etc.)
+;;;   2. Rewrite rules normalize away empty nodes
+;;;   3. (emit ...) flattens the tree to actual text
+;;;
+;;; No bytes are ever copied during construction — only at emit time.
+
+;; ── String rope primitives ──
+(theory StringLib
+  (sort String)
+  (constructor empty : String)
+  (constructor cat : (-> String String String))
+  (constructor newline : String)
+  (rewrite id-l (cat empty ?s) ?s)
+  (rewrite id-r (cat ?s empty) ?s))
+
+(check-theory StringLib)
+
+;; ── Code-generation theory (imports StringLib) ──
+(theory CodeGen
+  (import StringLib)
+
+  ;; Wrap a string in a line: s + newline
+  (constructor line : (-> String String))
+  (rewrite expand-line (line ?s) (cat ?s newline))
+
+  ;; Semicolon-terminated statement
+  (constructor stmt : (-> String String))
+  (rewrite expand-stmt (stmt ?s) (cat ?s (cat ";" newline)))
+
+  ;; Indented line (4 spaces)
+  (constructor indent : (-> String String))
+  (rewrite expand-indent (indent ?s) (cat "    " ?s))
+
+  ;; Block: { body }
+  (constructor block : (-> String String))
+  (rewrite expand-block (block ?body)
+    (cat (cat "{" newline) (cat ?body (cat "}" newline))))
+
+  ;; C function: rettype name() { body }
+  (constructor c-func : (-> String String String String))
+  (rewrite expand-c-func (c-func ?ret ?name ?body)
+    (cat ?ret (cat " " (cat ?name (cat "()" (block ?body)))))))
+
+(check-theory CodeGen)
+
+
+;; ═══════════════════════════════════════════════════════
+;; Emit: generate C source code from rope trees
+;; ═══════════════════════════════════════════════════════
+
+;; 1. Simple: "hello, world\n"
+(emit :theory CodeGen
+  (cat "hello, world" newline))
+
+;; 2. A return statement: "    return 0;\n"
+(emit :theory CodeGen
+  (indent (stmt "return 0")))
+
+;; 3. A complete C function:
+;;    int main() {
+;;        return 0;
+;;    }
+(emit :theory CodeGen
+  (c-func "int" "main"
+    (indent (stmt "return 0"))))
+
+;; 4. Multiple statements:
+;;    #include <stdio.h>
+;;
+;;    int main() {
+;;        printf("hello");
+;;        return 0;
+;;    }
+(emit :theory CodeGen
+  (cat (line "#include <stdio.h>")
+    (cat newline
+      (c-func "int" "main"
+        (cat (indent (stmt "printf(\"hello\")"))
+             (indent (stmt "return 0")))))))
+
+;; 5. Identity rule in action: cat(empty, x) normalizes to x
+(emit :theory CodeGen
+  (cat empty (cat "no empty" newline)))

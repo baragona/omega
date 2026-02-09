@@ -51,7 +51,7 @@ impl Context {
 
 /// Normalize an expression by exhaustively applying beta-reduction and
 /// rewrite rules (innermost strategy).
-fn normalize_expr(expr: &Expr, rewrites: &[RewriteRule], fuel: &mut usize) -> Expr {
+pub fn normalize_expr(expr: &Expr, rewrites: &[RewriteRule], fuel: &mut usize) -> Expr {
     if *fuel == 0 {
         return expr.clone();
     }

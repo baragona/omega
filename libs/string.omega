@@ -1,0 +1,33 @@
+;;; String Ropes — O(1) Concatenation via Tree Structure
+;;;
+;;; Strings are not computed; they are trees of fragments.
+;;; Concatenation (cat) just builds a new node — O(1).
+;;; The tree is only flattened to bytes at the very end
+;;; by the `(emit ...)` command.
+;;;
+;;; The kernel never copies bytes. It just manages tree structure.
+;;; Hash consing means repeated fragments (like "int ") exist
+;;; only once in memory.
+;;;
+;;; Rewrite rules:
+;;;   id-l: (cat empty s) → s
+;;;   id-r: (cat s empty) → s
+;;; No associativity rewrite — that would defeat O(1) concat.
+
+(theory StringLib
+  (sort String)
+
+  ;; The empty string
+  (constructor empty : String)
+
+  ;; Concatenation: builds a rope node (O(1), no copying)
+  (constructor cat : (-> String String String))
+
+  ;; Newline helper
+  (constructor newline : String)
+
+  ;; Identity rules (safe, fire only on explicit empty nodes)
+  (rewrite id-l (cat empty ?s) ?s)
+  (rewrite id-r (cat ?s empty) ?s))
+
+(check-theory StringLib)

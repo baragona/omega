@@ -87,8 +87,9 @@ fn parse_sexp(tokens: &[SpannedToken], pos: usize) -> Result<(Sexp, usize), Pars
         Token::Atom(s) => Ok((Sexp::Atom(s.clone(), token.span), pos + 1)),
 
         Token::String(s) => {
-            // Represent strings as atoms with a prefix for now
-            Ok((Sexp::Atom(format!("\"{}\"", s), token.span), pos + 1))
+            // String literals become plain atoms (Sym nodes in the Expr world).
+            // "int " becomes Sym("int "), same as any other symbol.
+            Ok((Sexp::Atom(s.clone(), token.span), pos + 1))
         }
 
         Token::Eof => Err(ParseError {

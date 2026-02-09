@@ -55,6 +55,11 @@ pub enum Command {
         rule_name: String,
         theory: String,
     },
+    /// Emit a rope expression as flattened text.
+    Emit {
+        theory: String,
+        expr: Expr,
+    },
 }
 
 /// A tactic command (parsed from S-expressions).
@@ -115,6 +120,7 @@ fn desugar_command(sexp: &Sexp) -> Result<Command> {
         "proof" => desugar_proof(items, sexp.span()),
         "meta-theorem" => desugar_metatheorem(items, sexp.span()),
         "reflect" => desugar_reflect(items, sexp.span()),
+        "emit" => desugar_emit(items, sexp.span()),
         _ => Err(DesugarError {
             message: format!("unknown top-level form: {}", head),
             span: items[0].span(),
@@ -573,7 +579,16 @@ fn desugar_derivation(sexp: &Sexp) -> Result<Derivation> {
             }
             let head = expect_atom(&items[0])?;
             if head == "assumption" {
-                return Ok(Derivation::Assumption);
+                if items.len() == 1 {
+                    return Ok(Derivation::Assumption);
+                } else if items.len() == 2 {
+                    let idx_str = expect_atom(&items[1])?;
+                    let idx: usize = idx_str.parse().map_err(|_| DesugarError {
+                        message: format!("expected integer for assumption index, got '{}'", idx_str),
+                        span: items[1].span(),
+                    })?;
+                    return Ok(Derivation::AssumptionIdx(idx));
+                }
             }
             // (rule-name sub1 sub2 ...)
             let mut premises = Vec::new();
@@ -861,6 +876,32 @@ fn desugar_reflect(items: &[Sexp], span: Span) -> Result<Command> {
     })
 }
 
+fn desugar_emit(items: &[Sexp], span: Span) -> Result<Command> {
+    // (emit :theory T EXPR)
+    let mut theory = None;
+    let mut expr = None;
+    let mut i = 1;
+    while i < items.len() {
+        if items[i].is_keyword(":theory") {
+            i += 1;
+            theory = Some(expect_atom(&items[i])?.to_string());
+            i += 1;
+        } else {
+            expr = Some(desugar_expr(&items[i])?);
+            i += 1;
+        }
+    }
+    let theory = theory.ok_or_else(|| DesugarError {
+        message: "emit requires :theory".to_string(),
+        span,
+    })?;
+    let expr = expr.ok_or_else(|| DesugarError {
+        message: "emit requires an expression".to_string(),
+        span,
+    })?;
+    Ok(Command::Emit { theory, expr })
+}
+
 /// Desugar an S-expression into an Expr.
 pub fn desugar_expr(sexp: &Sexp) -> Result<Expr> {
     match sexp {
@@ -868,12 +909,12 @@ pub fn desugar_expr(sexp: &Sexp) -> Result<Expr> {
             if let Some(meta_name) = s.strip_prefix('?') {
                 Ok(Expr::Meta(meta_name.to_string()))
             } else if s.starts_with('#') {
-                // de Bruijn index
-                let idx: usize = s[1..].parse().map_err(|_| DesugarError {
-                    message: format!("invalid de Bruijn index: {}", s),
-                    span: sexp.span(),
-                })?;
-                Ok(Expr::Bound(idx))
+                // de Bruijn index — only if the rest is a valid integer
+                if let Ok(idx) = s[1..].parse::<usize>() {
+                    Ok(Expr::Bound(idx))
+                } else {
+                    Ok(Expr::Sym(s.clone()))
+                }
             } else {
                 // Treat as symbol by default (constructors, sort names, etc.)
                 Ok(Expr::Sym(s.clone()))

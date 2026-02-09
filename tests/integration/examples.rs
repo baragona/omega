@@ -268,3 +268,22 @@ fn torture_example() {
     assert!(results.iter().any(|r| r.contains("Proof cong-succ-zero: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof cong-add-zero: VALID")));
 }
+
+#[test]
+fn string_lib() {
+    let results = check_example("libs/string.omega");
+    assert!(results.iter().any(|r| r.contains("Theory StringLib: registered OK")));
+}
+
+#[test]
+fn codegen_demo_example() {
+    let results = check_example("examples/codegen-demo.omega");
+    assert!(results.iter().any(|r| r.contains("Theory StringLib: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Theory CodeGen: registered OK")));
+    // Check that emit produces actual C code
+    assert!(results.iter().any(|r| r.contains("hello, world")));
+    assert!(results.iter().any(|r| r.contains("return 0;")));
+    assert!(results.iter().any(|r| r.contains("int main()")));
+    assert!(results.iter().any(|r| r.contains("#include <stdio.h>")));
+    assert!(results.iter().any(|r| r.contains("no empty")));
+}

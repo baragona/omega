@@ -1,5 +1,6 @@
 /// Command dispatch: process top-level forms from the parser.
-use omega_core::derivation::Context;
+use omega_core::derivation::{normalize_expr, Context};
+use omega_core::expr::Expr;
 use omega_elaborate::elaborate::elaborate;
 use omega_elaborate::tactic::Tactic;
 use omega_syntax::desugar::{Command, TacticCmd};
@@ -145,6 +146,41 @@ pub fn process_command(session: &mut Session, cmd: Command) -> Result<String, St
                 metatheorem, rule_name, theory
             ))
         }
+
+        Command::Emit { theory, expr } => {
+            let th = session
+                .kernel
+                .get_theory(&theory)
+                .ok_or_else(|| format!("emit: unknown theory '{}'", theory))?
+                .clone();
+
+            // Normalize the expression using the theory's rewrite rules
+            let mut fuel = 10_000usize;
+            let normalized = normalize_expr(&expr, &th.rewrites, &mut fuel);
+
+            // Flatten the rope tree to text
+            let mut buf = String::new();
+            flatten_rope(&normalized, &mut buf);
+            Ok(format!("Emit:\n{}", buf))
+        }
+    }
+}
+
+/// Flatten a rope expression tree into a string buffer.
+/// Recognizes: cat(a, b), empty, newline, and Sym(s) as literal text.
+fn flatten_rope(expr: &Expr, buf: &mut String) {
+    match expr {
+        Expr::Sym(s) => match s.as_str() {
+            "empty" => {}
+            "newline" => buf.push('\n'),
+            _ => buf.push_str(s),
+        },
+        Expr::App(args) if args.len() == 3 && args[0] == Expr::Sym("cat".to_string()) => {
+            flatten_rope(&args[1], buf);
+            flatten_rope(&args[2], buf);
+        }
+        // Fallback: print the expression debug form
+        other => buf.push_str(&format!("{:?}", other)),
     }
 }
 
