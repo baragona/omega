@@ -219,6 +219,45 @@ fn compiler_demo_example() {
 }
 
 #[test]
+fn rust_types() {
+    let results = check_example("libs/omega-rust/rust-types.omega");
+    assert!(results.iter().any(|r| r.contains("Theory RustTypes: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof box-u32-eq: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof static-outlives-any: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof u32-is-copy: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof pair-copy: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof option-u32-copy: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof static-ref-subtype: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof subtype-chain: VALID")));
+}
+
+#[test]
+fn borrow_checker() {
+    let results = check_example("libs/omega-rust/borrow.omega");
+    assert!(results.iter().any(|r| r.contains("Theory BorrowChecker: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof type-literal-u32: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof box-construction: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof box-deref-literal: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof box-move-from-context: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof resource-split: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof nested-box-pair: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof ref-creation: VALID")));
+}
+
+#[test]
+fn rust_eval() {
+    let results = check_example("libs/omega-rust/eval.omega");
+    assert!(results.iter().any(|r| r.contains("Theory RustEval: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof eval-fst-pair: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof eval-deref-box: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof eval-unwrap-some: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof eval-is-some-true: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof eval-if-true: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof eval-one-plus-two: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof eval-compound: VALID")));
+}
+
+#[test]
 fn torture_example() {
     let results = check_example("examples/torture.omega");
     assert!(results.iter().any(|r| r.contains("Theory TortureArith: registered OK")));

@@ -1,0 +1,185 @@
+;;; Phase 3: The Interpreter (Operational Semantics)
+;;;
+;;; Defines the evaluation rules for a Rust-like language using
+;;; Omega's rewrite rules. The kernel normalizes expressions
+;;; automatically, so proving `fst(pair(a, b)) = a` is just eq-refl!
+;;;
+;;; Computation rules (rewrite rules = small-step semantics):
+;;;   - Pair projection:   fst((a, b)) → a,  snd((a, b)) → b
+;;;   - Box dereference:   *Box::new(v) → v
+;;;   - Option matching:   unwrap(Some(v)) → v
+;;;   - Result matching:   unwrap-ok(Ok(v)) → v
+;;;   - Conditionals:      if true then a else b → a
+;;;   - Arithmetic:        0 + n → n,  S(n) + m → S(n + m)
+;;;
+;;; Proved here:
+;;;   1.  fst((42, true)) = 42
+;;;   2.  snd((42, true)) = true
+;;;   3.  *Box::new(42) = 42
+;;;   4.  unwrap(Some(42)) = 42
+;;;   5.  is_some(Some(42)) = true
+;;;   6.  is_some(None) = false
+;;;   7.  if true then 42 else 0 = 42
+;;;   8.  if false then 42 else 0 = 0
+;;;   9.  1 + 2 = 3  (via Peano arithmetic)
+;;;  10.  Compound: fst((*Box::new(42), unwrap(Some(true)))) = 42
+
+(theory RustEval
+
+  ;; ── Sorts ──
+  (sort Val)
+  (sort Prop)
+
+  ;; ── Primitive values ──
+  (constructor zero : Val)                           ;; 0u32
+  (constructor succ : (-> Val Val))                  ;; successor
+  (constructor tt : Val)                             ;; true
+  (constructor ff : Val)                             ;; false
+  (constructor unit : Val)                           ;; ()
+
+  ;; ── Compound values ──
+  (constructor pair : (-> Val Val Val))              ;; (a, b)
+  (constructor some : (-> Val Val))                  ;; Some(v)
+  (constructor none : Val)                           ;; None
+  (constructor ok-val : (-> Val Val))                ;; Ok(v)
+  (constructor err-val : (-> Val Val))               ;; Err(e)
+  (constructor box-val : (-> Val Val))               ;; Box::new(v)
+
+  ;; ── Operations (expressions that compute) ──
+  (constructor fst : (-> Val Val))                   ;; e.0
+  (constructor snd : (-> Val Val))                   ;; e.1
+  (constructor deref : (-> Val Val))                 ;; *e
+  (constructor unwrap : (-> Val Val))                ;; e.unwrap()
+  (constructor unwrap-ok : (-> Val Val))             ;; e.unwrap() for Result
+  (constructor is-some : (-> Val Val))               ;; e.is_some()
+  (constructor is-ok : (-> Val Val))                 ;; e.is_ok()
+  (constructor if-then-else : (-> Val Val Val Val))  ;; if c { a } else { b }
+  (constructor add : (-> Val Val Val))               ;; a + b
+
+  ;; ══════════════════════════════════════════
+  ;; COMPUTATION RULES (operational semantics)
+  ;; ══════════════════════════════════════════
+
+  ;; Pair projection
+  (rewrite eval-fst (fst (pair ?a ?b)) ?a)
+  (rewrite eval-snd (snd (pair ?a ?b)) ?b)
+
+  ;; Box dereference
+  (rewrite eval-deref (deref (box-val ?v)) ?v)
+
+  ;; Option operations
+  (rewrite eval-unwrap (unwrap (some ?x)) ?x)
+  (rewrite eval-is-some-yes (is-some (some ?x)) tt)
+  (rewrite eval-is-some-no (is-some none) ff)
+
+  ;; Result operations
+  (rewrite eval-unwrap-ok (unwrap-ok (ok-val ?x)) ?x)
+  (rewrite eval-is-ok-yes (is-ok (ok-val ?x)) tt)
+  (rewrite eval-is-ok-no (is-ok (err-val ?x)) ff)
+
+  ;; Conditional evaluation
+  (rewrite eval-if-true (if-then-else tt ?a ?b) ?a)
+  (rewrite eval-if-false (if-then-else ff ?a ?b) ?b)
+
+  ;; Peano arithmetic
+  (rewrite eval-add-zero (add zero ?n) ?n)
+  (rewrite eval-add-succ (add (succ ?n) ?m) (succ (add ?n ?m)))
+
+  ;; ── Equality judgment ──
+  (constructor eq : (-> Val Val Prop))
+  (judgment (proves ?P) :where P : Prop)
+
+  (rule eq-refl
+    :premises ()
+    :conclusion (proves (eq ?a ?a)))
+
+  (rule eq-symm
+    :premises ((proves (eq ?a ?b)))
+    :conclusion (proves (eq ?b ?a)))
+
+  (rule eq-trans
+    :premises ((proves (eq ?a ?b)) (proves (eq ?b ?c)))
+    :conclusion (proves (eq ?a ?c))))
+
+(check-theory RustEval)
+
+
+;; ════════════════════════════════════════════════════════════
+;; PROOFS: All by eq-refl — the rewrite rules normalize both
+;; sides to the same value, making equality automatic!
+;; ════════════════════════════════════════════════════════════
+
+;; Let one = succ(zero), two = succ(succ(zero)), three = succ(succ(succ(zero)))
+
+;; 1. fst((42, true)) = 42
+(proof eval-fst-pair
+  :theory RustEval
+  :goal (proves (eq (fst (pair (succ zero) tt)) (succ zero)))
+  :derivation (eq-refl))
+
+;; 2. snd((42, true)) = true
+(proof eval-snd-pair
+  :theory RustEval
+  :goal (proves (eq (snd (pair (succ zero) tt)) tt))
+  :derivation (eq-refl))
+
+;; 3. *Box::new(42) = 42
+(proof eval-deref-box
+  :theory RustEval
+  :goal (proves (eq (deref (box-val (succ zero))) (succ zero)))
+  :derivation (eq-refl))
+
+;; 4. unwrap(Some(42)) = 42
+(proof eval-unwrap-some
+  :theory RustEval
+  :goal (proves (eq (unwrap (some (succ zero))) (succ zero)))
+  :derivation (eq-refl))
+
+;; 5. is_some(Some(42)) = true
+(proof eval-is-some-true
+  :theory RustEval
+  :goal (proves (eq (is-some (some (succ zero))) tt))
+  :derivation (eq-refl))
+
+;; 6. is_some(None) = false
+(proof eval-is-some-false
+  :theory RustEval
+  :goal (proves (eq (is-some none) ff))
+  :derivation (eq-refl))
+
+;; 7. if true then 42 else 0 = 42
+(proof eval-if-true
+  :theory RustEval
+  :goal (proves (eq (if-then-else tt (succ zero) zero) (succ zero)))
+  :derivation (eq-refl))
+
+;; 8. if false then 42 else 0 = 0
+(proof eval-if-false
+  :theory RustEval
+  :goal (proves (eq (if-then-else ff (succ zero) zero) zero))
+  :derivation (eq-refl))
+
+;; 9. 1 + 2 = 3  (Peano arithmetic, fully computed by rewrite rules)
+;;    add(succ(zero), succ(succ(zero)))
+;;    → succ(add(zero, succ(succ(zero))))     [eval-add-succ]
+;;    → succ(succ(succ(zero)))                [eval-add-zero]
+;;    = 3 ✓
+(proof eval-one-plus-two
+  :theory RustEval
+  :goal (proves (eq (add (succ zero) (succ (succ zero)))
+                    (succ (succ (succ zero)))))
+  :derivation (eq-refl))
+
+;; 10. Compound evaluation:
+;;     fst((*Box::new(1), unwrap(Some(true)))) = 1
+;;
+;;     Inner: deref(box-val(succ(zero))) → succ(zero)
+;;     Inner: unwrap(some(tt)) → tt
+;;     Then:  fst(pair(succ(zero), tt)) → succ(zero)
+;;     All by normalization!
+(proof eval-compound
+  :theory RustEval
+  :goal (proves (eq (fst (pair (deref (box-val (succ zero)))
+                               (unwrap (some tt))))
+                    (succ zero)))
+  :derivation (eq-refl))
