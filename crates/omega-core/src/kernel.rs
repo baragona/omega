@@ -1,9 +1,11 @@
-/// The Omega kernel: the trusted core with exactly four operations.
+/// The Omega kernel: the trusted core with exactly three operations.
 ///
 /// 1. `register_theory` — validate and load a theory
 /// 2. `check_derivation` — verify a proof tree
 /// 3. `check_metatheorem` — verify a structural-induction proof
-/// 4. `reflect` — promote a proven metatheorem into a rule
+///
+/// Reflection (promoting metatheorems into rules) is handled at the
+/// driver level — it's proof engineering, not mathematical expressiveness.
 use std::collections::HashMap;
 
 use crate::derivation::{self, Context, Derivation};
@@ -11,8 +13,9 @@ use crate::error::{OmegaError, Result};
 use crate::expr::Name;
 use crate::expr::Expr;
 use crate::interned_check;
+use crate::judgment::Rule;
 use crate::metatheorem::{self, MetaTheorem};
-use crate::reflection::{self, ReflectionRecord};
+use crate::reflection;
 use crate::theory::Theory;
 
 /// The kernel state.
@@ -21,8 +24,6 @@ pub struct Kernel {
     theories: HashMap<Name, Theory>,
     /// Verified metatheorems, keyed by name.
     verified_metatheorems: HashMap<Name, MetaTheorem>,
-    /// Reflection records for audit trail.
-    reflections: Vec<ReflectionRecord>,
     /// Use the interned (hash-consed) derivation checker for O(1) equality.
     pub use_interned: bool,
     /// Cached interned theories for O(1) equality during proof checking.
@@ -35,7 +36,6 @@ impl Kernel {
         Kernel {
             theories: HashMap::new(),
             verified_metatheorems: HashMap::new(),
-            reflections: Vec::new(),
             use_interned: true,
             interned_cache: HashMap::new(),
         }
@@ -99,35 +99,19 @@ impl Kernel {
         Ok(())
     }
 
-    /// Operation 4: Reflect a proven metatheorem as a new rule.
-    pub fn reflect(&mut self, metatheorem_name: &str, rule_name: &str) -> Result<()> {
-        let mt = self
-            .verified_metatheorems
-            .get(metatheorem_name)
-            .ok_or_else(|| OmegaError::UnprovenMetatheorem(metatheorem_name.to_string()))?
-            .clone();
-
+    /// Add a rule to a registered theory (e.g., from driver-level reflection).
+    pub fn add_rule(&mut self, theory_name: &str, rule: Rule) -> Result<()> {
         let theory = self
             .theories
-            .get(&mt.theory_name)
-            .ok_or_else(|| OmegaError::UnknownTheory(mt.theory_name.clone()))?;
-
-        let (rule, record) = reflection::reflect(&mt, rule_name, theory)?;
-
-        // Add the rule to the theory
-        let theory = self
-            .theories
-            .get_mut(&mt.theory_name)
-            .ok_or_else(|| OmegaError::UnknownTheory(mt.theory_name.clone()))?;
+            .get_mut(theory_name)
+            .ok_or_else(|| OmegaError::UnknownTheory(theory_name.to_string()))?;
 
         if self.use_interned {
-            if let Some(cached) = self.interned_cache.get_mut(&mt.theory_name) {
+            if let Some(cached) = self.interned_cache.get_mut(theory_name) {
                 cached.add_rule(&rule);
             }
         }
         theory.add_rule(rule)?;
-        self.reflections.push(record);
-
         Ok(())
     }
 
@@ -151,9 +135,9 @@ impl Kernel {
         self.verified_metatheorems.keys().map(|s| s.as_str()).collect()
     }
 
-    /// Get reflection records for audit.
-    pub fn reflections(&self) -> &[ReflectionRecord] {
-        &self.reflections
+    /// Get a verified metatheorem by name.
+    pub fn get_verified_metatheorem(&self, name: &str) -> Option<&MetaTheorem> {
+        self.verified_metatheorems.get(name)
     }
 }
 
@@ -169,6 +153,7 @@ mod tests {
     use crate::expr::Expr;
     use crate::judgment::{ConstructorDecl, JudgmentForm, Rule, SortDecl};
     use crate::metatheorem::{MetaCase, MetaProof, MetaTheorem};
+    use crate::reflection;
 
     fn make_prop_logic() -> Theory {
         let mut theory = Theory::new("PropLogic");
@@ -348,14 +333,13 @@ mod tests {
         };
         kernel.check_metatheorem(mt).unwrap();
 
-        // 4. Reflect the metatheorem as a new rule
-        kernel.reflect("and-comm", "proves/and-comm").unwrap();
-
-        // Verify the rule exists
+        // 4. Reflect the metatheorem as a new rule (driver-level operation)
+        let mt = kernel.get_verified_metatheorem("and-comm").unwrap().clone();
         let theory = kernel.get_theory("PropLogic").unwrap();
-        let rule = theory.get_rule("proves/and-comm").unwrap();
+        let (rule, _record) = reflection::reflect(&mt, "proves/and-comm", theory).unwrap();
         assert!(rule.reflected);
         assert_eq!(rule.provenance, Some("and-comm".to_string()));
+        kernel.add_rule("PropLogic", rule).unwrap();
 
         // 5. Use the reflected rule in a proof
         let goal2 = Expr::app(vec![

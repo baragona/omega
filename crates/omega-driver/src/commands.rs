@@ -1,6 +1,7 @@
 /// Command dispatch: process top-level forms from the parser.
 use omega_core::derivation::{normalize_expr, Context};
 use omega_core::expr::Expr;
+use omega_core::reflection;
 use omega_elaborate::elaborate::elaborate;
 use omega_elaborate::tactic::Tactic;
 use omega_syntax::desugar::{Command, TacticCmd};
@@ -137,9 +138,22 @@ pub fn process_command(session: &mut Session, cmd: Command) -> Result<String, St
             rule_name,
             theory,
         } => {
+            // Reflection is a driver-level operation: look up the verified
+            // metatheorem, build the admissible rule, and add it to the theory.
+            let mt = session
+                .kernel
+                .get_verified_metatheorem(&metatheorem)
+                .ok_or_else(|| format!("Reflection failed: unproven metatheorem: {}", metatheorem))?
+                .clone();
+            let th = session
+                .kernel
+                .get_theory(&mt.theory_name)
+                .ok_or_else(|| format!("Reflection failed: unknown theory: {}", mt.theory_name))?;
+            let (rule, _record) = reflection::reflect(&mt, &rule_name, th)
+                .map_err(|e| format!("Reflection failed: {}", e))?;
             session
                 .kernel
-                .reflect(&metatheorem, &rule_name)
+                .add_rule(&mt.theory_name, rule)
                 .map_err(|e| format!("Reflection failed: {}", e))?;
             Ok(format!(
                 "Reflected {} as {} in theory {}",

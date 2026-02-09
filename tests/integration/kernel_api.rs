@@ -4,6 +4,7 @@ use omega_core::expr::Expr;
 use omega_core::judgment::{ConstructorDecl, JudgmentForm, Rule, SortDecl};
 use omega_core::kernel::Kernel;
 use omega_core::metatheorem::{MetaCase, MetaProof, MetaTheorem};
+use omega_core::reflection;
 use omega_core::theory::Theory;
 
 fn make_minimal_logic() -> Theory {
@@ -140,8 +141,11 @@ fn kernel_full_reflection_pipeline() {
     };
     kernel.check_metatheorem(mt).unwrap();
 
-    // 2. Reflect it
-    kernel.reflect("and-comm", "proves/and-comm").unwrap();
+    // 2. Reflect it (driver-level operation)
+    let mt = kernel.get_verified_metatheorem("and-comm").unwrap().clone();
+    let theory = kernel.get_theory("MinLogic").unwrap();
+    let (rule, _record) = reflection::reflect(&mt, "proves/and-comm", theory).unwrap();
+    kernel.add_rule("MinLogic", rule).unwrap();
 
     // 3. Use the reflected rule
     let goal = Expr::app(vec![
