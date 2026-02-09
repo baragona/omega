@@ -1,36 +1,41 @@
-;;; Number Theory via Induction
+;;; Number Theory via Induction (with Miller Pattern Unification)
 ;;;
-;;; Real formal verification: theorems about ALL natural numbers,
-;;; not just specific values. Each proof uses structural induction
-;;; over the naturals, with the kernel verifying every step.
+;;; Real formal verification: theorems about ALL natural numbers.
+;;; Each proof uses structural induction over the naturals, with the
+;;; kernel verifying every step.
+;;;
+;;; This version leverages Miller's pattern unification to state
+;;; properties inline — no more boilerplate constructor + intro/elim
+;;; rules for each predicate.
 ;;;
 ;;; Proved here:
 ;;;   Lemma 1:  n + 0 = n           (right identity of addition)
 ;;;   Lemma 2:  n + S(m) = S(n + m) (right successor)
 ;;;   Theorem:  n + m = m + n       (commutativity of addition)
 
-(theory PeanoInduction
+;; ── Base Theory ──
+;; Shared definitions used by all proofs
+
+(theory PeanoBase
   (sort Nat)
   (sort Prop)
 
-  ;; ── Data ──
+  ;; Data constructors
   (constructor z : Nat)
   (constructor s : (-> Nat Nat))
   (constructor add : (-> Nat Nat Nat))
 
-  ;; ── Propositions ──
+  ;; Propositions
   (constructor eq : (-> Nat Nat Prop))
 
-  ;; ── Computation rules ──
-  ;; Addition is defined by recursion on the first argument:
-  ;;   0 + n = n,   S(n) + m = S(n + m)
+  ;; Computation rules
   (rewrite add-z (add z ?n) ?n)
   (rewrite add-s (add (s ?n) ?m) (s (add ?n ?m)))
 
-  ;; ── Judgment ──
+  ;; Judgment
   (judgment (proves ?P) :where P : Prop)
 
-  ;; ── Equational reasoning ──
+  ;; Equational reasoning
   (rule eq-refl
     :premises ()
     :conclusion (proves (eq ?a ?a)))
@@ -47,49 +52,24 @@
     :premises ((proves (eq ?a ?b)))
     :conclusion (proves (eq (s ?a) (s ?b))))
 
-  ;; ── Induction principle ──
-  ;; To prove P(n) for all n:
-  ;;   Premise 0: prove P(0)              [base case]
-  ;;   Premise 1: prove P(S(n)) given P(n) [inductive step with IH in context]
+  ;; Induction principle (higher-order via Miller unification)
+  ;; ?P is solved to a lambda by the kernel when matching against the goal.
   (rule nat-ind
     :premises ((proves (?P z)) (proves (?P (s ?n))))
     :context ((1 (proves (?P ?n))))
-    :conclusion (proves (?P ?n)))
+    :conclusion (proves (?P ?n))))
 
-  ;; ── Predicate encodings ──
-  ;; Since Omega uses first-order matching, we encode each property
-  ;; as a constructor (Nat → Prop) with intro/elim rules.
+(check-theory PeanoBase)
 
-  ;; P₁(n) ≡ n + 0 = n
-  (constructor add-right-z : (-> Nat Prop))
-  (rule arz-i
-    :premises ((proves (eq (add ?n z) ?n)))
-    :conclusion (proves (add-right-z ?n)))
-  (rule arz-e
-    :premises ((proves (add-right-z ?n)))
-    :conclusion (proves (eq (add ?n z) ?n)))
 
-  ;; P₂(n) ≡ ∀m. n + S(m) = S(n + m)
-  (constructor add-right-s : (-> Nat Prop))
-  (rule ars-i
-    :premises ((proves (eq (add ?n (s ?m)) (s (add ?n ?m)))))
-    :conclusion (proves (add-right-s ?n)))
-  (rule ars-e
-    :premises ((proves (add-right-s ?n)))
-    :conclusion (proves (eq (add ?n (s ?m)) (s (add ?n ?m)))))
+;; ── Induction Theory ──
+;; Imports PeanoBase and adds proved lemmas as axioms for use
+;; in subsequent proofs.
 
-  ;; P₃(n) ≡ ∀m. n + m = m + n
-  (constructor add-comm-p : (-> Nat Prop))
-  (rule ac-i
-    :premises ((proves (eq (add ?n ?m) (add ?m ?n))))
-    :conclusion (proves (add-comm-p ?n)))
-  (rule ac-e
-    :premises ((proves (add-comm-p ?n)))
-    :conclusion (proves (eq (add ?n ?m) (add ?m ?n))))
+(theory PeanoInduction
+  (import PeanoBase)
 
-  ;; ── Proved lemmas as rules ──
-  ;; These are verified by induction below.  Including them as rules
-  ;; lets subsequent proofs (commutativity) reference them.
+  ;; Proved lemmas (used as axioms in later proofs)
   (rule right-z-lemma
     :premises ()
     :conclusion (proves (eq (add ?n z) ?n)))
@@ -105,69 +85,69 @@
 ;; Lemma 1:  ∀n. n + 0 = n    (right identity of addition)
 ;; ════════════════════════════════════════════════════════════
 ;;
-;; Proof by induction on n.
+;; Proof by induction on n, with property P(n) ≡ n + 0 = n.
+;; The kernel solves ?P → λx.(eq (add x z) x) via Miller unification.
 ;;
-;; Base case:  0 + 0 = 0
-;;   By rewrite:  (add z z) → z.  Then eq-refl.
-;;
-;; Step case:  Assume n + 0 = n.  Prove S(n) + 0 = S(n).
-;;   By rewrite:  (add (s n) z) → (s (add n z)).
-;;   By eq-succ on IH:  S(n + 0) = S(n).
+;; Base case:  (eq (add z z) z) → rewrites to (eq z z) → eq-refl ✓
+;; Step case:  (eq (add (s n) z) (s n)) → rewrites to (eq (s (add n z)) (s n))
+;;             eq-succ on IH: (eq (s (add n z)) (s n)) ✓
 
 (proof add-right-zero
-  :theory PeanoInduction
-  :goal (proves (add-right-z ?n))
+  :theory PeanoBase
+  :goal (proves (eq (add ?n z) ?n))
   :derivation
     (nat-ind
-      (arz-i (eq-refl))
-      (arz-i (eq-succ (arz-e (assumption))))))
+      (eq-refl)
+      (eq-succ (assumption))))
 
 
 ;; ════════════════════════════════════════════════════════════
 ;; Lemma 2:  ∀n,m. n + S(m) = S(n + m)  (right successor)
 ;; ════════════════════════════════════════════════════════════
 ;;
-;; Proof by induction on n  (m is universally quantified).
+;; Proof by induction on n, with P(n) ≡ n + S(m) = S(n + m).
+;; The kernel solves ?P → λx.(eq (add x (s ?m)) (s (add x ?m))).
 ;;
-;; Base case:  0 + S(m) = S(0 + m)
-;;   Both sides rewrite to S(m).  Then eq-refl.
+;; Note: ?m is free in the property — this is fine because it stays
+;; as a meta-variable throughout.
 ;;
-;; Step case:  Assume n + S(m) = S(n + m).  Prove S(n) + S(m) = S(S(n) + m).
-;;   LHS rewrites:  (add (s n) (s m)) → (s (add n (s m)))
-;;   RHS rewrites:  (s (add (s n) m)) → (s (s (add n m)))
-;;   By eq-succ on IH:  S(n + S(m)) = S(S(n + m)).
+;; Base case:  (eq (add z (s m)) (s (add z m))) → both sides rewrite to (s m) → eq-refl ✓
+;; Step case:  (eq (add (s n) (s m)) (s (add (s n) m)))
+;;           → (eq (s (add n (s m))) (s (s (add n m))))  [after rewrites]
+;;           → eq-succ on IH ✓
 
 (proof add-right-succ
-  :theory PeanoInduction
-  :goal (proves (add-right-s ?n))
+  :theory PeanoBase
+  :goal (proves (eq (add ?n (s ?m)) (s (add ?n ?m))))
   :derivation
     (nat-ind
-      (ars-i (eq-refl))
-      (ars-i (eq-succ (ars-e (assumption))))))
+      (eq-refl)
+      (eq-succ (assumption))))
 
 
 ;; ════════════════════════════════════════════════════════════
 ;; Theorem:  ∀n,m. n + m = m + n  (commutativity of addition)
 ;; ════════════════════════════════════════════════════════════
 ;;
-;; Proof by induction on n  (m is universally quantified).
+;; Proof by induction on n, with P(n) ≡ n + m = m + n.
+;; The kernel solves ?P → λx.(eq (add x ?m) (add ?m x)).
 ;;
-;; Base case:  0 + m = m + 0
-;;   LHS rewrites to m.  RHS = m + 0 = m by right-z-lemma.
-;;   So:  eq-symm(right-z-lemma).
+;; Base case:  (eq (add z m) (add m z)) → LHS rewrites to m
+;;             RHS: (add m z) = m by right-z-lemma
+;;             So: eq-symm(right-z-lemma) ✓
 ;;
-;; Step case:  Assume n + m = m + n.  Prove S(n) + m = m + S(n).
-;;   LHS rewrites:  (add (s n) m) → (s (add n m))
-;;   Chain:  S(n + m) = S(m + n)         [eq-succ on IH]
-;;           S(m + n) = m + S(n)          [eq-symm of right-s-lemma]
-;;   So:  eq-trans(eq-succ(IH), eq-symm(right-s-lemma))
+;; Step case:  (eq (add (s n) m) (add m (s n)))
+;;           → (eq (s (add n m)) (add m (s n)))  [LHS rewrites]
+;;           Chain: S(n + m) = S(m + n)     [eq-succ on IH]
+;;                  S(m + n) = m + S(n)     [eq-symm of right-s-lemma]
+;;           eq-trans(eq-succ(IH), eq-symm(right-s-lemma)) ✓
 
 (proof add-comm
   :theory PeanoInduction
-  :goal (proves (add-comm-p ?n))
+  :goal (proves (eq (add ?n ?m) (add ?m ?n)))
   :derivation
     (nat-ind
-      (ac-i (eq-symm (right-z-lemma)))
-      (ac-i (eq-trans
-              (eq-succ (ac-e (assumption)))
-              (eq-symm (right-s-lemma))))))
+      (eq-symm (right-z-lemma))
+      (eq-trans
+        (eq-succ (assumption))
+        (eq-symm (right-s-lemma)))))

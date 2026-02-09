@@ -278,7 +278,7 @@ fn apply_fixpoint(arena: &mut Arena, h: HExpr, subst: &HSubst) -> HExpr {
 }
 
 /// Bidirectional unification on HExprs using native Arena method.
-fn unify_h(arena: &Arena, a: HExpr, b: HExpr) -> Option<HSubst> {
+fn unify_h(arena: &mut Arena, a: HExpr, b: HExpr) -> Option<HSubst> {
     let mut subst = HSubst::new();
     if arena.unify_exprs(a, b, &mut subst) {
         Some(subst)
@@ -287,7 +287,8 @@ fn unify_h(arena: &Arena, a: HExpr, b: HExpr) -> Option<HSubst> {
     }
 }
 
-/// Normalize an HExpr by exhaustively applying rewrite rules (innermost strategy).
+/// Normalize an HExpr by exhaustively applying beta-reduction and
+/// rewrite rules (innermost strategy).
 /// Memoized via reduce_cache. Returns early if fuel is exhausted.
 fn normalize(
     arena: &mut Arena,
@@ -296,26 +297,33 @@ fn normalize(
     h: HExpr,
     fuel: &mut usize,
 ) -> HExpr {
-    if rewrites.is_empty() || *fuel == 0 {
+    if *fuel == 0 {
         return h;
     }
     if let Some(&cached) = cache.get(&h) {
         return cached;
     }
 
+    // Step 0: WHNF first to reduce any head beta-redexes
+    let whnf_ed = arena.whnf(h);
+
+    if rewrites.is_empty() {
+        return whnf_ed;
+    }
+
     // Step 1: Normalize children
-    let children_normalized = if let Some(args) = arena.app_args(h) {
+    let children_normalized = if let Some(args) = arena.app_args(whnf_ed) {
         let new_args: Vec<HExpr> = args
             .iter()
             .map(|&a| normalize(arena, rewrites, cache, a, fuel))
             .collect();
         if new_args == args {
-            h
+            whnf_ed
         } else {
             arena.app(new_args)
         }
     } else {
-        h
+        whnf_ed
     };
 
     // Step 2: Try rewrite rules at the head
@@ -511,6 +519,7 @@ fn check_inner(
                 let mut premise_goal =
                     arena.apply_meta_subst(premise_pattern, &local_subst);
                 premise_goal = arena.apply_meta_subst(premise_goal, global_subst);
+                premise_goal = arena.whnf(premise_goal);
 
                 // Bidirectional: infer conclusion and unify when metas remain
                 if arena.has_metas(premise_goal) {
@@ -528,6 +537,7 @@ fn check_inner(
                                 global_subst.insert(k.clone(), *v);
                             }
                             premise_goal = arena.apply_meta_subst(premise_goal, &s);
+                            premise_goal = arena.whnf(premise_goal);
                         }
                     }
                 }
@@ -539,7 +549,8 @@ fn check_inner(
                         .filter(|(idx, _)| *idx == i)
                         .map(|(_, h)| {
                             let resolved = arena.apply_meta_subst(*h, &local_subst);
-                            arena.apply_meta_subst(resolved, global_subst)
+                            let resolved = arena.apply_meta_subst(resolved, global_subst);
+                            arena.whnf(resolved)
                         })
                         .collect();
                     if extensions.is_empty() {

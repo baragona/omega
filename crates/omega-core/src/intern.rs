@@ -206,21 +206,29 @@ impl Arena {
 
     /// Bidirectional unification on HExprs (no tree conversion).
     /// Both sides can have metas; returns a substitution if successful.
+    /// Includes WHNF reduction and Miller fragment for arity mismatch.
     pub fn unify_exprs(
-        &self,
+        &mut self,
         a: HExpr,
         b: HExpr,
         subst: &mut HashMap<Name, HExpr>,
     ) -> bool {
+        // WHNF both sides
+        let a = self.whnf(a);
+        let b = self.whnf(b);
         if a == b {
             return true;
         }
-        match (self.node(a), self.node(b)) {
+        // Clone nodes to avoid borrow conflicts
+        let a_node = self.nodes[a.0 as usize].clone();
+        let b_node = self.nodes[b.0 as usize].clone();
+
+        match (&a_node, &b_node) {
             (HNode::Meta(name), _) => {
                 if let Some(&existing) = subst.get(name) {
                     self.unify_exprs(existing, b, subst)
                 } else {
-                    // Occurs check: prevent circular bindings like ?n → (s ?n)
+                    // Occurs check
                     if self.meta_vars(b).contains(name) {
                         return false;
                     }
@@ -244,6 +252,19 @@ impl Arena {
             (HNode::Bound(a_i), HNode::Bound(b_i)) => a_i == b_i,
             (HNode::App(aa), HNode::App(ba)) => {
                 if aa.len() != ba.len() {
+                    // Miller fragment: try if either side is meta-headed
+                    if let HNode::Meta(m) = self.nodes[aa[0].0 as usize].clone() {
+                        let args: Vec<HExpr> = aa[1..].to_vec();
+                        if self.try_miller_unify_h(&m, &args, b, subst) {
+                            return true;
+                        }
+                    }
+                    if let HNode::Meta(m) = self.nodes[ba[0].0 as usize].clone() {
+                        let args: Vec<HExpr> = ba[1..].to_vec();
+                        if self.try_miller_unify_h(&m, &args, a, subst) {
+                            return true;
+                        }
+                    }
                     return false;
                 }
                 let aa = aa.clone();
@@ -274,6 +295,69 @@ impl Arena {
                 self.unify_exprs(t1, t2, subst) && self.unify_exprs(b1, b2, subst)
             }
             _ => false,
+        }
+    }
+
+    /// Miller pattern fragment for HExpr unification.
+    fn try_miller_unify_h(
+        &mut self,
+        meta_name: &str,
+        args: &[HExpr],
+        target: HExpr,
+        subst: &mut HashMap<Name, HExpr>,
+    ) -> bool {
+        // Apply current subst to each arg
+        let resolved_args: Vec<HExpr> = args
+            .iter()
+            .map(|&a| {
+                if let HNode::Meta(m) = self.nodes[a.0 as usize].clone() {
+                    if let Some(&v) = subst.get(&m) { v } else { a }
+                } else { a }
+            })
+            .collect();
+
+        // Check strict Miller condition
+        let mut arg_values = Vec::new();
+        for &arg in &resolved_args {
+            match self.nodes[arg.0 as usize].clone() {
+                HNode::Free(_) | HNode::Bound(_) => {
+                    if arg_values.contains(&arg) { return false; }
+                    arg_values.push(arg);
+                }
+                HNode::Meta(m) => {
+                    let target_vars = self.abstractable_vars(target);
+                    let mut found = false;
+                    for &candidate in &target_vars {
+                        if !arg_values.contains(&candidate) {
+                            subst.insert(m.clone(), candidate);
+                            arg_values.push(candidate);
+                            found = true;
+                            break;
+                        }
+                    }
+                    if !found { return false; }
+                }
+                _ => return false,
+            }
+        }
+
+        // Abstract and wrap
+        let mut body = target;
+        for &arg_val in arg_values.iter().rev() {
+            body = self.abstract_over(body, arg_val, 0);
+        }
+        let mut result = body;
+        for (i, _) in arg_values.iter().enumerate().rev() {
+            let hint = format!("x{}", i);
+            let ty = self.sym("_");
+            result = self.binder(BinderKind::Lambda, &hint, ty, result);
+        }
+
+        if let Some(&existing) = subst.get(meta_name) {
+            existing == result
+        } else {
+            subst.insert(meta_name.to_string(), result);
+            true
         }
     }
 
@@ -392,7 +476,7 @@ impl Arena {
 
     /// Pattern match an HExpr pattern against an HExpr expression.
     pub fn match_expr(
-        &self,
+        &mut self,
         pattern: HExpr,
         expr: HExpr,
     ) -> Result<HashMap<Name, HExpr>, String> {
@@ -402,7 +486,7 @@ impl Arena {
     }
 
     fn match_inner(
-        &self,
+        &mut self,
         pattern: HExpr,
         expr: HExpr,
         subst: &mut HashMap<Name, HExpr>,
@@ -412,7 +496,11 @@ impl Arena {
             return Ok(());
         }
 
-        match (self.node(pattern), self.node(expr)) {
+        // Clone nodes to avoid borrow conflicts with &mut self
+        let pat_node = self.nodes[pattern.0 as usize].clone();
+        let expr_node = self.nodes[expr.0 as usize].clone();
+
+        match (&pat_node, &expr_node) {
             (HNode::Meta(name), _) => {
                 if let Some(&existing) = subst.get(name) {
                     if existing == expr {
@@ -430,15 +518,29 @@ impl Arena {
             (HNode::Bound(a), HNode::Bound(b)) if a == b => Ok(()),
             (HNode::App(pa), HNode::App(ea)) => {
                 if pa.len() != ea.len() {
+                    // Miller fragment: check if pattern head is a meta
+                    if let HNode::Meta(meta_name) = self.nodes[pa[0].0 as usize].clone() {
+                        let args: Vec<HExpr> = pa[1..].to_vec();
+                        return self.try_miller_match_h(&meta_name, &args, expr, subst);
+                    }
                     return Err("arity mismatch".to_string());
                 }
-                // Clone to avoid borrow issues
                 let pa = pa.clone();
                 let ea = ea.clone();
                 for (p, e) in pa.iter().zip(ea.iter()) {
                     self.match_inner(*p, *e, subst)?;
                 }
                 Ok(())
+            }
+            (HNode::App(pa), _) => {
+                // Pattern is App but expr is not: might be Miller if meta-headed
+                if pa.len() >= 2 {
+                    if let HNode::Meta(meta_name) = self.nodes[pa[0].0 as usize].clone() {
+                        let args: Vec<HExpr> = pa[1..].to_vec();
+                        return self.try_miller_match_h(&meta_name, &args, expr, subst);
+                    }
+                }
+                Err("structural mismatch".to_string())
             }
             (
                 HNode::Binder {
@@ -460,7 +562,401 @@ impl Arena {
                 self.match_inner(b1, b2, subst)?;
                 Ok(())
             }
-            _ => Err(format!("structural mismatch")),
+            _ => Err("structural mismatch".to_string()),
+        }
+    }
+
+    /// Miller pattern match on HExprs.
+    fn try_miller_match_h(
+        &mut self,
+        meta_name: &str,
+        args: &[HExpr],
+        target: HExpr,
+        subst: &mut HashMap<Name, HExpr>,
+    ) -> Result<(), String> {
+        // Apply current subst to each arg
+        let resolved_args: Vec<HExpr> = args
+            .iter()
+            .map(|&a| {
+                match self.node(a) {
+                    HNode::Meta(m) => {
+                        let m = m.clone();
+                        if let Some(&v) = subst.get(&m) { v } else { a }
+                    }
+                    _ => a,
+                }
+            })
+            .collect();
+
+        // Check strict Miller condition
+        let mut arg_values = Vec::new();
+        for &arg in &resolved_args {
+            match self.node(arg).clone() {
+                HNode::Free(_) | HNode::Bound(_) => {
+                    if arg_values.contains(&arg) {
+                        return Err("Miller: duplicate arg".to_string());
+                    }
+                    arg_values.push(arg);
+                }
+                HNode::Meta(m) => {
+                    let target_vars = self.abstractable_vars(target);
+                    let mut found = false;
+                    for &candidate in &target_vars {
+                        if !arg_values.contains(&candidate) {
+                            subst.insert(m.clone(), candidate);
+                            arg_values.push(candidate);
+                            found = true;
+                            break;
+                        }
+                    }
+                    if !found {
+                        return Err(format!("Miller: no candidate for ?{}", m));
+                    }
+                }
+                _ => return Err("Miller: compound arg".to_string()),
+            }
+        }
+
+        // Abstract each arg from target and wrap in lambdas
+        let mut body = target;
+        for &arg_val in arg_values.iter().rev() {
+            body = self.abstract_over(body, arg_val, 0);
+        }
+        let mut result = body;
+        for (i, _) in arg_values.iter().enumerate().rev() {
+            let hint = format!("x{}", i);
+            let ty = self.sym("_");
+            result = self.binder(BinderKind::Lambda, &hint, ty, result);
+        }
+
+        // Check existing binding
+        if let Some(&existing) = subst.get(meta_name) {
+            if existing == result {
+                Ok(())
+            } else {
+                Err(format!("meta ?{} conflict", meta_name))
+            }
+        } else {
+            subst.insert(meta_name.to_string(), result);
+            Ok(())
+        }
+    }
+
+    /// Construct a lambda binder.
+    pub fn make_lambda(&mut self, hint: &str, body: HExpr) -> HExpr {
+        let ty = self.sym("_");
+        self.binder(BinderKind::Lambda, hint, ty, body)
+    }
+
+    /// Replace all occurrences of `target` in `expr` with Bound(depth).
+    /// Shifts existing bound vars >= depth up by 1 to avoid capture.
+    pub fn abstract_over(&mut self, expr: HExpr, target: HExpr, depth: usize) -> HExpr {
+        if expr == target {
+            return self.bound(depth);
+        }
+        match self.nodes[expr.0 as usize].clone() {
+            HNode::Free(_) | HNode::Meta(_) | HNode::Sym(_) => expr,
+            HNode::Bound(i) => {
+                if i >= depth {
+                    self.bound(i + 1)
+                } else {
+                    expr
+                }
+            }
+            HNode::App(args) => {
+                let new_args: Vec<HExpr> = args
+                    .iter()
+                    .map(|&a| self.abstract_over(a, target, depth))
+                    .collect();
+                if new_args == args {
+                    expr
+                } else {
+                    self.app(new_args)
+                }
+            }
+            HNode::Binder { kind, hint, ty, body } => {
+                let new_ty = self.abstract_over(ty, target, depth);
+                let new_body = self.abstract_over(body, target, depth + 1);
+                if new_ty == ty && new_body == body {
+                    expr
+                } else {
+                    self.binder(kind, &hint, new_ty, new_body)
+                }
+            }
+            HNode::UserBind { spec, params, body } => {
+                let new_params: Vec<HExpr> = params
+                    .iter()
+                    .map(|&p| self.abstract_over(p, target, depth))
+                    .collect();
+                let new_body = self.abstract_over(body, target, depth);
+                if new_params == params && new_body == body {
+                    expr
+                } else {
+                    self.user_bind(&spec, new_params, new_body)
+                }
+            }
+        }
+    }
+
+    /// Open: replace Bound(index) with replacement in expr.
+    pub fn open(&mut self, expr: HExpr, index: usize, replacement: HExpr) -> HExpr {
+        match self.nodes[expr.0 as usize].clone() {
+            HNode::Bound(i) => {
+                if i == index {
+                    replacement
+                } else {
+                    expr
+                }
+            }
+            HNode::Free(_) | HNode::Meta(_) | HNode::Sym(_) => expr,
+            HNode::App(args) => {
+                let shifted_rep = self.shift(replacement, 0, 0); // no shift needed at this level
+                let _ = shifted_rep;
+                let new_args: Vec<HExpr> = args
+                    .iter()
+                    .map(|&a| self.open(a, index, replacement))
+                    .collect();
+                if new_args == args {
+                    expr
+                } else {
+                    self.app(new_args)
+                }
+            }
+            HNode::Binder { kind, hint, ty, body } => {
+                let new_ty = self.open(ty, index, replacement);
+                let shifted_rep = self.shift(replacement, 0, 1);
+                let new_body = self.open(body, index + 1, shifted_rep);
+                if new_ty == ty && new_body == body {
+                    expr
+                } else {
+                    self.binder(kind, &hint, new_ty, new_body)
+                }
+            }
+            HNode::UserBind { spec, params, body } => {
+                let new_params: Vec<HExpr> = params
+                    .iter()
+                    .map(|&p| self.open(p, index, replacement))
+                    .collect();
+                let new_body = self.open(body, index, replacement);
+                if new_params == params && new_body == body {
+                    expr
+                } else {
+                    self.user_bind(&spec, new_params, new_body)
+                }
+            }
+        }
+    }
+
+    /// Shift bound variable indices >= cutoff by amount.
+    fn shift(&mut self, expr: HExpr, cutoff: usize, amount: i32) -> HExpr {
+        match self.nodes[expr.0 as usize].clone() {
+            HNode::Bound(i) => {
+                if i >= cutoff {
+                    self.bound((i as i32 + amount) as usize)
+                } else {
+                    expr
+                }
+            }
+            HNode::Free(_) | HNode::Meta(_) | HNode::Sym(_) => expr,
+            HNode::App(args) => {
+                let new_args: Vec<HExpr> = args
+                    .iter()
+                    .map(|&a| self.shift(a, cutoff, amount))
+                    .collect();
+                if new_args == args {
+                    expr
+                } else {
+                    self.app(new_args)
+                }
+            }
+            HNode::Binder { kind, hint, ty, body } => {
+                let new_ty = self.shift(ty, cutoff, amount);
+                let new_body = self.shift(body, cutoff + 1, amount);
+                if new_ty == ty && new_body == body {
+                    expr
+                } else {
+                    self.binder(kind, &hint, new_ty, new_body)
+                }
+            }
+            HNode::UserBind { spec, params, body } => {
+                let new_params: Vec<HExpr> = params
+                    .iter()
+                    .map(|&p| self.shift(p, cutoff, amount))
+                    .collect();
+                let new_body = self.shift(body, cutoff, amount);
+                if new_params == params && new_body == body {
+                    expr
+                } else {
+                    self.user_bind(&spec, new_params, new_body)
+                }
+            }
+        }
+    }
+
+    /// Weak Head Normal Form: reduce head beta-redexes only.
+    pub fn whnf(&mut self, expr: HExpr) -> HExpr {
+        match self.nodes[expr.0 as usize].clone() {
+            HNode::App(args) if args.len() >= 2 => {
+                let head = self.whnf(args[0]);
+                match self.nodes[head.0 as usize].clone() {
+                    HNode::Binder { kind: BinderKind::Lambda, body, .. } => {
+                        let reduced = self.open(body, 0, args[1]);
+                        if args.len() == 2 {
+                            self.whnf(reduced)
+                        } else {
+                            let mut new_args = vec![reduced];
+                            new_args.extend_from_slice(&args[2..]);
+                            let app = self.app(new_args);
+                            self.whnf(app)
+                        }
+                    }
+                    _ => {
+                        if head != args[0] {
+                            let mut new_args = vec![head];
+                            new_args.extend_from_slice(&args[1..]);
+                            self.app(new_args)
+                        } else {
+                            expr
+                        }
+                    }
+                }
+            }
+            _ => expr,
+        }
+    }
+
+    /// Full beta-normalize an HExpr (for definitional equality only).
+    pub fn beta_normalize(&mut self, expr: HExpr, fuel: &mut usize) -> HExpr {
+        if *fuel == 0 {
+            return expr;
+        }
+        match self.nodes[expr.0 as usize].clone() {
+            HNode::Free(_) | HNode::Bound(_) | HNode::Meta(_) | HNode::Sym(_) => expr,
+            HNode::App(args) => {
+                *fuel = fuel.saturating_sub(1);
+                let normalized: Vec<HExpr> = args
+                    .iter()
+                    .map(|&a| self.beta_normalize(a, fuel))
+                    .collect();
+                if normalized.len() >= 2 {
+                    if let HNode::Binder { kind: BinderKind::Lambda, body, .. } =
+                        self.nodes[normalized[0].0 as usize].clone()
+                    {
+                        let reduced = self.open(body, 0, normalized[1]);
+                        if normalized.len() == 2 {
+                            return self.beta_normalize(reduced, fuel);
+                        } else {
+                            let mut new_args = vec![reduced];
+                            new_args.extend_from_slice(&normalized[2..]);
+                            let app = self.app(new_args);
+                            return self.beta_normalize(app, fuel);
+                        }
+                    }
+                }
+                if normalized == args {
+                    expr
+                } else {
+                    self.app(normalized)
+                }
+            }
+            HNode::Binder { kind, hint, ty, body } => {
+                *fuel = fuel.saturating_sub(1);
+                let new_ty = self.beta_normalize(ty, fuel);
+                let new_body = self.beta_normalize(body, fuel);
+                if new_ty == ty && new_body == body {
+                    expr
+                } else {
+                    self.binder(kind, &hint, new_ty, new_body)
+                }
+            }
+            HNode::UserBind { spec, params, body } => {
+                let new_params: Vec<HExpr> = params
+                    .iter()
+                    .map(|&p| self.beta_normalize(p, fuel))
+                    .collect();
+                let new_body = self.beta_normalize(body, fuel);
+                if new_params == params && new_body == body {
+                    expr
+                } else {
+                    self.user_bind(&spec, new_params, new_body)
+                }
+            }
+        }
+    }
+
+    /// Collect free variable names from an HExpr.
+    pub fn free_vars(&self, h: HExpr) -> Vec<Name> {
+        let mut result = Vec::new();
+        self.free_vars_inner(h, &mut result);
+        result
+    }
+
+    fn free_vars_inner(&self, h: HExpr, acc: &mut Vec<Name>) {
+        match self.node(h) {
+            HNode::Free(n) => {
+                if !acc.contains(n) {
+                    acc.push(n.clone());
+                }
+            }
+            HNode::Bound(_) | HNode::Meta(_) | HNode::Sym(_) => {}
+            HNode::App(args) => {
+                let args = args.clone();
+                for a in &args {
+                    self.free_vars_inner(*a, acc);
+                }
+            }
+            HNode::Binder { ty, body, .. } => {
+                let (ty, body) = (*ty, *body);
+                self.free_vars_inner(ty, acc);
+                self.free_vars_inner(body, acc);
+            }
+            HNode::UserBind { params, body, .. } => {
+                let params = params.clone();
+                let body = *body;
+                for p in &params {
+                    self.free_vars_inner(*p, acc);
+                }
+                self.free_vars_inner(body, acc);
+            }
+        }
+    }
+
+    /// Collect abstractable variable HExprs (both Free and Meta) from an HExpr.
+    /// Used by Miller matching where Meta variables in the target can serve
+    /// as abstraction targets.
+    pub fn abstractable_vars(&self, h: HExpr) -> Vec<HExpr> {
+        let mut result = Vec::new();
+        self.abstractable_vars_inner(h, &mut result);
+        result
+    }
+
+    fn abstractable_vars_inner(&self, h: HExpr, acc: &mut Vec<HExpr>) {
+        match self.node(h) {
+            HNode::Free(_) | HNode::Meta(_) => {
+                if !acc.contains(&h) {
+                    acc.push(h);
+                }
+            }
+            HNode::Bound(_) | HNode::Sym(_) => {}
+            HNode::App(args) => {
+                let args = args.clone();
+                for a in &args {
+                    self.abstractable_vars_inner(*a, acc);
+                }
+            }
+            HNode::Binder { ty, body, .. } => {
+                let (ty, body) = (*ty, *body);
+                self.abstractable_vars_inner(ty, acc);
+                self.abstractable_vars_inner(body, acc);
+            }
+            HNode::UserBind { params, body, .. } => {
+                let params = params.clone();
+                let body = *body;
+                for p in &params {
+                    self.abstractable_vars_inner(*p, acc);
+                }
+                self.abstractable_vars_inner(body, acc);
+            }
         }
     }
 

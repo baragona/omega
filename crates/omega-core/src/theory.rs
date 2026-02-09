@@ -41,6 +41,8 @@ pub struct Theory {
     pub context_mode: ContextMode,
     /// A hash of the theory content for staleness detection.
     pub content_hash: u64,
+    /// Names of theories to import (resolved at registration time).
+    pub imports: Vec<Name>,
 }
 
 impl Theory {
@@ -56,6 +58,7 @@ impl Theory {
             rewrites: Vec::new(),
             context_mode: ContextMode::default(),
             content_hash: 0,
+            imports: Vec::new(),
         }
     }
 
@@ -182,6 +185,66 @@ impl Theory {
         self.content_hash = hasher.finish();
     }
 
+    /// Merge all declarations from another theory into this one.
+    /// Used for resolving `(import ...)` directives. Errors on name collisions.
+    pub fn merge_from(&mut self, other: &Theory) -> Result<()> {
+        for s in &other.sorts {
+            if self.sorts.iter().any(|x| x.name == s.name) {
+                return Err(OmegaError::DuplicateName {
+                    kind: "sort".to_string(),
+                    name: s.name.clone(),
+                });
+            }
+            self.sorts.push(s.clone());
+        }
+        for c in &other.constructors {
+            if self.constructors.iter().any(|x| x.name == c.name) {
+                return Err(OmegaError::DuplicateName {
+                    kind: "constructor".to_string(),
+                    name: c.name.clone(),
+                });
+            }
+            self.constructors.push(c.clone());
+        }
+        for j in &other.judgments {
+            if self.judgments.iter().any(|x| x.name == j.name) {
+                return Err(OmegaError::DuplicateName {
+                    kind: "judgment".to_string(),
+                    name: j.name.clone(),
+                });
+            }
+            self.judgments.push(j.clone());
+        }
+        for r in &other.rules {
+            if self.rules.iter().any(|x| x.name == r.name) {
+                return Err(OmegaError::DuplicateName {
+                    kind: "rule".to_string(),
+                    name: r.name.clone(),
+                });
+            }
+            self.rules.push(r.clone());
+        }
+        for rw in &other.rewrites {
+            if self.rewrites.iter().any(|x| x.name == rw.name) {
+                return Err(OmegaError::DuplicateName {
+                    kind: "rewrite".to_string(),
+                    name: rw.name.clone(),
+                });
+            }
+            self.rewrites.push(rw.clone());
+        }
+        for bs in &other.binding_specs {
+            if self.binding_specs.iter().any(|x| x.name == bs.name) {
+                return Err(OmegaError::DuplicateName {
+                    kind: "binding-spec".to_string(),
+                    name: bs.name.clone(),
+                });
+            }
+            self.binding_specs.push(bs.clone());
+        }
+        Ok(())
+    }
+
     /// Add a rule (e.g., from reflection).
     pub fn add_rule(&mut self, rule: Rule) -> Result<()> {
         if self.get_rule(&rule.name).is_some() {
@@ -298,5 +361,31 @@ mod tests {
         let theory = make_prop_logic();
         assert!(theory.get_rule("and-intro").is_some());
         assert!(theory.get_rule("nonexistent").is_none());
+    }
+
+    #[test]
+    fn merge_from_imports() {
+        let base = make_prop_logic();
+        let mut derived = Theory::new("Derived");
+        assert!(derived.merge_from(&base).is_ok());
+        // Derived should now have all of base's declarations
+        assert!(derived.get_sort("Prop").is_some());
+        assert!(derived.get_constructor("and").is_some());
+        assert!(derived.get_rule("and-intro").is_some());
+        assert!(derived.get_rule("and-elim-l").is_some());
+        assert_eq!(derived.sorts.len(), 1);
+        assert_eq!(derived.constructors.len(), 2);
+        assert_eq!(derived.rules.len(), 3);
+    }
+
+    #[test]
+    fn merge_from_rejects_collision() {
+        let base = make_prop_logic();
+        let mut derived = Theory::new("Derived");
+        derived.sorts.push(SortDecl {
+            name: "Prop".to_string(), // Same as base
+        });
+        let result = derived.merge_from(&base);
+        assert!(result.is_err());
     }
 }

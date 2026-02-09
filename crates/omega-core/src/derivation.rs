@@ -5,9 +5,9 @@
 /// that each step is valid.
 use std::collections::{HashMap, HashSet};
 
-use crate::binding::apply_meta_subst;
+use crate::binding::{apply_meta_subst, abstract_over, abstractable_vars, whnf};
 use crate::error::{OmegaError, Result};
-use crate::expr::{Expr, Name};
+use crate::expr::{BinderKind, Expr, Name};
 use crate::judgment::RewriteRule;
 use crate::pattern::{match_expr, Substitution};
 use crate::theory::{ContextMode, Theory};
@@ -49,26 +49,34 @@ impl Context {
     }
 }
 
-/// Normalize an expression by exhaustively applying rewrite rules (innermost strategy).
+/// Normalize an expression by exhaustively applying beta-reduction and
+/// rewrite rules (innermost strategy).
 fn normalize_expr(expr: &Expr, rewrites: &[RewriteRule], fuel: &mut usize) -> Expr {
-    if rewrites.is_empty() || *fuel == 0 {
+    if *fuel == 0 {
         return expr.clone();
     }
 
+    // Step 0: WHNF first to reduce any head beta-redexes
+    let whnf_ed = whnf(expr);
+
+    if rewrites.is_empty() {
+        return whnf_ed;
+    }
+
     // Step 1: Normalize children
-    let children_normalized = match expr {
+    let children_normalized = match &whnf_ed {
         Expr::App(args) => {
             let new_args: Vec<Expr> = args
                 .iter()
                 .map(|a| normalize_expr(a, rewrites, fuel))
                 .collect();
             if new_args == *args {
-                expr.clone()
+                whnf_ed.clone()
             } else {
                 Expr::App(new_args)
             }
         }
-        _ => expr.clone(),
+        _ => whnf_ed,
     };
 
     // Step 2: Try rewrite rules at the head
@@ -170,14 +178,17 @@ fn unify_exprs(a: &Expr, b: &Expr) -> Option<Substitution> {
 }
 
 fn unify_inner(a: &Expr, b: &Expr, subst: &mut Substitution) -> bool {
+    // WHNF both sides so beta-redexes are transparent
+    let a = whnf(a);
+    let b = whnf(b);
     if a == b {
         return true;
     }
-    match (a, b) {
+    match (&a, &b) {
         (Expr::Meta(name), _) => {
             if let Some(existing) = subst.get(name) {
                 let existing = existing.clone();
-                unify_inner(&existing, b, subst)
+                unify_inner(&existing, &b, subst)
             } else {
                 // Occurs check: prevent circular bindings like ?n → (s ?n)
                 if b.meta_vars().contains(name) {
@@ -190,7 +201,7 @@ fn unify_inner(a: &Expr, b: &Expr, subst: &mut Substitution) -> bool {
         (_, Expr::Meta(name)) => {
             if let Some(existing) = subst.get(name) {
                 let existing = existing.clone();
-                unify_inner(a, &existing, subst)
+                unify_inner(&a, &existing, subst)
             } else {
                 if a.meta_vars().contains(name) {
                     return false;
@@ -204,6 +215,17 @@ fn unify_inner(a: &Expr, b: &Expr, subst: &mut Substitution) -> bool {
         (Expr::Bound(a_idx), Expr::Bound(b_idx)) => a_idx == b_idx,
         (Expr::App(args_a), Expr::App(args_b)) => {
             if args_a.len() != args_b.len() {
+                // Miller fragment: try if either side is meta-headed
+                if let Some(Expr::Meta(m)) = args_a.first() {
+                    if try_miller_unify(m, &args_a[1..], &b, subst) {
+                        return true;
+                    }
+                }
+                if let Some(Expr::Meta(m)) = args_b.first() {
+                    if try_miller_unify(m, &args_b[1..], &a, subst) {
+                        return true;
+                    }
+                }
                 return false;
             }
             args_a
@@ -226,6 +248,78 @@ fn unify_inner(a: &Expr, b: &Expr, subst: &mut Substitution) -> bool {
             },
         ) => k1 == k2 && unify_inner(t1, t2, subst) && unify_inner(b1, b2, subst),
         _ => false,
+    }
+}
+
+/// Miller pattern fragment for unification: solve `?meta(arg1..argN) = target`.
+fn try_miller_unify(
+    meta_name: &str,
+    args: &[Expr],
+    target: &Expr,
+    subst: &mut Substitution,
+) -> bool {
+    // Apply current subst to each arg
+    let resolved_args: Vec<Expr> = args
+        .iter()
+        .map(|a| {
+            let applied = apply_meta_subst(a, subst);
+            whnf(&applied)
+        })
+        .collect();
+
+    // Check strict Miller condition: each arg must be a distinct Free or Bound var
+    let mut arg_values = Vec::new();
+    for arg in &resolved_args {
+        match arg {
+            Expr::Free(_) | Expr::Bound(_) => {
+                if arg_values.contains(arg) {
+                    return false; // Duplicate
+                }
+                arg_values.push(arg.clone());
+            }
+            Expr::Meta(m) => {
+                // Try to solve from target's abstractable vars (Free + Meta)
+                let target_vars = abstractable_vars(target);
+                let mut found = false;
+                for var in &target_vars {
+                    if !arg_values.contains(var) {
+                        subst.insert(m.clone(), var.clone());
+                        arg_values.push(var.clone());
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    return false;
+                }
+            }
+            _ => return false, // Compound arg — not in Miller fragment
+        }
+    }
+
+    // Abstract args from target
+    let mut body = target.clone();
+    for arg_val in arg_values.iter().rev() {
+        body = abstract_over(&body, arg_val, 0);
+    }
+
+    // Wrap in lambdas
+    let mut result = body;
+    for (i, _) in arg_values.iter().enumerate().rev() {
+        result = Expr::Binder {
+            kind: BinderKind::Lambda,
+            hint: format!("x{}", i),
+            ty: Box::new(Expr::sym("_")),
+            body: Box::new(result),
+        };
+    }
+
+    // Bind the meta
+    if let Some(existing) = subst.get(meta_name) {
+        *existing == result
+    } else {
+        subst.insert(meta_name.to_string(), result);
+        true
     }
 }
 
@@ -433,6 +527,7 @@ fn check_derivation_inner(
             {
                 let mut premise_goal = apply_meta_subst(premise_pattern, &local_subst);
                 premise_goal = apply_meta_subst(&premise_goal, global_subst);
+                premise_goal = whnf(&premise_goal);
 
                 // If the premise goal has unsolved metas, infer the derivation's
                 // conclusion first, then unify it with the goal to solve metas,
@@ -447,6 +542,7 @@ fn check_derivation_inner(
                                 global_subst.insert(k.clone(), v.clone());
                             }
                             premise_goal = apply_meta_subst(&premise_goal, &s);
+                            premise_goal = whnf(&premise_goal);
                         }
                     }
                 }
@@ -465,6 +561,7 @@ fn check_derivation_inner(
                         for ext in extensions {
                             let mut resolved = apply_meta_subst(ext, &local_subst);
                             resolved = apply_meta_subst(&resolved, global_subst);
+                            resolved = whnf(&resolved);
                             new_assumptions.push(resolved);
                         }
                         ext_ctx = Context::with_assumptions(new_assumptions);

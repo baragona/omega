@@ -257,6 +257,17 @@ fn desugar_theory(items: &[Sexp], span: Span) -> Result<Command> {
                     rhs,
                 });
             }
+            "import" => {
+                // (import theory-name)
+                if decl.len() != 2 {
+                    return Err(DesugarError {
+                        message: "import expects exactly one argument: the theory name".to_string(),
+                        span: decl[0].span(),
+                    });
+                }
+                let import_name = expect_atom(&decl[1])?;
+                theory.imports.push(import_name.to_string());
+            }
             _ => {
                 return Err(DesugarError {
                     message: format!("unknown theory declaration: {}", kind),

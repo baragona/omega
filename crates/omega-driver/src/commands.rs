@@ -10,7 +10,19 @@ use crate::session::{ProvenTheorem, Session};
 /// Process a single command, returning a human-readable result message.
 pub fn process_command(session: &mut Session, cmd: Command) -> Result<String, String> {
     match cmd {
-        Command::TheoryDef(theory) => {
+        Command::TheoryDef(mut theory) => {
+            // Resolve imports: merge declarations from imported theories
+            let imports = theory.imports.clone();
+            for import_name in &imports {
+                let imported = session
+                    .kernel
+                    .get_theory(import_name)
+                    .ok_or_else(|| format!("import error: unknown theory '{}'", import_name))?
+                    .clone();
+                theory
+                    .merge_from(&imported)
+                    .map_err(|e| format!("import error in theory {}: {}", theory.name, e))?;
+            }
             let name = theory.name.clone();
             session
                 .kernel
