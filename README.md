@@ -1,6 +1,6 @@
 <p align="center">
   <h1 align="center">Omega</h1>
-  <p align="center"><strong>A Reflective Logical Framework</strong></p>
+  <p align="center"><strong>A Logic-Agnostic Logical Framework</strong></p>
   <p align="center">
     <a href="#getting-started">Getting Started</a> &middot;
     <a href="#features">Features</a> &middot;
@@ -72,7 +72,7 @@ Omega's elaborator infers implicit arguments via first-order unification with oc
 
 ### Proof by Reflection
 
-Prove a metatheorem about a theory's rules via case analysis, then **reflect** it into the kernel as a new inference rule.
+Prove a metatheorem about a theory's rules via case analysis, then **reflect** it as a new inference rule. The kernel verifies the metatheorem; the driver installs the derived rule.
 
 ```lisp
 ;; 1. Prove commutativity of 'and' as a metatheorem:
@@ -99,10 +99,11 @@ Prove a metatheorem about a theory's rules via case analysis, then **reflect** i
 
 | | **Omega** | **Lean 4 / Coq** | **Dedukti / Lambdapi** |
 | :--- | :--- | :--- | :--- |
-| Logic | User-defined, reflective | Fixed (CIC) | User-defined (rewrite rules) |
+| Logic | User-defined | Fixed (CIC) | User-defined (rewrite rules) |
 | Kernel language | Rust (zero deps) | Lean / OCaml | OCaml |
 | Term representation | Interned DAG (maximal sharing) | Tree-based | Mixed |
 | Equality check | O(1) (pointer comparison) | O(n) | O(n) |
+| Binding control | Per-binder eta, linear, affine | Fixed | Fixed |
 | Surface syntax | S-expressions | Algol-style | Algol-style |
 
 ## The "Neutral Tool" Philosophy
@@ -116,7 +117,8 @@ By being neutral, Omega is more powerful than specialized tools in their own dom
 
 Want Classical? `axiom excluded_middle : Or A (Not A)`.
 Want Constructive? Don't add it.
-Want Linear? Use `(context-mode affine)`.
+Want Linear? Use `(binder-behavior tensor :linear)`.
+Want Affine? Use `(context-mode affine)`.
 Want HoTT? Add path axioms.
 
 Omega is powerful enough to:
@@ -180,6 +182,9 @@ cargo run --release -- check examples/torture.omega
 | `induction-recursion.omega` | Induction-recursion (mutual U/El codes) |
 | `hits.omega` | Higher inductive types (circle, suspension, truncation) |
 | `level-poly.omega` | Level-polymorphic constructors and rules |
+| `eta-demo.omega` | Eta-contraction (nested eta, composition rewrites) |
+| `linear-demo.omega` | Per-binder linear and affine variable checks |
+| `ac-demo.omega` | Associative-commutative normalization |
 | `torture.omega` | Exponential term stress test |
 
 #### Standard Library (`libs/`)
@@ -210,10 +215,10 @@ omega-cli              Command-line interface
        │    └─ omega-core
        ├─ omega-syntax      S-expression parser, locally nameless encoding
        │    └─ omega-core
-       └─ omega-core          Trusted kernel (~6900 LOC, zero dependencies)
+       └─ omega-core          Trusted kernel (~7400 LOC, zero dependencies)
 ```
 
-**`omega-core`** is the trusted computing base. It has no external dependencies and implements four operations: `register_theory`, `check_derivation`, `check_metatheorem`, and `reflect`. Everything above it is untrusted elaboration.
+**`omega-core`** is the trusted computing base. It has no external dependencies and implements three operations: `register_theory`, `check_derivation`, and `check_metatheorem`. Reflection is driver-level sugar — the kernel verifies the metatheorem, and the driver installs the derived rule. Everything above the kernel is untrusted elaboration.
 
 ## Roadmap
 
@@ -232,6 +237,8 @@ omega-cli              Command-line interface
 - [x] Algebraic universes, W-types, Sigma types
 - [x] Induction-recursion and higher inductive types
 - [x] Level-polymorphic declarations
+- [x] Per-binder eta-contraction, linear/affine checks
+- [x] Reflection moved out of kernel (three-operation trusted core)
 
 ## License
 
