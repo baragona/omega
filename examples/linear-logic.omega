@@ -1,27 +1,43 @@
-;; Linear Logic (fragment) in Omega
-;;
-;; Demonstrates a logic where resources are tracked:
-;; each hypothesis must be used exactly once.
+;;; Linear Logic — Resource-Sensitive Reasoning
+;;;
+;;; In linear logic, hypotheses are resources: each must be
+;;; used exactly once.  The bang modality (!A) marks resources
+;;; that can be freely duplicated.
+;;;
+;;; Connectives:
+;;;   A (x) B   multiplicative conjunction (tensor)
+;;;   A -o B    linear implication (lolli)
+;;;   A & B     additive conjunction (with)
+;;;   A (+) B   additive disjunction (oplus)
+;;;   !A        exponential (bang — unlimited use)
+;;;
+;;; Proved here:
+;;;   1. A -o A                       (linear identity)
+;;;   2. A, B  |-  A (x) B            (tensor intro)
+;;;   3. A (x) B  |-  B (x) A         (tensor commutativity)
+;;;   4. !A  |-  A (x) A              (bang enables duplication)
+;;;   5. A -o B, B -o C  |-  A -o C   (linear composition)
+;;;   6. (A -o (B -o C)) -> ((A (x) B) -o C)   (uncurry)
 
 (theory LinearLogic
   (sort Prop)
 
-  ;; Multiplicative connectives
-  (constructor tensor  : (-> Prop Prop Prop))   ;; A ⊗ B (both)
-  (constructor lolli   : (-> Prop Prop Prop))   ;; A ⊸ B (linear implication)
+  ;; ── Multiplicative connectives ──
+  (constructor tensor  : (-> Prop Prop Prop))   ;; A (x) B
+  (constructor lolli   : (-> Prop Prop Prop))   ;; A -o B
   (constructor one     : Prop)                   ;; multiplicative unit
 
-  ;; Additive connectives
-  (constructor with    : (-> Prop Prop Prop))   ;; A & B (choice for consumer)
-  (constructor oplus   : (-> Prop Prop Prop))   ;; A ⊕ B (choice for producer)
+  ;; ── Additive connectives ──
+  (constructor with    : (-> Prop Prop Prop))   ;; A & B
+  (constructor oplus   : (-> Prop Prop Prop))   ;; A (+) B
 
-  ;; Exponential
-  (constructor bang    : (-> Prop Prop))         ;; !A (unrestricted use)
+  ;; ── Exponential ──
+  (constructor bang    : (-> Prop Prop))         ;; !A
 
-  ;; Judgment: linear provability
+  ;; ── Judgment ──
   (judgment (proves ?P) :where P : Prop)
 
-  ;; Tensor (multiplicative conjunction)
+  ;; ── Tensor (multiplicative conjunction) ──
   (rule tensor-intro
     :premises ((proves ?A) (proves ?B))
     :conclusion (proves (tensor ?A ?B)))
@@ -34,21 +50,23 @@
     :premises ((proves (tensor ?A ?B)))
     :conclusion (proves ?B))
 
-  ;; Linear implication
+  ;; ── Linear implication ──
+  ;; To prove A -o B: assume A (as a resource), then produce B.
   (rule lolli-intro
     :premises ((proves ?B))
+    :context ((0 (proves ?A)))
     :conclusion (proves (lolli ?A ?B)))
 
   (rule lolli-elim
     :premises ((proves (lolli ?A ?B)) (proves ?A))
     :conclusion (proves ?B))
 
-  ;; Multiplicative unit
+  ;; ── Multiplicative unit ──
   (rule one-intro
     :premises ()
     :conclusion (proves one))
 
-  ;; With (additive conjunction)
+  ;; ── With (additive conjunction — consumer's choice) ──
   (rule with-intro
     :premises ((proves ?A) (proves ?B))
     :conclusion (proves (with ?A ?B)))
@@ -61,7 +79,7 @@
     :premises ((proves (with ?A ?B)))
     :conclusion (proves ?B))
 
-  ;; Oplus (additive disjunction)
+  ;; ── Oplus (additive disjunction — producer's choice) ──
   (rule oplus-intro-l
     :premises ((proves ?A))
     :conclusion (proves (oplus ?A ?B)))
@@ -70,64 +88,105 @@
     :premises ((proves ?B))
     :conclusion (proves (oplus ?A ?B)))
 
-  ;; Bang (exponential — allows duplication)
+  ;; ── Bang (exponential — controlled duplication) ──
   (rule bang-intro
     :premises ((proves ?A))
     :conclusion (proves (bang ?A)))
 
-  (rule bang-elim
-    :premises ((proves (bang ?A)))
-    :conclusion (proves ?A))
-
-  ;; Dereliction: !A can be used as A
   (rule dereliction
     :premises ((proves (bang ?A)))
     :conclusion (proves ?A))
 
-  ;; Contraction: !A can be duplicated
   (rule contraction
     :premises ((proves (bang ?A)))
     :conclusion (proves (tensor (bang ?A) (bang ?A)))))
 
 (check-theory LinearLogic)
 
-;; Prove: A ⊗ B from A and B
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 1:  A -o A   (linear identity)
+;; ════════════════════════════════════════════════════════════
+;;
+;; Assume the resource A, immediately return it.
+
+(proof lolli-id
+  :theory LinearLogic
+  :goal (proves (lolli ?A ?A))
+  :derivation (lolli-intro (assumption)))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 2:  A, B  |-  A (x) B   (tensor introduction)
+;; ════════════════════════════════════════════════════════════
+;;
+;; Given two resources, combine them.
+
 (proof tensor-pair
   :theory LinearLogic
   :assumptions ((proves p) (proves q))
   :goal (proves (tensor p q))
   :derivation (tensor-intro (assumption) (assumption)))
 
-;; Prove: A ⊸ (B ⊸ A ⊗ B)
-(proof curry-tensor
-  :theory LinearLogic
-  :assumptions ((proves p) (proves q))
-  :goal (proves (tensor p q))
-  :derivation (tensor-intro (assumption) (assumption)))
 
-;; Prove: !A → A ⊗ A (bang allows duplication)
+;; ════════════════════════════════════════════════════════════
+;; Theorem 3:  A (x) B  |-  B (x) A   (tensor commutativity)
+;; ════════════════════════════════════════════════════════════
+
+(proof tensor-comm
+  :theory LinearLogic
+  :assumptions ((proves (tensor p q)))
+  :goal (proves (tensor q p))
+  :derivation
+    (tensor-intro (tensor-elim-r (assumption)) (tensor-elim-l (assumption))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 4:  !A  |-  A (x) A   (bang enables duplication)
+;; ════════════════════════════════════════════════════════════
+;;
+;; Without !, a resource can only be used once.
+;; The bang modality lets us extract multiple copies.
+
 (proof bang-dup
   :theory LinearLogic
   :assumptions ((proves (bang p)))
   :goal (proves (tensor p p))
   :derivation (tensor-intro (dereliction (assumption)) (dereliction (assumption))))
 
-;; Prove: A & B → A (additive projection)
-(proof with-fst
-  :theory LinearLogic
-  :assumptions ((proves (with p q)))
-  :goal (proves p)
-  :derivation (with-elim-l (assumption)))
 
-;; Prove: !A → !A ⊗ !A (contraction)
-(proof bang-contract
-  :theory LinearLogic
-  :assumptions ((proves (bang p)))
-  :goal (proves (tensor (bang p) (bang p)))
-  :derivation (contraction (assumption)))
+;; ════════════════════════════════════════════════════════════
+;; Theorem 5:  (A -o B), (B -o C)  |-  A -o C   (composition)
+;; ════════════════════════════════════════════════════════════
+;;
+;; Chain two linear functions:  consume A via f to get B,
+;; then consume B via g to get C.
 
-;; Prove: 1 (unit is always provable)
-(proof unit-pf
+(proof compose
   :theory LinearLogic
-  :goal (proves one)
-  :derivation (one-intro))
+  :assumptions ((proves (lolli a b)) (proves (lolli b c)))
+  :goal (proves (lolli a c))
+  :derivation
+    (lolli-intro
+      (lolli-elim
+        (assumption)
+        (lolli-elim (assumption) (assumption)))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 6:  (A -o (B -o C)) -> ((A (x) B) -o C)   (uncurry)
+;; ════════════════════════════════════════════════════════════
+;;
+;; Convert a curried linear function to one that takes a tensor.
+;; Deconstruct A(x)B, apply the outer function to A getting B-oC,
+;; then apply that to B.
+
+(proof uncurry
+  :theory LinearLogic
+  :goal (proves (lolli (lolli ?A (lolli ?B ?C)) (lolli (tensor ?A ?B) ?C)))
+  :derivation
+    (lolli-intro
+      (lolli-intro
+        (lolli-elim
+          (lolli-elim (assumption) (tensor-elim-l (assumption)))
+          (tensor-elim-r (assumption))))))

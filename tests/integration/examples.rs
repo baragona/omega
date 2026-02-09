@@ -11,22 +11,33 @@ fn check_example(path: &str) -> Vec<String> {
 fn prop_logic_example() {
     let results = check_example("examples/prop-logic.omega");
     assert!(results.iter().any(|r| r.contains("Theory PropLogic: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof identity: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof weakening: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof and-comm: VALID")));
-    assert!(results.iter().any(|r| r.contains("Proof self-and: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof curry-and: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof or-comm: VALID")));
 }
 
 #[test]
 fn stlc_example() {
     let results = check_example("examples/stlc.omega");
     assert!(results.iter().any(|r| r.contains("Theory STLC: registered OK")));
-    assert!(results.iter().any(|r| r.contains("Proof identity-typing: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof identity: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof const: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof church-false: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof apply-id-to-id: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof compose: VALID")));
 }
 
 #[test]
 fn first_order_example() {
     let results = check_example("examples/first-order.omega");
     assert!(results.iter().any(|r| r.contains("Theory FOL: registered OK")));
-    assert!(results.iter().any(|r| r.contains("Proof true-and-refl: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof socrates-is-mortal: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof both-mortal: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof philosophers-are-mortal: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof teacher-is-mortal: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof greek-and-mortal: VALID")));
 }
 
 #[test]
@@ -71,18 +82,24 @@ fn zfc_example() {
 fn modal_logic_example() {
     let results = check_example("examples/modal-logic.omega");
     assert!(results.iter().any(|r| r.contains("Theory ModalS5: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof K-theorem: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof box-and: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof box-dist: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof box-box: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof necessary-possible: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof possible-necessarily-possible: VALID")));
 }
 
 #[test]
 fn linear_logic_example() {
     let results = check_example("examples/linear-logic.omega");
     assert!(results.iter().any(|r| r.contains("Theory LinearLogic: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof lolli-id: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof tensor-pair: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof tensor-comm: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof bang-dup: VALID")));
-    assert!(results.iter().any(|r| r.contains("Proof bang-contract: VALID")));
-    assert!(results.iter().any(|r| r.contains("Proof unit-pf: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof compose: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof uncurry: VALID")));
 }
 
 #[test]
@@ -114,6 +131,15 @@ fn affine_logic_example() {
     assert!(results.iter().any(|r| r.contains("Proof unit-free: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof tensor-with-unit: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof shadow-use: VALID")));
+}
+
+#[test]
+fn number_theory_example() {
+    let results = check_example("examples/number-theory.omega");
+    assert!(results.iter().any(|r| r.contains("Theory PeanoInduction: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof add-right-zero: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof add-right-succ: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof add-comm: VALID")));
 }
 
 #[test]

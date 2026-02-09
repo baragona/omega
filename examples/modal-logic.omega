@@ -1,12 +1,20 @@
-;; Modal Logic (S5) in Omega
-;;
-;; Defines the modal operators □ (necessarily) and ◇ (possibly)
-;; along with the S5 axioms.
+;;; Modal Logic S5 — Necessity and Possibility
+;;;
+;;; The modal operators box (necessarily) and dia (possibly)
+;;; with the S5 axioms: K, T, and 5.
+;;;
+;;; Proved here:
+;;;   1. box(A->B) -> (box A -> box B)   (K as a theorem)
+;;;   2. box A /\ box B -> box(A /\ B)   (box distributes in)
+;;;   3. box(A /\ B) -> box A /\ box B   (box distributes out)
+;;;   4. box A -> box(box A)              (positive introspection)
+;;;   5. box A -> dia A                   (necessary implies possible)
+;;;   6. dia A -> box(dia A)              (S5: possible is necessarily so)
 
 (theory ModalS5
   (sort Prop)
 
-  ;; Propositional connectives
+  ;; ── Propositional connectives ──
   (constructor true  : Prop)
   (constructor false : Prop)
   (constructor and   : (-> Prop Prop Prop))
@@ -14,14 +22,14 @@
   (constructor imp   : (-> Prop Prop Prop))
   (constructor not   : (-> Prop Prop))
 
-  ;; Modal operators
+  ;; ── Modal operators ──
   (constructor box   : (-> Prop Prop))    ;; necessarily
   (constructor dia   : (-> Prop Prop))    ;; possibly
 
-  ;; Judgment
+  ;; ── Judgment ──
   (judgment (proves ?P) :where P : Prop)
 
-  ;; Propositional logic
+  ;; ── Propositional logic ──
   (rule and-intro
     :premises ((proves ?A) (proves ?B))
     :conclusion (proves (and ?A ?B)))
@@ -36,69 +44,119 @@
 
   (rule imp-intro
     :premises ((proves ?B))
+    :context ((0 (proves ?A)))
     :conclusion (proves (imp ?A ?B)))
 
   (rule imp-elim
     :premises ((proves (imp ?A ?B)) (proves ?A))
     :conclusion (proves ?B))
 
-  ;; Axiom K: □(A → B) → (□A → □B)
+  ;; ── Modal axioms ──
+
+  ;; Axiom K: box(A -> B) -> (box A -> box B)
   (rule axiom-K
     :premises ((proves (box (imp ?A ?B))) (proves (box ?A)))
     :conclusion (proves (box ?B)))
 
-  ;; Axiom T: □A → A (what is necessary is true)
+  ;; Axiom T: box A -> A   (what is necessary is actual)
   (rule axiom-T
     :premises ((proves (box ?A)))
     :conclusion (proves ?A))
 
-  ;; Axiom 5: ◇A → □◇A (what is possible is necessarily possible)
+  ;; Axiom 5: dia A -> box(dia A)   (what is possible is necessarily possible)
   (rule axiom-5
     :premises ((proves (dia ?A)))
     :conclusion (proves (box (dia ?A))))
 
-  ;; Necessitation: if A is provable, then □A
+  ;; Necessitation: if A is provable, then box A
   (rule necessitation
     :premises ((proves ?A))
     :conclusion (proves (box ?A)))
 
-  ;; Duality: ◇A = ¬□¬A
+  ;; Diamond introduction: A -> dia A
   (rule dia-intro
     :premises ((proves ?A))
     :conclusion (proves (dia ?A))))
 
 (check-theory ModalS5)
 
-;; Prove: □A ∧ □B → □(A ∧ B)
-;; Strategy: from □A and □B, we need □(A ∧ B)
-;; First prove □(A → (B → A∧B)) by necessitation of imp-intro of and-intro
-;; Then use axiom-K twice
 
-;; Simpler proof: □A → A, □B → B, so A∧B, so □(A∧B)
+;; ════════════════════════════════════════════════════════════
+;; Theorem 1:  box(A -> B) -> (box A -> box B)   (K as theorem)
+;; ════════════════════════════════════════════════════════════
+;;
+;; Assume box(A->B).  Assume box A.  Apply axiom-K.
+
+(proof K-theorem
+  :theory ModalS5
+  :goal (proves (imp (box (imp ?A ?B)) (imp (box ?A) (box ?B))))
+  :derivation
+    (imp-intro (imp-intro (axiom-K (assumption) (assumption)))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 2:  box A /\ box B -> box(A /\ B)   (box distributes in)
+;; ════════════════════════════════════════════════════════════
+;;
+;; From box A and box B, extract A and B by axiom-T,
+;; form A /\ B, then necessitate.
+
 (proof box-and
   :theory ModalS5
-  :assumptions ((proves (box p)) (proves (box q)))
-  :goal (proves (box (and p q)))
-  :derivation (necessitation (and-intro (axiom-T (assumption)) (axiom-T (assumption)))))
+  :goal (proves (imp (and (box ?A) (box ?B)) (box (and ?A ?B))))
+  :derivation
+    (imp-intro
+      (necessitation
+        (and-intro
+          (axiom-T (and-elim-l (assumption)))
+          (axiom-T (and-elim-r (assumption)))))))
 
-;; Prove: □A → □□A (positive introspection — valid in S4/S5)
-;; In S5 with necessitation: □A → A, so prove □A, then necessitate
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 3:  box(A /\ B) -> box A /\ box B   (box distributes out)
+;; ════════════════════════════════════════════════════════════
+;;
+;; For box A:  prove box(A/\B -> A) by necessitating a tautology,
+;;             then apply axiom-K with box(A/\B).
+;; Similarly for box B.
+
+(proof box-dist
+  :theory ModalS5
+  :goal (proves (imp (box (and ?A ?B)) (and (box ?A) (box ?B))))
+  :derivation
+    (imp-intro
+      (and-intro
+        (axiom-K (necessitation (imp-intro (and-elim-l (assumption)))) (assumption))
+        (axiom-K (necessitation (imp-intro (and-elim-r (assumption)))) (assumption)))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 4:  box A -> box(box A)   (positive introspection)
+;; ════════════════════════════════════════════════════════════
+
 (proof box-box
   :theory ModalS5
-  :assumptions ((proves (box p)))
-  :goal (proves (box (box p)))
-  :derivation (necessitation (assumption)))
+  :goal (proves (imp (box ?A) (box (box ?A))))
+  :derivation (imp-intro (necessitation (assumption))))
 
-;; Prove: A → ◇A (what is actual is possible)
-(proof actual-possible
-  :theory ModalS5
-  :assumptions ((proves p))
-  :goal (proves (dia p))
-  :derivation (dia-intro (assumption)))
 
-;; Prove: □A → ◇A
+;; ════════════════════════════════════════════════════════════
+;; Theorem 5:  box A -> dia A   (necessary implies possible)
+;; ════════════════════════════════════════════════════════════
+
 (proof necessary-possible
   :theory ModalS5
-  :assumptions ((proves (box p)))
-  :goal (proves (dia p))
-  :derivation (dia-intro (axiom-T (assumption))))
+  :goal (proves (imp (box ?A) (dia ?A)))
+  :derivation (imp-intro (dia-intro (axiom-T (assumption)))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 6:  dia A -> box(dia A)   (S5 characteristic axiom)
+;; ════════════════════════════════════════════════════════════
+;;
+;; What is possible is necessarily possible — a hallmark of S5.
+
+(proof possible-necessarily-possible
+  :theory ModalS5
+  :goal (proves (imp (dia ?A) (box (dia ?A))))
+  :derivation (imp-intro (axiom-5 (assumption))))

@@ -176,7 +176,8 @@ fn unify_inner(a: &Expr, b: &Expr, subst: &mut Substitution) -> bool {
     match (a, b) {
         (Expr::Meta(name), _) => {
             if let Some(existing) = subst.get(name) {
-                existing == b
+                let existing = existing.clone();
+                unify_inner(&existing, b, subst)
             } else {
                 // Occurs check: prevent circular bindings like ?n → (s ?n)
                 if b.meta_vars().contains(name) {
@@ -188,7 +189,8 @@ fn unify_inner(a: &Expr, b: &Expr, subst: &mut Substitution) -> bool {
         }
         (_, Expr::Meta(name)) => {
             if let Some(existing) = subst.get(name) {
-                existing == a
+                let existing = existing.clone();
+                unify_inner(a, &existing, subst)
             } else {
                 if a.meta_vars().contains(name) {
                     return false;

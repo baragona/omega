@@ -218,7 +218,7 @@ impl Arena {
         match (self.node(a), self.node(b)) {
             (HNode::Meta(name), _) => {
                 if let Some(&existing) = subst.get(name) {
-                    existing == b
+                    self.unify_exprs(existing, b, subst)
                 } else {
                     // Occurs check: prevent circular bindings like ?n → (s ?n)
                     if self.meta_vars(b).contains(name) {
@@ -230,7 +230,7 @@ impl Arena {
             }
             (_, HNode::Meta(name)) => {
                 if let Some(&existing) = subst.get(name) {
-                    existing == a
+                    self.unify_exprs(a, existing, subst)
                 } else {
                     if self.meta_vars(a).contains(name) {
                         return false;

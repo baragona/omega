@@ -1,7 +1,14 @@
-;; Propositional Logic in Omega
-;;
-;; Defines a simple propositional logic with conjunction, implication,
-;; and proves several theorems.
+;;; Propositional Logic — Natural Deduction
+;;;
+;;; Conjunction, disjunction, and implication with proper
+;;; hypothetical reasoning via context extensions.
+;;;
+;;; Proved here:
+;;;   1. A -> A                       (identity)
+;;;   2. A -> (B -> A)                (weakening)
+;;;   3. (A /\ B) -> (B /\ A)        (and-commutativity)
+;;;   4. A -> (B -> (A /\ B))        (curried conjunction)
+;;;   5. (A \/ B) -> (B \/ A)        (or-commutativity)
 
 (theory PropLogic
   (sort Prop)
@@ -15,7 +22,7 @@
 
   (judgment (proves ?P) :where P : Prop)
 
-  ;; Conjunction rules
+  ;; ── Conjunction ──
   (rule and-intro
     :premises ((proves ?A) (proves ?B))
     :conclusion (proves (and ?A ?B)))
@@ -28,39 +35,93 @@
     :premises ((proves (and ?A ?B)))
     :conclusion (proves ?B))
 
-  ;; Implication rules
+  ;; ── Implication (natural deduction) ──
+  ;; To prove A -> B: assume A, then prove B.
   (rule imp-intro
     :premises ((proves ?B))
+    :context ((0 (proves ?A)))
     :conclusion (proves (imp ?A ?B)))
 
   (rule imp-elim
     :premises ((proves (imp ?A ?B)) (proves ?A))
     :conclusion (proves ?B))
 
-  ;; Disjunction rules
+  ;; ── Disjunction ──
   (rule or-intro-l
     :premises ((proves ?A))
     :conclusion (proves (or ?A ?B)))
 
   (rule or-intro-r
     :premises ((proves ?B))
-    :conclusion (proves (or ?A ?B))))
+    :conclusion (proves (or ?A ?B)))
+
+  ;; To eliminate A \/ B: prove C from A, and C from B.
+  (rule or-elim
+    :premises ((proves (or ?A ?B)) (proves ?C) (proves ?C))
+    :context ((1 (proves ?A)) (2 (proves ?B)))
+    :conclusion (proves ?C)))
 
 (check-theory PropLogic)
 
-;; Proof: (and A B) implies (and B A) — explicit derivation tree
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 1:  A -> A   (identity / reflexivity of implication)
+;; ════════════════════════════════════════════════════════════
+
+(proof identity
+  :theory PropLogic
+  :goal (proves (imp ?A ?A))
+  :derivation (imp-intro (assumption)))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 2:  A -> (B -> A)   (weakening / K combinator)
+;; ════════════════════════════════════════════════════════════
+;;
+;; Assume A.  Then assume B.  A is still in context, so done.
+
+(proof weakening
+  :theory PropLogic
+  :goal (proves (imp ?A (imp ?B ?A)))
+  :derivation (imp-intro (imp-intro (assumption))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 3:  (A /\ B) -> (B /\ A)   (commutativity of /\)
+;; ════════════════════════════════════════════════════════════
+
 (proof and-comm
   :theory PropLogic
-  :assumptions ((proves (and p q)))
-  :goal (proves (and q p))
-  :derivation (and-intro
-    (and-elim-r (assumption))
-    (and-elim-l (assumption))))
+  :goal (proves (imp (and ?A ?B) (and ?B ?A)))
+  :derivation
+    (imp-intro
+      (and-intro (and-elim-r (assumption)) (and-elim-l (assumption)))))
 
-;; Proof: A implies (A and A) — tactic style
-(proof self-and
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 4:  A -> (B -> (A /\ B))   (curried conjunction intro)
+;; ════════════════════════════════════════════════════════════
+
+(proof curry-and
   :theory PropLogic
-  :assumptions ((proves p))
-  :goal (proves (and p p))
-  :tactics
-    (apply and-intro) assumption assumption qed)
+  :goal (proves (imp ?A (imp ?B (and ?A ?B))))
+  :derivation (imp-intro (imp-intro (and-intro (assumption) (assumption)))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 5:  (A \/ B) -> (B \/ A)   (commutativity of \/)
+;; ════════════════════════════════════════════════════════════
+;;
+;; Assume A \/ B.  Case split:
+;;   Case A:  or-intro-r gives B \/ A.
+;;   Case B:  or-intro-l gives B \/ A.
+
+(proof or-comm
+  :theory PropLogic
+  :goal (proves (imp (or ?A ?B) (or ?B ?A)))
+  :derivation
+    (imp-intro
+      (or-elim
+        (assumption)
+        (or-intro-r (assumption))
+        (or-intro-l (assumption)))))

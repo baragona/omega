@@ -1,36 +1,45 @@
-;; First-Order Logic (fragment) in Omega
-;;
-;; Defines propositions, terms, and basic FOL rules.
+;;; First-Order Logic — Reasoning About Individuals
+;;;
+;;; Demonstrates the core features of first-order logic:
+;;; terms (individuals, functions), predicates, equality,
+;;; and universal reasoning via schematic rules.
+;;;
+;;; Domain: ancient Greek philosophers with predicates
+;;; for their properties and a function for the teacher relation.
+;;;
+;;; Proved here:
+;;;   1. Socrates is mortal          (syllogism / modus barbara)
+;;;   2. Both philosophers are mortal (conjunction)
+;;;   3. philosopher(x) -> mortal(x) (universal derived rule)
+;;;   4. teacher-of(plato) is mortal (equality substitution)
+;;;   5. Socrates is greek and mortal (compound property)
 
 (theory FOL
   (sort Prop)
   (sort Term)
 
-  ;; Logical connectives
-  (constructor true  : Prop)
-  (constructor false : Prop)
-  (constructor and   : (-> Prop Prop Prop))
-  (constructor or    : (-> Prop Prop Prop))
-  (constructor imp   : (-> Prop Prop Prop))
-  (constructor not   : (-> Prop Prop))
+  ;; ── Logical connectives ──
+  (constructor and : (-> Prop Prop Prop))
+  (constructor imp : (-> Prop Prop Prop))
 
-  ;; Quantifiers (simplified — no real binding here)
-  (constructor forall-prop : (-> Prop Prop))
-  (constructor exists-prop : (-> Prop Prop))
+  ;; ── Equality ──
+  (constructor eq : (-> Term Term Prop))
 
-  ;; Predicates and terms
-  (constructor eq    : (-> Term Term Prop))
-  (constructor zero  : Term)
-  (constructor succ  : (-> Term Term))
+  ;; ── Domain: individuals and functions ──
+  (constructor socrates : Term)
+  (constructor plato    : Term)
+  (constructor teacher-of : (-> Term Term))
 
-  ;; Judgment: provability
+  ;; ── Predicates ──
+  (constructor philosopher : (-> Term Prop))
+  (constructor human       : (-> Term Prop))
+  (constructor mortal      : (-> Term Prop))
+  (constructor greek       : (-> Term Prop))
+
+  ;; ── Judgment ──
   (judgment (proves ?P) :where P : Prop)
 
-  ;; Basic rules
-  (rule true-intro
-    :premises ()
-    :conclusion (proves true))
-
+  ;; ── Propositional rules ──
   (rule and-intro
     :premises ((proves ?A) (proves ?B))
     :conclusion (proves (and ?A ?B)))
@@ -45,21 +54,134 @@
 
   (rule imp-intro
     :premises ((proves ?B))
+    :context ((0 (proves ?A)))
     :conclusion (proves (imp ?A ?B)))
 
   (rule imp-elim
     :premises ((proves (imp ?A ?B)) (proves ?A))
     :conclusion (proves ?B))
 
-  ;; Equality
+  ;; ── Equality rules ──
   (rule eq-refl
     :premises ()
-    :conclusion (proves (eq ?t ?t))))
+    :conclusion (proves (eq ?t ?t)))
+
+  (rule eq-symm
+    :premises ((proves (eq ?a ?b)))
+    :conclusion (proves (eq ?b ?a)))
+
+  (rule eq-trans
+    :premises ((proves (eq ?a ?b)) (proves (eq ?b ?c)))
+    :conclusion (proves (eq ?a ?c)))
+
+  ;; Substitution: if a = b and P(a), then P(b)
+  (rule subst-mortal
+    :premises ((proves (eq ?a ?b)) (proves (mortal ?a)))
+    :conclusion (proves (mortal ?b)))
+
+  ;; ── Domain axioms (schematic = universally quantified) ──
+
+  ;; All philosophers are human
+  (rule philosophers-are-human
+    :premises ((proves (philosopher ?x)))
+    :conclusion (proves (human ?x)))
+
+  ;; All humans are mortal
+  (rule humans-are-mortal
+    :premises ((proves (human ?x)))
+    :conclusion (proves (mortal ?x)))
+
+  ;; All philosophers are greek (in this domain)
+  (rule philosophers-are-greek
+    :premises ((proves (philosopher ?x)))
+    :conclusion (proves (greek ?x)))
+
+  ;; Ground facts
+  (rule socrates-is-philosopher
+    :premises ()
+    :conclusion (proves (philosopher socrates)))
+
+  (rule plato-is-philosopher
+    :premises ()
+    :conclusion (proves (philosopher plato)))
+
+  (rule socrates-teaches-plato
+    :premises ()
+    :conclusion (proves (eq (teacher-of plato) socrates))))
 
 (check-theory FOL)
 
-;; Prove: true and (0 = 0)
-(proof true-and-refl
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 1:  Socrates is mortal   (modus barbara / syllogism)
+;; ════════════════════════════════════════════════════════════
+;;
+;; philosopher(socrates) → human(socrates) → mortal(socrates)
+
+(proof socrates-is-mortal
   :theory FOL
-  :goal (proves (and true (eq zero zero)))
-  :derivation (and-intro (true-intro) (eq-refl)))
+  :goal (proves (mortal socrates))
+  :derivation
+    (humans-are-mortal (philosophers-are-human (socrates-is-philosopher))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 2:  Both philosophers are mortal   (conjunction)
+;; ════════════════════════════════════════════════════════════
+
+(proof both-mortal
+  :theory FOL
+  :goal (proves (and (mortal socrates) (mortal plato)))
+  :derivation
+    (and-intro
+      (humans-are-mortal (philosophers-are-human (socrates-is-philosopher)))
+      (humans-are-mortal (philosophers-are-human (plato-is-philosopher)))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 3:  philosopher(x) -> mortal(x)   (derived universal)
+;; ════════════════════════════════════════════════════════════
+;;
+;; Schematic: holds for ANY term x.
+;; This is the first-order theorem: forall x. philosopher(x) -> mortal(x).
+
+(proof philosophers-are-mortal
+  :theory FOL
+  :goal (proves (imp (philosopher ?x) (mortal ?x)))
+  :derivation
+    (imp-intro (humans-are-mortal (philosophers-are-human (assumption)))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 4:  The teacher of Plato is mortal   (equality substitution)
+;; ════════════════════════════════════════════════════════════
+;;
+;; teacher-of(plato) = socrates   [axiom]
+;; mortal(socrates)               [theorem 1]
+;; ────────────────────────────
+;; mortal(teacher-of(plato))      [by substitution]
+
+(proof teacher-is-mortal
+  :theory FOL
+  :goal (proves (mortal (teacher-of plato)))
+  :derivation
+    (subst-mortal
+      (eq-symm (socrates-teaches-plato))
+      (humans-are-mortal (philosophers-are-human (socrates-is-philosopher)))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 5:  philosopher(x) -> greek(x) /\ mortal(x)
+;; ════════════════════════════════════════════════════════════
+;;
+;; Compound derived property: every philosopher is both
+;; greek and mortal.
+
+(proof greek-and-mortal
+  :theory FOL
+  :goal (proves (imp (philosopher ?x) (and (greek ?x) (mortal ?x))))
+  :derivation
+    (imp-intro
+      (and-intro
+        (philosophers-are-greek (assumption))
+        (humans-are-mortal (philosophers-are-human (assumption))))))

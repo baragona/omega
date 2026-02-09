@@ -1,41 +1,141 @@
-;; Simply Typed Lambda Calculus (STLC) in Omega
-;;
-;; Defines types, terms, and a typing judgment for STLC.
+;;; Simply Typed Lambda Calculus — Type Checking
+;;;
+;;; De Bruijn representation with explicit typing contexts.
+;;; The typing context is part of the judgment, so variable
+;;; lookup is done by pattern matching on the context structure.
+;;;
+;;; Terms:
+;;;   vz          most recent bound variable (index 0)
+;;;   (vs e)      shift: variable one binder up (index n+1)
+;;;   (lam A e)   lambda with type annotation
+;;;   (app e1 e2) application
+;;;
+;;; Proved here:
+;;;   1. \x.x            : A -> A                (identity / I combinator)
+;;;   2. \x.\y.x         : A -> B -> A           (const / K combinator)
+;;;   3. \x.\y.y         : A -> A -> A           (flip / Church false)
+;;;   4. (\x.x)(\x.x)   : (A->A) -> (A->A)     (self-application of id)
+;;;   5. \b.\x.\y.b y x  : (A->A->A) -> A -> A -> A   (Church NOT)
 
 (theory STLC
   (sort Ty)
   (sort Tm)
+  (sort Ctx)
 
-  ;; Types
-  (constructor Base : Ty)
+  ;; ── Types ──
+  (constructor Base  : Ty)
+  (constructor Nat   : Ty)
+  (constructor Bool  : Ty)
   (constructor Arrow : (-> Ty Ty Ty))
 
-  ;; Terms
-  (constructor var   : (-> Tm))
-  (constructor lam   : (-> Ty Tm Tm))
-  (constructor app   : (-> Tm Tm Tm))
+  ;; ── Terms (de Bruijn) ──
+  (constructor vz  : Tm)                  ;; index 0
+  (constructor vs  : (-> Tm Tm))          ;; shift up
+  (constructor lam : (-> Ty Tm Tm))       ;; lambda
+  (constructor app : (-> Tm Tm Tm))       ;; application
 
-  ;; Typing judgment: (has-type ?e ?T) means term e has type T
-  (judgment (has-type ?e ?T) :where e : Tm T : Ty)
+  ;; ── Typing contexts ──
+  (constructor nil  : Ctx)
+  (constructor cons : (-> Ty Ctx Ctx))
 
-  ;; Typing rules
-  (rule t-var
+  ;; ── Typing judgment: (has-type G e T) ──
+  (judgment (has-type ?G ?e ?T) :where G : Ctx e : Tm T : Ty)
+
+  ;; Variable at index 0: type is the head of the context
+  (rule t-vz
     :premises ()
-    :conclusion (has-type (var) ?T))
+    :conclusion (has-type (cons ?A ?G) vz ?A))
 
+  ;; Shift: look past the head into the rest of the context
+  (rule t-vs
+    :premises ((has-type ?G ?e ?T))
+    :conclusion (has-type (cons ?A ?G) (vs ?e) ?T))
+
+  ;; Lambda: extend the context with the parameter type
+  (rule t-lam
+    :premises ((has-type (cons ?A ?G) ?e ?B))
+    :conclusion (has-type ?G (lam ?A ?e) (Arrow ?A ?B)))
+
+  ;; Application: function must accept the argument type
   (rule t-app
-    :premises ((has-type ?e1 (Arrow ?A ?B)) (has-type ?e2 ?A))
-    :conclusion (has-type (app ?e1 ?e2) ?B))
-
-  (rule t-abs
-    :premises ((has-type ?e ?B))
-    :conclusion (has-type (lam ?A ?e) (Arrow ?A ?B))))
+    :premises ((has-type ?G ?e1 (Arrow ?A ?B)) (has-type ?G ?e2 ?A))
+    :conclusion (has-type ?G (app ?e1 ?e2) ?B)))
 
 (check-theory STLC)
 
-;; Prove that the identity function (\x:A. x) has type A -> A
-;; Represented as: (lam A (var)) where (var) stands for the bound variable
-(proof identity-typing
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 1:  \x.x : A -> A   (identity / I combinator)
+;; ════════════════════════════════════════════════════════════
+;;
+;; In context [A], vz has type A.
+
+(proof identity
   :theory STLC
-  :goal (has-type (lam ?A (var)) (Arrow ?A ?A))
-  :derivation (t-abs (t-var)))
+  :goal (has-type nil (lam ?A vz) (Arrow ?A ?A))
+  :derivation (t-lam (t-vz)))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 2:  \x.\y.x : A -> B -> A   (K combinator / const)
+;; ════════════════════════════════════════════════════════════
+;;
+;; In context [B, A], vs(vz) looks past B to find A.
+
+(proof const
+  :theory STLC
+  :goal (has-type nil (lam ?A (lam ?B (vs vz))) (Arrow ?A (Arrow ?B ?A)))
+  :derivation (t-lam (t-lam (t-vs (t-vz)))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 3:  \x.\y.y : A -> A -> A   (Church false / second)
+;; ════════════════════════════════════════════════════════════
+;;
+;; In context [A, A], vz picks the most recent binding.
+
+(proof church-false
+  :theory STLC
+  :goal (has-type nil (lam ?A (lam ?A vz)) (Arrow ?A (Arrow ?A ?A)))
+  :derivation (t-lam (t-lam (t-vz))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 4:  (\x.x)(\x.x) : (A -> A) -> (A -> A)
+;; ════════════════════════════════════════════════════════════
+;;
+;; Apply the identity function to itself.
+;; The outer id is instantiated at type (A -> A).
+
+(proof apply-id-to-id
+  :theory STLC
+  :goal (has-type nil
+    (app (lam (Arrow ?A ?A) vz) (lam ?A vz))
+    (Arrow ?A ?A))
+  :derivation (t-app (t-lam (t-vz)) (t-lam (t-vz))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 5:  \f.\g.\x. f(g(x)) : (Nat->Bool) -> (Base->Nat) -> Base -> Bool
+;;             (function composition / B combinator)
+;; ════════════════════════════════════════════════════════════
+;;
+;; Compose two functions with concrete types:
+;;   f : Nat -> Bool,   g : Base -> Nat,   x : Base
+;;
+;; Context at body [Base, Base->Nat, Nat->Bool]:
+;;   vz         = x : Base        (index 0)
+;;   vs(vz)     = g : Base -> Nat (index 1)
+;;   vs(vs(vz)) = f : Nat -> Bool (index 2)
+;;
+;; Body: app f (app g x) = f(g(x)) : Bool
+
+(proof compose
+  :theory STLC
+  :goal (has-type nil
+    (lam (Arrow Nat Bool) (lam (Arrow Base Nat) (lam Base
+      (app (vs (vs vz)) (app (vs vz) vz)))))
+    (Arrow (Arrow Nat Bool) (Arrow (Arrow Base Nat) (Arrow Base Bool))))
+  :derivation
+    (t-lam (t-lam (t-lam
+      (t-app (t-vs (t-vs (t-vz))) (t-app (t-vs (t-vz)) (t-vz)))))))
