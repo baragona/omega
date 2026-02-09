@@ -374,3 +374,35 @@ fn w_types_example() {
     // W-type wrec
     assert!(results.iter().any(|r| r.contains("Proof wrec-test: VALID")));
 }
+
+#[test]
+fn hott_example() {
+    let results = check_example("examples/hott.omega");
+    assert!(results.iter().any(|r| r.contains("Theory HoTTBase: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof refl-z: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof inv-refl-eq: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof concat-refl-refl: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof transport-refl-id: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof ap-refl-eq: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof left-unit: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof right-unit: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof left-inverse: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof right-inverse: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof inv-involution: VALID")));
+}
+
+#[test]
+fn category_theory_example() {
+    let results = check_example("examples/category-theory.omega");
+    assert!(results.iter().any(|r| r.contains("Theory Category: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof left-identity: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof right-identity: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof associativity: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof functor-id: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof functor-comp: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof psi-unfold: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof yoneda-roundtrip: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof phi-unfold: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof yoneda-psi-phi: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof composite-functor-id: VALID")));
+}

@@ -1,0 +1,208 @@
+;;; Category Theory — The Yoneda Lemma
+;;;
+;;; Formalizes the core of category theory and proves the computational
+;;; content of the Yoneda lemma: the bijection between natural
+;;; transformations Hom(A,–) ⇒ F and elements of F(A).
+;;;
+;;; The Yoneda lemma is arguably the most important result in category
+;;; theory. It states: for any functor F : C → Set and object A in C,
+;;;   Nat(Hom(A,–), F) ≅ F(A)
+;;;
+;;; The two directions of the bijection:
+;;;   φ(α) = α_A(id_A)           — evaluate the natural transformation at identity
+;;;   ψ(x)_B(f) = F(f)(x)       — given x ∈ F(A), build a nat trans using functoriality
+;;;
+;;; We prove:
+;;;   1. id ∘ f = f                              (left identity)
+;;;   2. f ∘ id = f                              (right identity)
+;;;   3. (h ∘ g) ∘ f = h ∘ (g ∘ f)              (associativity)
+;;;   4. F(id)(x) = x                            (functor preserves identity)
+;;;   5. F(g ∘ f)(x) = F(g)(F(f)(x))            (functor preserves composition)
+;;;   6. ψ(x)_B(f) = F(f)(x)                    (ψ unfolds correctly)
+;;;   7. ψ(x)_A(id) = x                         (ψ at identity: Yoneda round-trip)
+;;;   8. φ(α) = α_A(id_A)                       (φ unfolds correctly)
+;;;   9. ψ(φ(α)) at id = α at id                (Yoneda: ψ∘φ is identity at id)
+;;;  10. Horizontal composition of functors      (G∘F preserves identity)
+
+(theory Category
+  (sort Obj)
+  (sort Mor)
+  (sort Elem)     ;; elements of F(X) for a functor F : C → Set
+
+  ;; ── Morphism structure ──
+  (constructor id : (-> Obj Mor))                ;; identity morphism
+  (constructor comp : (-> Mor Mor Mor))          ;; g ∘ f
+
+  ;; ── Category laws (computation rules) ──
+  (rewrite left-id (comp (id ?A) ?f) ?f)        ;; id ∘ f = f
+  (rewrite right-id (comp ?f (id ?A)) ?f)       ;; f ∘ id = f
+  (rewrite assoc (comp (comp ?h ?g) ?f)          ;; (h∘g)∘f = h∘(g∘f)
+                  (comp ?h (comp ?g ?f)))
+
+  ;; ── Functor F : C → Set ──
+  (constructor fmap : (-> Mor Elem Elem))        ;; F(f)(x)
+
+  ;; Functor laws
+  (rewrite fmap-id (fmap (id ?A) ?x) ?x)                ;; F(id) = id
+  (rewrite fmap-comp (fmap (comp ?g ?f) ?x)              ;; F(g∘f) = F(g)∘F(f)
+                     (fmap ?g (fmap ?f ?x)))
+
+  ;; ── Second functor G (for composition) ──
+  (constructor gmap : (-> Mor Elem Elem))        ;; G(f)(x)
+  (rewrite gmap-id (gmap (id ?A) ?x) ?x)
+  (rewrite gmap-comp (gmap (comp ?g ?f) ?x)
+                     (gmap ?g (gmap ?f ?x)))
+
+  ;; ── Natural transformation component ──
+  ;; nt(α, B, f) represents α_B(f) — the component of α at B applied to f
+  (constructor nt : (-> Mor Obj Mor Elem))
+
+  ;; ── Yoneda map φ: Nat(Hom(A,–), F) → F(A) ──
+  ;; φ(α, A) = α_A(id_A)
+  (constructor phi : (-> Mor Obj Elem))
+  (rewrite phi-def (phi ?alpha ?A) (nt ?alpha ?A (id ?A)))
+
+  ;; ── Yoneda map ψ: F(A) → Nat(Hom(A,–), F) ──
+  ;; ψ(x, B, f) = F(f)(x)  — the inverse map
+  (constructor psi : (-> Elem Obj Mor Elem))
+  (rewrite psi-def (psi ?x ?B ?f) (fmap ?f ?x))
+
+  ;; ── Judgments ──
+  (judgment (eq-mor ?f ?g) :where f : Mor g : Mor)
+  (judgment (eq-elem ?x ?y) :where x : Elem y : Elem)
+
+  ;; Equality is reflexivity (modulo rewriting)
+  (rule mor-refl
+    :premises ()
+    :conclusion (eq-mor ?f ?f))
+
+  (rule elem-refl
+    :premises ()
+    :conclusion (eq-elem ?x ?x)))
+
+(check-theory Category)
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 1: id ∘ f = f  (left identity law)
+;;; ═══════════════════════════════════════════════════════════
+
+(proof left-identity
+  :theory Category
+  :goal (eq-mor (comp (id ?A) ?f) ?f)
+  :derivation (mor-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 2: f ∘ id = f  (right identity law)
+;;; ═══════════════════════════════════════════════════════════
+
+(proof right-identity
+  :theory Category
+  :goal (eq-mor (comp ?f (id ?A)) ?f)
+  :derivation (mor-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 3: (h ∘ g) ∘ f = h ∘ (g ∘ f)  (associativity)
+;;; ═══════════════════════════════════════════════════════════
+
+(proof associativity
+  :theory Category
+  :goal (eq-mor (comp (comp ?h ?g) ?f) (comp ?h (comp ?g ?f)))
+  :derivation (mor-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 4: F(id)(x) = x  (functor preserves identity)
+;;; ═══════════════════════════════════════════════════════════
+;;; fmap(id(A), x) → x by fmap-id.
+
+(proof functor-id
+  :theory Category
+  :goal (eq-elem (fmap (id ?A) ?x) ?x)
+  :derivation (elem-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 5: F(g∘f)(x) = F(g)(F(f)(x))  (functor composition)
+;;; ═══════════════════════════════════════════════════════════
+;;; fmap(comp(g,f), x) → fmap(g, fmap(f, x)) by fmap-comp.
+
+(proof functor-comp
+  :theory Category
+  :goal (eq-elem (fmap (comp ?g ?f) ?x) (fmap ?g (fmap ?f ?x)))
+  :derivation (elem-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 6: ψ(x)_B(f) = F(f)(x)  (ψ definition)
+;;; ═══════════════════════════════════════════════════════════
+;;; psi(x, B, f) → fmap(f, x) by psi-def.
+
+(proof psi-unfold
+  :theory Category
+  :goal (eq-elem (psi ?x ?B ?f) (fmap ?f ?x))
+  :derivation (elem-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 7: ψ(x)_A(id_A) = x  (Yoneda round-trip direction 1)
+;;; ═══════════════════════════════════════════════════════════
+;;;
+;;; This is the computational heart of the Yoneda lemma:
+;;;   ψ(x)_A(id_A) = F(id_A)(x) = x
+;;;
+;;; psi(x, A, id(A)) → fmap(id(A), x)  [by psi-def]
+;;;                   → x               [by fmap-id]
+
+(proof yoneda-roundtrip
+  :theory Category
+  :goal (eq-elem (psi ?x ?A (id ?A)) ?x)
+  :derivation (elem-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 8: φ(α) = α_A(id_A)  (φ definition)
+;;; ═══════════════════════════════════════════════════════════
+;;; phi(α, A) → nt(α, A, id(A)) by phi-def.
+
+(proof phi-unfold
+  :theory Category
+  :goal (eq-elem (phi ?alpha ?A) (nt ?alpha ?A (id ?A)))
+  :derivation (elem-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 9: ψ(φ(α))_A(id_A) = φ(α)  (Yoneda: ψ∘φ at identity)
+;;; ═══════════════════════════════════════════════════════════
+;;;
+;;; ψ(φ(α))_A(id_A)
+;;;   = ψ(nt(α, A, id(A)), A, id(A))    [phi-def]
+;;;   = fmap(id(A), nt(α, A, id(A)))     [psi-def]
+;;;   = nt(α, A, id(A))                  [fmap-id]
+;;;   = φ(α)                             [phi-def, backwards]
+;;;
+;;; Both sides normalize to nt(α, A, id(A)).
+
+(proof yoneda-psi-phi
+  :theory Category
+  :goal (eq-elem (psi (phi ?alpha ?A) ?A (id ?A)) (phi ?alpha ?A))
+  :derivation (elem-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 10: (G∘F)(id) = id  (composite functor preserves identity)
+;;; ═══════════════════════════════════════════════════════════
+;;;
+;;; G(F(id(A))(x))
+;;;   = G(fmap(id(A), x))     [expand F]
+;;;   = gmap(id(A), fmap(id(A), x))  ... wait, we need:
+;;; gmap(id(A), fmap(id(A), x))
+;;;   → gmap(id(A), x)        [fmap-id on inner]
+;;;   → x                     [gmap-id]
+
+(proof composite-functor-id
+  :theory Category
+  :goal (eq-elem (gmap (id ?A) (fmap (id ?A) ?x)) ?x)
+  :derivation (elem-refl))
