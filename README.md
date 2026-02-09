@@ -13,7 +13,7 @@
 
 Omega is a **logic-agnostic proof framework** written in Rust. Unlike systems such as Coq, Lean, or Agda — which commit to a fixed logic (CIC, MLTT) — Omega ships with **no built-in logic at all**. Users define their own sorts, connectives, inference rules, and binding structures, and the kernel verifies derivations against those definitions.
 
-The result is a single runtime that can host propositional logic, first-order logic, ZFC set theory, modal logic, linear logic, simply-typed lambda calculus, or any other formal system you can specify.
+The result is a single runtime that can host propositional logic, first-order logic, ZFC set theory, modal logic, linear logic, simply-typed lambda calculus, dependent type theory, classical logic, or any other formal system you can specify.
 
 ## Performance
 
@@ -22,7 +22,7 @@ Omega's kernel operates on a **hash-consed, arena-allocated** term representatio
 | System | Term Size | Time | Result |
 | :--- | :--- | :--- | :--- |
 | Tree-Based Checker | 2^100,001 nodes | — | OOM (would require >10^30 PB) |
-| **Omega (Interned)** | 2^100,001 nodes | **~3 µs** | Verified |
+| **Omega (Interned)** | 2^100,001 nodes | **~30 µs** | Verified |
 
 > Benchmark: structural verification of a recursively doubled term at depth 100,000. See `examples/torture.omega`.
 
@@ -139,7 +139,34 @@ cargo run --release -- check examples/torture.omega
 | `implicit-demo.omega` | Implicit argument inference |
 | `peano-compute.omega` | Peano arithmetic with definitional equality |
 | `reflection-demo.omega` | Proof by reflection |
+| `affine-logic.omega` | Substructural (affine) logic with move semantics |
+| `number-theory.omega` | Induction proofs with Miller pattern unification |
+| `monoid.omega` | Parameterized theories (dual instantiation) |
+| `compiler-demo.omega` | Multi-theory imports (Option, Result, Pair) |
+| `codegen-demo.omega` | String ropes and C code generation via `emit` |
+| `sequent-calc.omega` | Sequent calculus (left/right rules, cut) |
+| `hoare-logic.omega` | Hoare triples (assignment, frame, sequence) |
+| `classical-logic.omega` | Classical logic (DNE, LEM, Peirce's law) |
+| `dep-types.omega` | Dependent types (Pi, identity type) |
+| `compile-factorial.omega` | Verify and compile factorial in one file |
 | `torture.omega` | Exponential term stress test |
+
+#### Standard Library (`libs/`)
+
+| File | Description |
+| :--- | :--- |
+| `option.omega` | Option(T) — parameterized, none/some, elimination |
+| `result.omega` | Result(T,E) — parameterized, ok/err, elimination |
+| `pair.omega` | Pair(A,B) — parameterized, affine context mode |
+| `string.omega` | StringLib — rope constructors for code generation |
+
+#### OmegaRust (`libs/omega-rust/`)
+
+| File | Description |
+| :--- | :--- |
+| `rust-types.omega` | Rust type system (lifetimes, Copy, subtyping) |
+| `borrow.omega` | Borrow checker via affine contexts |
+| `eval.omega` | Operational semantics via rewrite rules |
 
 ## Architecture
 
@@ -152,7 +179,7 @@ omega-cli              Command-line interface
        │    └─ omega-core
        ├─ omega-syntax      S-expression parser, locally nameless encoding
        │    └─ omega-core
-       └─ omega-core          Trusted kernel (~5100 LOC, zero dependencies)
+       └─ omega-core          Trusted kernel (~6900 LOC, zero dependencies)
 ```
 
 **`omega-core`** is the trusted computing base. It has no external dependencies and implements four operations: `register_theory`, `check_derivation`, `check_metatheorem`, and `reflect`. Everything above it is untrusted elaboration.
@@ -162,7 +189,14 @@ omega-cli              Command-line interface
 - [x] User-defined binding specifications
 - [x] Hash-consed interned kernel
 - [x] Constraint unification and implicit arguments
-- [x] Definitional equality (delta reduction)
+- [x] Definitional equality (delta reduction / rewrite rules)
+- [x] Substructural (affine) contexts
+- [x] Context extensions and induction
+- [x] Miller pattern unification (higher-order)
+- [x] Theory imports
+- [x] Parameterized theories / modules
+- [x] String ropes and code generation (`emit`)
+- [x] Dependent types (Pi) and classical logic (DNE)
 
 ## License
 
