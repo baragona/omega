@@ -1,8 +1,9 @@
 ;; ZFC Set Theory in Omega
 ;;
-;; A serious formalization of Zermelo-Fraenkel set theory.
+;; A serious formalization of Zermelo-Fraenkel set theory with Choice.
 ;; Tests: deep proof trees, implicit argument inference (eq-trans chains),
-;; von Neumann ordinal encoding, union/powerset reasoning.
+;; von Neumann ordinal encoding, union/powerset reasoning, and the
+;; Axiom of Choice via a Skolem choice operator.
 ;;
 ;; Von Neumann ordinals:
 ;;   0 = ∅
@@ -203,7 +204,17 @@
   ;; Empty set is a subset of everything
   (rule empty-subset
     :premises ()
-    :conclusion (holds (subset empty ?A))))
+    :conclusion (holds (subset empty ?A)))
+
+  ;; === Axiom of Choice ===
+  ;; choice(A) is a Skolem operator: given a non-empty set A,
+  ;; it selects an element from A.
+  (constructor choice : (-> Set Set))
+
+  ;; If A is inhabited (∃x. x ∈ A), then choice(A) ∈ A.
+  (rule axiom-of-choice
+    :premises ((holds (elem ?x ?A)))
+    :conclusion (holds (elem (choice ?A) ?A))))
 
 (check-theory ZFC)
 
@@ -502,3 +513,44 @@
       (succ-from-pred
         (succ-from-pred
           (succ-self (eq-refl)))))))
+
+;; =====================================================
+;; AXIOM OF CHOICE PROOFS
+;; =====================================================
+
+;; Prove: If x ∈ A, then choice(A) ∈ A
+;; Direct application of the axiom.
+(proof choice-basic
+  :theory ZFC
+  :assumptions ((holds (elem x A)))
+  :goal (holds (elem (choice A) A))
+  :derivation (axiom-of-choice (assumption)))
+
+;; Prove: choice({a}) ∈ {a}
+;; {a} is non-empty because a ∈ {a}, so choice selects from it.
+(proof choice-singleton
+  :theory ZFC
+  :goal (holds (elem (choice (singleton a)) (singleton a)))
+  :derivation (axiom-of-choice (singleton-mem (eq-refl))))
+
+;; Prove: choice({a, b}) ∈ {a, b}
+;; The pair {a,b} is non-empty (a ∈ {a,b}), so choice applies.
+(proof choice-pair
+  :theory ZFC
+  :goal (holds (elem (choice (pair a b)) (pair a b)))
+  :derivation (axiom-of-choice (pair-left (eq-refl))))
+
+;; Prove: choice(succ(n)) ∈ succ(n)
+;; succ(n) = n ∪ {n} is always non-empty since n ∈ succ(n).
+(proof choice-succ
+  :theory ZFC
+  :goal (holds (elem (choice (succ-set n)) (succ-set n)))
+  :derivation (axiom-of-choice (succ-self (eq-refl))))
+
+;; Prove: If A is non-empty, then choice(A) ∈ A ∪ B
+;; Combines choice with union introduction.
+(proof choice-in-union
+  :theory ZFC
+  :assumptions ((holds (elem x A)))
+  :goal (holds (elem (choice A) (union-bin A B)))
+  :derivation (union-left (axiom-of-choice (assumption))))

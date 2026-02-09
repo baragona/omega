@@ -76,6 +76,12 @@ fn zfc_example() {
     assert!(results.iter().any(|r| r.contains("Proof eq-trans-trivial: VALID")));
     // Deep conjunction trees
     assert!(results.iter().any(|r| r.contains("Proof zero-in-ordinals: VALID")));
+    // Axiom of Choice
+    assert!(results.iter().any(|r| r.contains("Proof choice-basic: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof choice-singleton: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof choice-pair: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof choice-succ: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof choice-in-union: VALID")));
 }
 
 #[test]
