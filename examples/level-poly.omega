@@ -1,0 +1,162 @@
+;;; Level-Polymorphic Declarations
+;;;
+;;; Demonstrates universe-polymorphic type constructors.
+;;; Level constructors (lzero, lsuc, lmax) are user-defined symbols
+;;; with rewrite rules and AC normalization — no kernel built-ins.
+;;;
+;;; Proved here:
+;;;   1. Type 0 : Type 1                          (universe hierarchy)
+;;;   2. nil : List(Nat) at level 0               (List : Type 0 → Type 0)
+;;;   3. nil : List(Type 0) at level 1            (List : Type 1 → Type 1)
+;;;   4. Identity type refl at level 0            (Id : polymorphic)
+;;;   5. cons(ze, nil) : List(Nat)                (level preserved)
+;;;   6. const reduces correctly                  (rewrite rule)
+;;;   7. Type 1 : Type 2                          (level hierarchy)
+
+(theory LevelPoly
+  (sort Type) (sort Tm)
+
+  ;; ── Level constructors ──
+  (constructor lzero : Tm)
+  (constructor lsuc : (-> Tm Tm))
+  (constructor lmax : (-> Tm Tm Tm))
+
+  ;; AC normalization: lmax is associative-commutative-idempotent
+  (attribute lmax :aci)
+
+  ;; Level rewrite rules
+  (rewrite lmax-zero (lmax lzero ?n) ?n)
+  (rewrite lmax-suc (lmax (lsuc ?n) (lsuc ?m)) (lsuc (lmax ?n ?m)))
+
+  ;; ── Judgments ──
+  (judgment (has-type ?e ?T) :where e : Tm T : Type)
+  (judgment (ty-eq ?A ?B) :where A : Type B : Type)
+
+  (rule teq-refl :premises () :conclusion (ty-eq ?A ?A))
+
+  ;; ── Universe typing ──
+  (rule type-in-type :premises ()
+    :conclusion (has-type (Type ?u) (Type (lsuc ?u))))
+
+  ;; ── Level-polymorphic List ──
+  ;; List : (-> Type Type)  — works at any universe level
+  (constructor List : (-> Type Type))
+
+  ;; Constructors for lists
+  (constructor nil  : Tm)
+  (constructor cons : (-> Tm Tm Tm))
+
+  ;; Typing rules — ?lv is a regular meta-variable (no special level syntax)
+  (rule t-nil
+    :premises ((has-type ?A (Type ?lv)))
+    :conclusion (has-type nil (List ?A)))
+
+  (rule t-cons
+    :premises ((has-type ?x ?A) (has-type ?xs (List ?A)) (has-type ?A (Type ?lv)))
+    :conclusion (has-type (cons ?x ?xs) (List ?A)))
+
+  ;; ── Level-polymorphic Identity type ──
+  (constructor Id : (-> Type Tm Tm Type))
+  (constructor refl : Tm)
+
+  (rule t-refl
+    :premises ((has-type ?a ?A) (has-type ?A (Type ?lv)))
+    :conclusion (has-type refl (Id ?A ?a ?a)))
+
+  ;; ── Nat as a small type (Type 0) ──
+  (constructor Nat : Tm)
+  (constructor ze : Tm)
+  (constructor su : (-> Tm Tm))
+
+  (rule t-nat  :premises () :conclusion (has-type Nat (Type 0)))
+  (rule t-ze   :premises () :conclusion (has-type ze Nat))
+  (rule t-su   :premises ((has-type ?n Nat)) :conclusion (has-type (su ?n) Nat))
+
+  ;; ── Pi type (level-polymorphic) ──
+  (constructor Pi : (-> Type Type Type))
+
+  (rule t-pi
+    :premises ((has-type ?A (Type ?lv1)) (has-type ?B (Type ?lv2)))
+    :conclusion (has-type (Pi ?A ?B) (Type (lmax ?lv1 ?lv2))))
+
+  ;; ── Const function type (level-polymorphic) ──
+  ;; const : A → B → A
+  ;; For any universe levels
+  (constructor const-fn : (-> Tm Tm Tm))
+  (rewrite const-beta (const-fn ?a ?b) ?a))
+
+(check-theory LevelPoly)
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 1: Type 0 : Type 1
+;;; ═══════════════════════════════════════════════════════════
+
+(proof type-0-in-1
+  :theory LevelPoly
+  :goal (has-type (Type 0) (Type 1))
+  :derivation (type-in-type))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 2: nil : List(Nat) at level 0
+;;; ═══════════════════════════════════════════════════════════
+;;; Nat : Type 0, so List(Nat) : Type 0.
+
+(proof nil-nat
+  :theory LevelPoly
+  :goal (has-type nil (List Nat))
+  :derivation (t-nil (t-nat)))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 3: nil : List(Type 0) at level 1
+;;; ═══════════════════════════════════════════════════════════
+;;; Type 0 : Type 1, so List(Type 0) : Type 1.
+
+(proof nil-type-0
+  :theory LevelPoly
+  :goal (has-type nil (List (Type 0)))
+  :derivation (t-nil (type-in-type)))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 4: refl : Id(Nat, ze, ze) at level 0
+;;; ═══════════════════════════════════════════════════════════
+
+(proof id-nat-refl
+  :theory LevelPoly
+  :goal (has-type refl (Id Nat ze ze))
+  :derivation (t-refl (t-ze) (t-nat)))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 5: cons(ze, nil) : List(Nat)
+;;; ═══════════════════════════════════════════════════════════
+
+(proof cons-ze-nil
+  :theory LevelPoly
+  :goal (has-type (cons ze nil) (List Nat))
+  :derivation (t-cons (t-ze) (t-nil (t-nat)) (t-nat)))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 6: const reduces correctly
+;;; ═══════════════════════════════════════════════════════════
+;;; const-fn(ze, (su ze)) → ze by const-beta rewrite.
+
+(proof const-reduces
+  :theory LevelPoly
+  :goal (ty-eq (const-fn ze (su ze)) ze)
+  :derivation (teq-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 7: Type hierarchy at level 1
+;;; ═══════════════════════════════════════════════════════════
+;;; Type 1 : Type 2
+
+(proof type-1-in-2
+  :theory LevelPoly
+  :goal (has-type (Type 1) (Type 2))
+  :derivation (type-in-type))

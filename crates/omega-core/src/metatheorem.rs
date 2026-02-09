@@ -327,6 +327,7 @@ mod tests {
                 Expr::sym("Prop"),
                 Expr::sym("Prop"),
             ]),
+
         });
         theory.judgments.push(JudgmentForm {
             name: "proves".to_string(),
@@ -347,6 +348,7 @@ mod tests {
             provenance: None,
             implicit_args: vec![],
             context_extensions: vec![],
+
         });
         theory.rules.push(Rule {
             name: "and-elim-l".to_string(),
@@ -359,6 +361,7 @@ mod tests {
             provenance: None,
             implicit_args: vec![],
             context_extensions: vec![],
+
         });
         theory.rules.push(Rule {
             name: "and-elim-r".to_string(),
@@ -371,6 +374,7 @@ mod tests {
             provenance: None,
             implicit_args: vec![],
             context_extensions: vec![],
+
         });
         theory.compute_hash();
         theory

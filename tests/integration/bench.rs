@@ -69,10 +69,12 @@ fn make_torture_theory() -> Theory {
     theory.constructors.push(ConstructorDecl {
         name: "z".into(),
         ty: Expr::sym("Nat"),
+
     });
     theory.constructors.push(ConstructorDecl {
         name: "s".into(),
         ty: Expr::app(vec![Expr::sym("->"), Expr::sym("Nat"), Expr::sym("Nat")]),
+
     });
     theory.constructors.push(ConstructorDecl {
         name: "add".into(),
@@ -82,6 +84,7 @@ fn make_torture_theory() -> Theory {
             Expr::sym("Nat"),
             Expr::sym("Nat"),
         ]),
+
     });
     theory.judgments.push(JudgmentForm {
         name: "eq".into(),
@@ -96,6 +99,7 @@ fn make_torture_theory() -> Theory {
         provenance: None,
         implicit_args: vec![],
         context_extensions: vec![],
+
     });
     theory.compute_hash();
     theory
@@ -241,10 +245,12 @@ fn make_peano_compute_theory() -> Theory {
     theory.constructors.push(ConstructorDecl {
         name: "s".into(),
         ty: Expr::app(vec![Expr::sym("->"), Expr::sym("Nat"), Expr::sym("Nat")]),
+
     });
     theory.constructors.push(ConstructorDecl {
         name: "add".into(),
         ty: Expr::app(vec![Expr::sym("->"), Expr::sym("Nat"), Expr::sym("Nat"), Expr::sym("Nat")]),
+
     });
     theory.judgments.push(JudgmentForm {
         name: "eq".into(),
@@ -259,6 +265,7 @@ fn make_peano_compute_theory() -> Theory {
         provenance: None,
         implicit_args: vec![],
         context_extensions: vec![],
+
     });
     theory.rewrites.push(omega_core::judgment::RewriteRule {
         name: "add-z".into(),

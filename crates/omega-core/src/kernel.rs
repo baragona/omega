@@ -179,6 +179,7 @@ mod tests {
         theory.constructors.push(ConstructorDecl {
             name: "true".to_string(),
             ty: Expr::sym("Prop"),
+
         });
         theory.constructors.push(ConstructorDecl {
             name: "and".to_string(),
@@ -188,6 +189,7 @@ mod tests {
                 Expr::sym("Prop"),
                 Expr::sym("Prop"),
             ]),
+
         });
         theory.constructors.push(ConstructorDecl {
             name: "imp".to_string(),
@@ -197,6 +199,7 @@ mod tests {
                 Expr::sym("Prop"),
                 Expr::sym("Prop"),
             ]),
+
         });
 
         theory.judgments.push(JudgmentForm {
@@ -219,6 +222,7 @@ mod tests {
             provenance: None,
             implicit_args: vec![],
             context_extensions: vec![],
+
         });
 
         theory.rules.push(Rule {
@@ -232,6 +236,7 @@ mod tests {
             provenance: None,
             implicit_args: vec![],
             context_extensions: vec![],
+
         });
 
         theory.rules.push(Rule {
@@ -245,6 +250,7 @@ mod tests {
             provenance: None,
             implicit_args: vec![],
             context_extensions: vec![],
+
         });
 
         theory.rules.push(Rule {
@@ -258,6 +264,7 @@ mod tests {
             provenance: None,
             implicit_args: vec![],
             context_extensions: vec![],
+
         });
 
         theory.rules.push(Rule {
@@ -274,6 +281,7 @@ mod tests {
             provenance: None,
             implicit_args: vec![],
             context_extensions: vec![],
+
         });
 
         theory.compute_hash();

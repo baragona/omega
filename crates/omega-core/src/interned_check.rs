@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::derivation::{Context, Derivation};
 use crate::error::{OmegaError, Result};
-use crate::expr::{BinderKind, Expr, Name};
+use crate::expr::{Expr, Name};
 use crate::intern::{Arena, HExpr};
 use crate::theory::{ContextMode, Theory};
 
@@ -39,6 +39,15 @@ impl InternedTheory {
     /// Build an interned theory from a regular theory.
     pub fn new(theory: &Theory) -> Self {
         let mut arena = Arena::new();
+        // Thread AC/ACI symbols from theory attributes into arena
+        for (name, attrs) in &theory.attributes {
+            use crate::theory::Attribute;
+            if attrs.contains(&Attribute::ACI) {
+                arena.aci_symbols.insert(name.clone());
+            } else if attrs.contains(&Attribute::AC) {
+                arena.ac_symbols.insert(name.clone());
+            }
+        }
         let mut rule_cache: HashMap<String, InternedRule> = HashMap::new();
         for rule in &theory.rules {
             let h_conclusion = arena.from_expr(&rule.conclusion);
@@ -307,18 +316,6 @@ fn normalize(
     // Step 0: WHNF first to reduce any head beta-redexes
     let whnf_ed = arena.whnf(h);
 
-    // Normalize Universe levels eagerly (O(1) check, no tree conversion)
-    if let Some(level) = arena.get_universe_level(whnf_ed) {
-        let normalized = crate::binding::normalize_level(&level);
-        if normalized != level {
-            let result = arena.universe_from_level(&normalized);
-            cache.insert(h, result);
-            return result;
-        }
-        cache.insert(h, whnf_ed);
-        return whnf_ed;
-    }
-
     if rewrites.is_empty() {
         return whnf_ed;
     }
@@ -346,41 +343,6 @@ fn normalize(
         cache.insert(h, result);
         return result;
     }
-
-    // Step 1.75: Built-in W-type reduction: wrec(C, sup(a, f), h) → h(a, f, λb. wrec(C, f(b), h))
-    let children_normalized = if let Some(args) = arena.app_args(children_normalized) {
-        if args.len() == 4 && arena.is_sym(args[0], "wrec") {
-            if let Some(sup_args) = arena.app_args(args[2]) {
-                if sup_args.len() == 3 && arena.is_sym(sup_args[0], "sup") {
-                    let c = args[1];
-                    let a_val = sup_args[1];
-                    let f = sup_args[2];
-                    let hh = args[3];
-
-                    // Build: λb. wrec(C, f(b), h) with proper shifting
-                    let c_s = arena.shift_pub(c, 0, 1);
-                    let f_s = arena.shift_pub(f, 0, 1);
-                    let h_s = arena.shift_pub(hh, 0, 1);
-                    let b0 = arena.bound(0);
-                    let wrec_sym = arena.sym("wrec");
-                    let f_b = arena.app(vec![f_s, b0]);
-                    let wrec_body = arena.app(vec![wrec_sym, c_s, f_b, h_s]);
-                    let ty = arena.sym("_");
-                    let callback = arena.binder(BinderKind::Lambda, "b", ty, wrec_body);
-
-                    *fuel = fuel.saturating_sub(1);
-                    let result = arena.app(vec![hh, a_val, f, callback]);
-                    let result = normalize(arena, rewrites, cache, result, fuel);
-                    cache.insert(h, result);
-                    return result;
-                }
-            }
-        }
-        // Reconstruct since we consumed the args
-        arena.app(args)
-    } else {
-        children_normalized
-    };
 
     // Step 2: Try rewrite rules at the head
     let mut current = children_normalized;
@@ -720,6 +682,7 @@ mod tests {
                 Expr::sym("Prop"),
                 Expr::sym("Prop"),
             ]),
+
         });
         theory.judgments.push(JudgmentForm {
             name: "proves".to_string(),
@@ -740,6 +703,7 @@ mod tests {
             provenance: None,
             implicit_args: vec![],
             context_extensions: vec![],
+
         });
         theory.rules.push(Rule {
             name: "and-elim-l".to_string(),
@@ -752,6 +716,7 @@ mod tests {
             provenance: None,
             implicit_args: vec![],
             context_extensions: vec![],
+
         });
         theory.rules.push(Rule {
             name: "and-elim-r".to_string(),
@@ -764,6 +729,7 @@ mod tests {
             provenance: None,
             implicit_args: vec![],
             context_extensions: vec![],
+
         });
         theory.compute_hash();
         theory

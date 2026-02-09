@@ -406,3 +406,54 @@ fn category_theory_example() {
     assert!(results.iter().any(|r| r.contains("Proof yoneda-psi-phi: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof composite-functor-id: VALID")));
 }
+
+#[test]
+fn induction_recursion_example() {
+    let results = check_example("examples/induction-recursion.omega");
+    assert!(results.iter().any(|r| r.contains("Theory IR: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof decode-nat: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof decode-bool: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof decode-pi: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof decode-sigma: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof type-at-decoded: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof refl-decoded-id: VALID")));
+}
+
+#[test]
+fn hits_example() {
+    let results = check_example("examples/hits.omega");
+    assert!(results.iter().any(|r| r.contains("Theory HITs: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof recS1-at-base: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof loop-is-path: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof recSusp-at-north: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof recSusp-at-south: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof trunc-intro: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof merid-is-path: VALID")));
+}
+
+#[test]
+fn level_poly_example() {
+    let results = check_example("examples/level-poly.omega");
+    assert!(results.iter().any(|r| r.contains("Theory LevelPoly: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof type-0-in-1: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof nil-nat: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof nil-type-0: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof id-nat-refl: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof cons-ze-nil: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof const-reduces: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof type-1-in-2: VALID")));
+}
+
+#[test]
+fn ac_demo_example() {
+    let results = check_example("examples/ac-demo.omega");
+    assert!(results.iter().any(|r| r.contains("Theory ACDemo: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof ac-comm: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof ac-assoc: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof ac-nested: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof ac-four: VALID")));
+    assert!(results.iter().any(|r| r.contains("Theory ACIDemo: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof aci-idem: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof aci-comm-idem: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof aci-absorb: VALID")));
+}

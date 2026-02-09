@@ -1,7 +1,7 @@
 /// Desugaring: Sexp → Core types (Theory, Derivation, MetaTheorem, etc.)
 use omega_core::binding_spec::BindingSpec;
 use omega_core::derivation::Derivation;
-use omega_core::expr::{Expr, Level};
+use omega_core::expr::Expr;
 use omega_core::judgment::{ConstructorDecl, JudgmentForm, RewriteRule, Rule, SortDecl};
 use omega_core::metatheorem::{MetaCase, MetaProof, MetaTheorem};
 use omega_core::theory::{ContextMode, Import, Theory};
@@ -289,6 +289,103 @@ fn desugar_theory(items: &[Sexp], span: Span) -> Result<Command> {
                     rhs,
                 });
             }
+            "mutual" => {
+                // (mutual (constructor ...) (rule ...) (rewrite ...) ...)
+                // Syntactic grouping: flatten sub-declarations into the theory
+                for sub in &decl[1..] {
+                    let sub_decl = sub.as_list().ok_or_else(|| DesugarError {
+                        message: "mutual sub-declaration must be a list".to_string(),
+                        span: sub.span(),
+                    })?;
+                    if sub_decl.is_empty() {
+                        continue;
+                    }
+                    let sub_kind = expect_atom(&sub_decl[0])?;
+                    match sub_kind {
+                        "sort" => {
+                            let sort_name = expect_atom(&sub_decl[1])?;
+                            theory.sorts.push(SortDecl {
+                                name: sort_name.to_string(),
+                            });
+                        }
+                        "constructor" => {
+                            let ctor_name = expect_atom(&sub_decl[1])?;
+                            if sub_decl.len() >= 4 && expect_atom(&sub_decl[2]).ok() == Some(":") {
+                                let ty = desugar_expr(&sub_decl[3])?;
+                                theory.constructors.push(ConstructorDecl {
+                                    name: ctor_name.to_string(),
+                                    ty,
+                                });
+                            } else {
+                                theory.constructors.push(ConstructorDecl {
+                                    name: ctor_name.to_string(),
+                                    ty: Expr::sym("_"),
+                                });
+                            }
+                        }
+                        "judgment" => {
+                            let pattern_sexp = &sub_decl[1];
+                            let pattern = desugar_expr(pattern_sexp)?;
+                            let jname = match &pattern {
+                                Expr::App(args) if !args.is_empty() => match &args[0] {
+                                    Expr::Sym(n) => n.clone(),
+                                    _ => "unnamed".to_string(),
+                                },
+                                Expr::Sym(n) => n.clone(),
+                                _ => "unnamed".to_string(),
+                            };
+                            let mut constraints = Vec::new();
+                            let mut ci = 2;
+                            while ci < sub_decl.len() {
+                                if sub_decl[ci].is_keyword(":where") {
+                                    ci += 1;
+                                    while ci + 2 < sub_decl.len() {
+                                        let var = expect_atom(&sub_decl[ci])?;
+                                        let colon = expect_atom(&sub_decl[ci + 1])?;
+                                        if colon != ":" { break; }
+                                        let sort = expect_atom(&sub_decl[ci + 2])?;
+                                        constraints.push((var.to_string(), sort.to_string()));
+                                        ci += 3;
+                                    }
+                                } else {
+                                    ci += 1;
+                                }
+                            }
+                            theory.judgments.push(JudgmentForm {
+                                name: jname,
+                                pattern,
+                                constraints,
+                            });
+                        }
+                        "rule" => {
+                            let rule = desugar_rule(sub_decl)?;
+                            theory.rules.push(rule);
+                        }
+                        "rewrite" => {
+                            if sub_decl.len() != 4 {
+                                return Err(DesugarError {
+                                    message: "rewrite expects name, lhs, and rhs".to_string(),
+                                    span: sub_decl[0].span(),
+                                });
+                            }
+                            let rw_name = expect_atom(&sub_decl[1])?;
+                            let lhs = desugar_expr(&sub_decl[2])?;
+                            let rhs = desugar_expr(&sub_decl[3])?;
+                            theory.rewrites.push(RewriteRule {
+                                name: rw_name.to_string(),
+                                lhs,
+                                rhs,
+                            });
+                        }
+                        _ => {
+                            return Err(DesugarError {
+                                message: format!("unsupported declaration in mutual block: {}", sub_kind),
+                                span: sub_decl[0].span(),
+                            });
+                        }
+                    }
+                }
+            }
             "import" => {
                 // (import TheoryName)
                 // (import TheoryName :as Alias)
@@ -331,6 +428,28 @@ fn desugar_theory(items: &[Sexp], span: Span) -> Result<Command> {
                     alias,
                 });
             }
+            "attribute" => {
+                // (attribute symbol-name :ac) or (attribute symbol-name :aci)
+                if decl.len() != 3 {
+                    return Err(DesugarError {
+                        message: "attribute expects a symbol name and a flag (:ac or :aci)".to_string(),
+                        span: decl[0].span(),
+                    });
+                }
+                let sym_name = expect_atom(&decl[1])?;
+                let flag = expect_atom(&decl[2])?;
+                let attr = match flag {
+                    ":ac" => omega_core::theory::Attribute::AC,
+                    ":aci" => omega_core::theory::Attribute::ACI,
+                    _ => {
+                        return Err(DesugarError {
+                            message: format!("unknown attribute flag: {} (expected :ac or :aci)", flag),
+                            span: decl[2].span(),
+                        });
+                    }
+                };
+                theory.attributes.entry(sym_name.to_string()).or_insert_with(std::collections::HashSet::new).insert(attr);
+            }
             _ => {
                 return Err(DesugarError {
                     message: format!("unknown theory declaration: {}", kind),
@@ -340,6 +459,8 @@ fn desugar_theory(items: &[Sexp], span: Span) -> Result<Command> {
         }
     }
 
+    // Auto-register "lambda" as substitutive (triggers beta-reduction)
+    theory.substitutive_binders.insert(omega_core::expr::LAMBDA.to_string());
     theory.compute_hash();
     Ok(Command::TheoryDef(theory))
 }
@@ -352,7 +473,13 @@ fn desugar_rule(items: &[Sexp]) -> Result<Rule> {
 
     let mut i = 2;
     while i < items.len() {
-        if items[i].is_keyword(":premises") {
+        if items[i].is_keyword(":levels") {
+            // Skip :levels for backwards compatibility (ignored)
+            i += 1;
+            if i < items.len() && items[i].as_list().is_some() {
+                i += 1;
+            }
+        } else if items[i].is_keyword(":premises") {
             i += 1;
             if let Some(plist) = items[i].as_list() {
                 for p in plist {
@@ -374,7 +501,7 @@ fn desugar_rule(items: &[Sexp]) -> Result<Rule> {
         span: items[0].span(),
     })?;
 
-    // Parse optional :implicit
+    // Parse optional :implicit and :context
     let mut implicit_args = Vec::new();
     let mut context_extensions = Vec::new();
     let mut j = 2;
@@ -902,6 +1029,44 @@ fn desugar_emit(items: &[Sexp], span: Span) -> Result<Command> {
     Ok(Command::Emit { theory, expr })
 }
 
+/// Desugar an S-expression into an Expr, with level parameter names in scope.
+/// Helper: desugar a universe level argument as a regular expression.
+/// Numeric literals get special handling: 0 → lzero, 1 → (lsuc lzero), etc.
+/// Level operations (lsuc, lmax, imax) are recursively processed so that
+/// (lsuc 2) → (lsuc (lsuc (lsuc lzero))).
+fn desugar_level_expr(sexp: &Sexp) -> Result<Expr> {
+    match sexp {
+        Sexp::Atom(s, _) => {
+            if let Ok(n) = s.parse::<usize>() {
+                // Numeric literal: build nested lsuc applications
+                let mut result = Expr::sym("lzero");
+                for _ in 0..n {
+                    result = Expr::app(vec![Expr::sym("lsuc"), result]);
+                }
+                return Ok(result);
+            }
+            // Everything else: desugar as a normal expr (lzero, lsuc, ?u, etc.)
+            desugar_expr(sexp)
+        }
+        Sexp::List(items, _) => {
+            if let Some(head) = items.first().and_then(|i| i.as_atom()) {
+                match head {
+                    "lsuc" | "lmax" | "imax" => {
+                        // Recursively process level sub-expressions
+                        let mut exprs = vec![Expr::sym(head)];
+                        for item in &items[1..] {
+                            exprs.push(desugar_level_expr(item)?);
+                        }
+                        return Ok(Expr::app(exprs));
+                    }
+                    _ => {}
+                }
+            }
+            desugar_expr(sexp)
+        }
+    }
+}
+
 /// Desugar an S-expression into an Expr.
 pub fn desugar_expr(sexp: &Sexp) -> Result<Expr> {
     match sexp {
@@ -938,8 +1103,8 @@ pub fn desugar_expr(sexp: &Sexp) -> Result<Expr> {
                         return desugar_arrow(items, *span);
                     }
                     "Type" if items.len() == 2 => {
-                        let level = desugar_level(&items[1])?;
-                        return Ok(Expr::Universe(level));
+                        let level_expr = desugar_level_expr(&items[1])?;
+                        return Ok(Expr::app(vec![Expr::sym("Type"), level_expr]));
                     }
                     _ => {}
                 }
@@ -966,8 +1131,8 @@ fn desugar_binder(items: &[Sexp], span: Span) -> Result<Expr> {
 
     let kind_str = expect_atom(&items[0])?;
     let kind = match kind_str {
-        "lambda" => omega_core::expr::BinderKind::Lambda,
-        "forall" => omega_core::expr::BinderKind::Forall,
+        "lambda" => omega_core::expr::LAMBDA.to_string(),
+        "forall" => omega_core::expr::FORALL.to_string(),
         _ => unreachable!(),
     };
 
@@ -999,7 +1164,7 @@ fn desugar_binder(items: &[Sexp], span: Span) -> Result<Expr> {
 
 fn desugar_arrow(items: &[Sexp], span: Span) -> Result<Expr> {
     // (-> A B C ...) is right-associative: A -> (B -> C)
-    // Represented as nested Binder with BinderKind::Arrow
+    // Represented as nested Binder with kind "->"
     let types: Vec<Expr> = items[1..]
         .iter()
         .map(|item| desugar_expr(item))
@@ -1016,7 +1181,7 @@ fn desugar_arrow(items: &[Sexp], span: Span) -> Result<Expr> {
     let mut result = types.last().unwrap().clone();
     for ty in types[..types.len() - 1].iter().rev() {
         result = Expr::Binder {
-            kind: omega_core::expr::BinderKind::Arrow,
+            kind: omega_core::expr::ARROW.to_string(),
             hint: "_".to_string(),
             ty: Box::new(ty.clone()),
             body: Box::new(result),
@@ -1026,76 +1191,7 @@ fn desugar_arrow(items: &[Sexp], span: Span) -> Result<Expr> {
     Ok(result)
 }
 
-/// Parse a universe level from an S-expression.
-fn desugar_level(sexp: &Sexp) -> Result<Level> {
-    match sexp {
-        Sexp::Atom(s, span) => {
-            // Numeric literal: 0, 1, 2, ...
-            if let Ok(n) = s.parse::<usize>() {
-                return Ok(Level::from_num(n));
-            }
-            // Named atoms
-            match s.as_str() {
-                "lzero" => Ok(Level::Zero),
-                _ if s.starts_with('?') => {
-                    // Level parameter: ?u → Param("u")
-                    Ok(Level::Param(s[1..].to_string()))
-                }
-                _ => Err(DesugarError {
-                    message: format!("invalid universe level: {}", s),
-                    span: *span,
-                }),
-            }
-        }
-        Sexp::List(items, span) => {
-            if items.is_empty() {
-                return Err(DesugarError {
-                    message: "empty level expression".to_string(),
-                    span: *span,
-                });
-            }
-            let head = expect_atom(&items[0])?;
-            match head {
-                "lsuc" => {
-                    if items.len() != 2 {
-                        return Err(DesugarError {
-                            message: "lsuc expects exactly one argument".to_string(),
-                            span: *span,
-                        });
-                    }
-                    let inner = desugar_level(&items[1])?;
-                    Ok(Level::Succ(Box::new(inner)))
-                }
-                "lmax" => {
-                    if items.len() != 3 {
-                        return Err(DesugarError {
-                            message: "lmax expects exactly two arguments".to_string(),
-                            span: *span,
-                        });
-                    }
-                    let a = desugar_level(&items[1])?;
-                    let b = desugar_level(&items[2])?;
-                    Ok(Level::Max(Box::new(a), Box::new(b)))
-                }
-                "imax" => {
-                    if items.len() != 3 {
-                        return Err(DesugarError {
-                            message: "imax expects exactly two arguments".to_string(),
-                            span: *span,
-                        });
-                    }
-                    let a = desugar_level(&items[1])?;
-                    let b = desugar_level(&items[2])?;
-                    Ok(Level::IMax(Box::new(a), Box::new(b)))
-                }
-                _ => Err(DesugarError {
-                    message: format!("unknown level form: {}", head),
-                    span: items[0].span(),
-                }),
-            }
-        }
-    }
-}
+// desugar_level removed — universe levels are now regular expressions
 
 fn expect_atom<'a>(sexp: &'a Sexp) -> Result<&'a str> {
     sexp.as_atom().ok_or_else(|| DesugarError {

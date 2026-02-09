@@ -1,12 +1,30 @@
-;;; W-Types: Algebraic Universes, W-type Recursion, and Sigma Types
+;;; W-Types: Universes, W-type Recursion, and Sigma Types
 ;;;
-;;; Demonstrates three type-theoretic kernel primitives:
-;;; 1. Algebraic Universes with impredicative Prop (IMax)
-;;; 2. W-types with built-in wrec reduction
+;;; Demonstrates type-theoretic features built entirely from user declarations:
+;;; 1. Algebraic Universes with level rewrite rules and AC normalization
+;;; 2. W-types with wrec via higher-order rewrite rules
 ;;; 3. Sigma types via user rewrite rules (zero kernel changes)
 
 (theory WTypes
   (sort Type) (sort Tm)
+
+  ;; ── Level constructors ──
+  (constructor lzero : Tm)
+  (constructor lsuc : (-> Tm Tm))
+  (constructor lmax : (-> Tm Tm Tm))
+  (constructor imax : (-> Tm Tm Tm))
+
+  ;; AC normalization: lmax is associative-commutative-idempotent
+  (attribute lmax :aci)
+
+  ;; Level rewrite rules
+  (rewrite lmax-zero (lmax lzero ?n) ?n)
+  (rewrite lmax-suc (lmax (lsuc ?n) (lsuc ?m)) (lsuc (lmax ?n ?m)))
+
+  ;; IMax impredicativity: imax(l, 0) = 0
+  (rewrite imax-zero (imax ?l lzero) lzero)
+  ;; IMax predicative case: imax(l1, lsuc(l2)) = lmax(l1, lsuc(l2))
+  (rewrite imax-suc (imax ?l (lsuc ?n)) (lmax ?l (lsuc ?n)))
 
   ;; Judgments
   (judgment (has-type ?e ?T) :where e : Tm T : Type)
@@ -32,10 +50,13 @@
   (rewrite fst-beta (fst (pair ?a ?b)) ?a)
   (rewrite snd-beta (snd (pair ?a ?b)) ?b)
 
-  ;; W-types (wrec reduction is built-in to the kernel)
+  ;; W-types with wrec via higher-order rewrite rule
   (constructor W : (-> Type Type Type))
   (constructor sup : (-> Tm Tm Tm))
   (constructor wrec : (-> Type Tm Tm Tm))
+  ;; wrec(C, sup(a, f), h) → h(a, f, λb. wrec(C, f(b), h))
+  (rewrite wrec-beta (wrec ?C (sup ?a ?f) ?h)
+    (?h ?a ?f (lambda (b : _) (wrec ?C (?f #0) ?h))))
 
   ;; Nat via rewrite rules
   (constructor ze : Tm)
@@ -64,6 +85,9 @@
   :goal (ty-eq (Type (lsuc 2)) (Type 3)) :derivation (teq-refl))
 
 ;; lmax normalizes: lmax(1, 3) = 3
+;; AC canonicalizes to (lmax 1 3) → sort → (lmax (lsuc lzero) (lsuc (lsuc (lsuc lzero))))
+;; then lmax-suc rewrites reduce to (lsuc (lmax lzero (lsuc (lsuc lzero))))
+;; → (lsuc (lsuc (lsuc lzero))) = 3
 (proof lmax-test :theory WTypes
   :goal (ty-eq (Type (lmax 1 3)) (Type 3)) :derivation (teq-refl))
 

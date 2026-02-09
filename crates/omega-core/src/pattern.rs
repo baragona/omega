@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 
 use crate::binding::{abstract_over, abstractable_vars, whnf};
-use crate::expr::{BinderKind, Expr, Level, Name};
+use crate::expr::{Expr, Name};
 
 /// Result of a successful pattern match: a mapping from meta-variable names to expressions.
 pub type Substitution = HashMap<Name, Expr>;
@@ -202,56 +202,6 @@ fn match_inner_core(pattern: &Expr, expr: &Expr, subst: &mut Substitution) -> Re
             }),
         },
 
-        // Universe: match levels structurally, with Param binding like Meta
-        Expr::Universe(pat_level) => match expr {
-            Expr::Universe(expr_level) => match_levels(pat_level, expr_level, subst),
-            _ => Err(MatchError::Mismatch {
-                pattern: pattern.clone(),
-                expr: expr.clone(),
-            }),
-        },
-    }
-}
-
-/// Match universe levels. Level::Param binds like Meta (stores as Universe wrapper).
-fn match_levels(
-    pat: &Level,
-    expr: &Level,
-    subst: &mut Substitution,
-) -> Result<(), MatchError> {
-    match (pat, expr) {
-        (Level::Zero, Level::Zero) => Ok(()),
-        (Level::Succ(a), Level::Succ(b)) => match_levels(a, b, subst),
-        (Level::Max(a1, a2), Level::Max(b1, b2)) => {
-            match_levels(a1, b1, subst)?;
-            match_levels(a2, b2, subst)
-        }
-        (Level::IMax(a1, a2), Level::IMax(b1, b2)) => {
-            match_levels(a1, b1, subst)?;
-            match_levels(a2, b2, subst)
-        }
-        // Param acts like Meta: bind or check consistency
-        (Level::Param(name), _) => {
-            let wrapped = Expr::Universe(expr.clone());
-            if let Some(existing) = subst.get(name) {
-                if *existing == wrapped {
-                    Ok(())
-                } else {
-                    Err(MatchError::Conflict {
-                        meta: name.clone(),
-                        existing: existing.clone(),
-                        new: wrapped,
-                    })
-                }
-            } else {
-                subst.insert(name.clone(), wrapped);
-                Ok(())
-            }
-        }
-        _ => Err(MatchError::Mismatch {
-            pattern: Expr::Universe(pat.clone()),
-            expr: Expr::Universe(expr.clone()),
-        }),
     }
 }
 
@@ -352,7 +302,7 @@ fn try_miller_match(
     for (i, _arg_val) in arg_values.iter().enumerate().rev() {
         let hint = format!("x{}", i);
         result = Expr::Binder {
-            kind: BinderKind::Lambda,
+            kind: crate::expr::LAMBDA.to_string(),
             hint,
             ty: Box::new(Expr::sym("_")),
             body: Box::new(result),
@@ -466,16 +416,17 @@ mod tests {
 
         // ?P should be a lambda
         let p = subst.get("P").unwrap();
-        if let Expr::Binder { kind: BinderKind::Lambda, body, .. } = p {
-            // body should be (eq (add #0 z) #0)
-            let expected_body = Expr::app(vec![
-                Expr::sym("eq"),
-                Expr::app(vec![Expr::sym("add"), Expr::Bound(0), Expr::sym("z")]),
-                Expr::Bound(0),
-            ]);
-            assert_eq!(**body, expected_body);
-        } else {
-            panic!("expected lambda, got {:?}", p);
+        match p {
+            Expr::Binder { kind, body, .. } if kind == crate::expr::LAMBDA => {
+                // body should be (eq (add #0 z) #0)
+                let expected_body = Expr::app(vec![
+                    Expr::sym("eq"),
+                    Expr::app(vec![Expr::sym("add"), Expr::Bound(0), Expr::sym("z")]),
+                    Expr::Bound(0),
+                ]);
+                assert_eq!(**body, expected_body);
+            }
+            _ => panic!("expected lambda, got {:?}", p),
         }
     }
 
@@ -493,7 +444,7 @@ mod tests {
         match_extend(&pat, &target, &mut subst).unwrap();
 
         let p = subst.get("P").unwrap();
-        assert!(matches!(p, Expr::Binder { kind: BinderKind::Lambda, .. }));
+        assert!(matches!(p, Expr::Binder { ref kind, .. } if kind == crate::expr::LAMBDA));
     }
 
     #[test]
@@ -554,16 +505,17 @@ mod tests {
 
         // ?P$1 should be a lambda that abstracts Meta("n") to Bound(0)
         let p = subst.get("P$1").unwrap();
-        if let Expr::Binder { kind: BinderKind::Lambda, body, .. } = p {
-            // body should be (eq (add #0 z) #0)
-            let expected_body = Expr::app(vec![
-                Expr::sym("eq"),
-                Expr::app(vec![Expr::sym("add"), Expr::Bound(0), Expr::sym("z")]),
-                Expr::Bound(0),
-            ]);
-            assert_eq!(**body, expected_body);
-        } else {
-            panic!("expected lambda, got {:?}", p);
+        match p {
+            Expr::Binder { kind, body, .. } if kind == crate::expr::LAMBDA => {
+                // body should be (eq (add #0 z) #0)
+                let expected_body = Expr::app(vec![
+                    Expr::sym("eq"),
+                    Expr::app(vec![Expr::sym("add"), Expr::Bound(0), Expr::sym("z")]),
+                    Expr::Bound(0),
+                ]);
+                assert_eq!(**body, expected_body);
+            }
+            _ => panic!("expected lambda, got {:?}", p),
         }
     }
 }

@@ -2,13 +2,22 @@
 ///
 /// A theory defines a logic. The kernel validates theory well-formedness
 /// but is otherwise logic-agnostic.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::binding::subst_syms;
 use crate::binding_spec::BindingSpec;
 use crate::error::{OmegaError, Result};
 use crate::expr::{Expr, Name};
 use crate::judgment::{ConstructorDecl, JudgmentForm, RewriteRule, Rule, SortDecl};
+
+/// Symbol attributes declared by the user.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Attribute {
+    /// Associative-Commutative: flatten, sort, rebuild at intern time.
+    AC,
+    /// AC + Idempotent: also deduplicate after sorting.
+    ACI,
+}
 
 /// An import directive: import a theory, optionally with parameterized arguments and alias.
 #[derive(Debug, Clone)]
@@ -57,6 +66,11 @@ pub struct Theory {
     pub imports: Vec<Import>,
     /// Theory parameters: (name, sort/type). Empty for non-parameterized theories.
     pub params: Vec<(Name, Expr)>,
+    /// Binder kinds that trigger beta-reduction (substitution on application).
+    /// Typically contains "lambda". Theories can add custom substitutive binders.
+    pub substitutive_binders: HashSet<Name>,
+    /// Symbol attributes (AC, ACI, etc.).
+    pub attributes: HashMap<Name, HashSet<Attribute>>,
 }
 
 impl Theory {
@@ -74,6 +88,8 @@ impl Theory {
             content_hash: 0,
             imports: Vec::new(),
             params: Vec::new(),
+            substitutive_binders: HashSet::new(),
+            attributes: HashMap::new(),
         }
     }
 
@@ -257,6 +273,14 @@ impl Theory {
             }
             self.binding_specs.push(bs.clone());
         }
+        // Merge substitutive binders
+        for sb in &other.substitutive_binders {
+            self.substitutive_binders.insert(sb.clone());
+        }
+        // Merge attributes
+        for (name, attrs) in &other.attributes {
+            self.attributes.entry(name.clone()).or_default().extend(attrs.iter().cloned());
+        }
         Ok(())
     }
 
@@ -398,6 +422,8 @@ impl Theory {
             content_hash: 0,
             imports: Vec::new(),
             params: Vec::new(), // instance is concrete
+            substitutive_binders: self.substitutive_binders.clone(),
+            attributes: self.attributes.clone(),
         };
         theory.compute_hash();
         Ok(theory)
@@ -430,6 +456,7 @@ mod tests {
         theory.constructors.push(ConstructorDecl {
             name: "true".to_string(),
             ty: Expr::sym("Prop"),
+
         });
         theory.constructors.push(ConstructorDecl {
             name: "and".to_string(),
@@ -439,6 +466,7 @@ mod tests {
                 Expr::sym("Prop"),
                 Expr::sym("Prop"),
             ]),
+
         });
 
         theory.judgments.push(JudgmentForm {
@@ -461,6 +489,7 @@ mod tests {
             provenance: None,
             implicit_args: vec![],
             context_extensions: vec![],
+
         });
 
         theory.rules.push(Rule {
@@ -474,6 +503,7 @@ mod tests {
             provenance: None,
             implicit_args: vec![],
             context_extensions: vec![],
+
         });
 
         theory.rules.push(Rule {
@@ -487,6 +517,7 @@ mod tests {
             provenance: None,
             implicit_args: vec![],
             context_extensions: vec![],
+
         });
 
         theory.compute_hash();
@@ -574,6 +605,7 @@ mod tests {
             provenance: None,
             implicit_args: vec![],
             context_extensions: vec![],
+
         });
         theory.compute_hash();
 

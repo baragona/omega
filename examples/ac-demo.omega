@@ -1,0 +1,69 @@
+;;; AC-Normalization Demo
+;;;
+;;; Demonstrates generic associative-commutative normalization.
+;;; Symbols declared :ac or :aci are automatically canonicalized at intern time:
+;;;   flatten nested applications → sort by structural hash → rebuild right-associative
+;;; Result: AC-equivalent terms are definitionally equal (eq-refl proves them).
+
+(theory ACDemo
+  (sort Ty) (sort Tm)
+  (constructor op : (-> Tm Tm Tm))
+
+  ;; Declare op as associative-commutative
+  (attribute op :ac)
+
+  ;; Equality judgment
+  (judgment (eq ?a ?b) :where a : Tm b : Tm)
+  (rule eq-refl :premises () :conclusion (eq ?a ?a)))
+
+(check-theory ACDemo)
+
+;; Commutativity is free:
+(proof ac-comm :theory ACDemo
+  :goal (eq (op a b) (op b a))
+  :derivation (eq-refl))
+
+;; Associativity is free:
+(proof ac-assoc :theory ACDemo
+  :goal (eq (op a (op b c)) (op (op a b) c))
+  :derivation (eq-refl))
+
+;; Nested commutativity + associativity:
+(proof ac-nested :theory ACDemo
+  :goal (eq (op c (op a b)) (op b (op a c)))
+  :derivation (eq-refl))
+
+;; Four-way permutation:
+(proof ac-four :theory ACDemo
+  :goal (eq (op (op d c) (op a b)) (op (op a d) (op b c)))
+  :derivation (eq-refl))
+
+
+;;; --- ACI (AC + Idempotent) ---
+
+(theory ACIDemo
+  (sort Ty) (sort Tm)
+  (constructor join : (-> Tm Tm Tm))
+
+  ;; Declare join as associative-commutative-idempotent
+  (attribute join :aci)
+
+  (judgment (eq ?a ?b) :where a : Tm b : Tm)
+  (rule eq-refl :premises () :conclusion (eq ?a ?a)))
+
+(check-theory ACIDemo)
+
+;; Idempotency is free: (join a a) = a
+(proof aci-idem :theory ACIDemo
+  :goal (eq (join a a) a)
+  :derivation (eq-refl))
+
+;; Commutativity + idempotency:
+(proof aci-comm-idem :theory ACIDemo
+  :goal (eq (join a (join b a)) (join a b))
+  :derivation (eq-refl))
+
+;; Absorption: (join a (join a (join b b))) = (join a b)
+(proof aci-absorb :theory ACIDemo
+  :goal (eq (join a (join a (join b b))) (join a b))
+  :derivation (eq-refl))

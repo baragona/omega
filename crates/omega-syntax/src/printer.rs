@@ -1,6 +1,6 @@
 /// Pretty-printing core types back to S-expression text.
 use omega_core::derivation::Derivation;
-use omega_core::expr::{BinderKind, Expr};
+use omega_core::expr::Expr;
 use omega_core::judgment::Rule;
 use omega_core::theory::Theory;
 
@@ -16,21 +16,24 @@ pub fn print_expr(expr: &Expr) -> String {
             format!("({})", inner.join(" "))
         }
         Expr::Binder {
-            kind: BinderKind::Arrow,
+            kind,
             ty,
             body,
             ..
-        } => {
+        } if kind == omega_core::expr::ARROW => {
             // Flatten nested arrows
             let mut args = vec![print_expr(ty)];
             let mut current = body.as_ref();
             while let Expr::Binder {
-                kind: BinderKind::Arrow,
+                kind: ref inner_kind,
                 ty: inner_ty,
                 body: inner_body,
                 ..
             } = current
             {
+                if inner_kind != omega_core::expr::ARROW {
+                    break;
+                }
                 args.push(print_expr(inner_ty));
                 current = inner_body;
             }
@@ -43,14 +46,8 @@ pub fn print_expr(expr: &Expr) -> String {
             ty,
             body,
         } => {
-            let kw = match kind {
-                BinderKind::Lambda => "lambda",
-                BinderKind::Forall => "forall",
-                BinderKind::Arrow => unreachable!(),
-            };
-            format!("({} ({} : {}) {})", kw, hint, print_expr(ty), print_expr(body))
+            format!("({} ({} : {}) {})", kind, hint, print_expr(ty), print_expr(body))
         }
-        Expr::Universe(level) => format!("(Type {})", level),
     }
 }
 

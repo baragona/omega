@@ -20,6 +20,7 @@ fn make_minimal_logic() -> Theory {
             Expr::sym("Prop"),
             Expr::sym("Prop"),
         ]),
+
     });
     theory.judgments.push(JudgmentForm {
         name: "proves".to_string(),
@@ -41,6 +42,7 @@ fn make_minimal_logic() -> Theory {
         provenance: None,
         implicit_args: vec![],
         context_extensions: vec![],
+
     });
 
     theory.rules.push(Rule {
@@ -54,6 +56,7 @@ fn make_minimal_logic() -> Theory {
         provenance: None,
         implicit_args: vec![],
         context_extensions: vec![],
+
     });
 
     theory.rules.push(Rule {
@@ -67,6 +70,7 @@ fn make_minimal_logic() -> Theory {
         provenance: None,
         implicit_args: vec![],
         context_extensions: vec![],
+
     });
 
     theory.compute_hash();

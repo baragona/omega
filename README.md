@@ -105,6 +105,30 @@ Prove a metatheorem about a theory's rules via case analysis, then **reflect** i
 | Equality check | O(1) (pointer comparison) | O(n) | O(n) |
 | Surface syntax | S-expressions | Algol-style | Algol-style |
 
+## The "Neutral Tool" Philosophy
+
+By being neutral, Omega is more powerful than specialized tools in their own domains.
+
+- **Coq** forces you into Constructive Logic. (Hard to do classical math.)
+- **Isabelle** forces you into Classical Logic. (Hard to do constructive math.)
+- **Rust** forces you into Affine Logic. (Hard to do GC/sharing.)
+- **Omega** lets you choose.
+
+Want Classical? `axiom excluded_middle : Or A (Not A)`.
+Want Constructive? Don't add it.
+Want Linear? Use `(context-mode affine)`.
+Want HoTT? Add path axioms.
+
+Omega is powerful enough to:
+
+- **Verify a Rust-like type system** (`libs/omega-rust/`)
+- **Formalize ZFC set theory** (`examples/zfc.omega`)
+- **Formalize Homotopy Type Theory** (`examples/hott.omega`)
+- **Compile verified programs to C** (`examples/compile-verified.omega`)
+- **Model induction-recursion and HITs** (`examples/induction-recursion.omega`, `examples/hits.omega`)
+
+The kernel is done. The rest is just writing `.omega` files.
+
 ## Getting Started
 
 ### Installation
@@ -149,6 +173,13 @@ cargo run --release -- check examples/torture.omega
 | `classical-logic.omega` | Classical logic (DNE, LEM, Peirce's law) |
 | `dep-types.omega` | Dependent types (Pi, identity type) |
 | `compile-factorial.omega` | Verify and compile factorial in one file |
+| `compile-verified.omega` | HOAS verified compilation (same lambda evaluates AND compiles) |
+| `w-types.omega` | Algebraic universes, W-types, Sigma types |
+| `hott.omega` | Homotopy Type Theory (path algebra, groupoid laws) |
+| `category-theory.omega` | Category theory with Yoneda lemma |
+| `induction-recursion.omega` | Induction-recursion (mutual U/El codes) |
+| `hits.omega` | Higher inductive types (circle, suspension, truncation) |
+| `level-poly.omega` | Level-polymorphic constructors and rules |
 | `torture.omega` | Exponential term stress test |
 
 #### Standard Library (`libs/`)
@@ -197,6 +228,10 @@ omega-cli              Command-line interface
 - [x] Parameterized theories / modules
 - [x] String ropes and code generation (`emit`)
 - [x] Dependent types (Pi) and classical logic (DNE)
+- [x] HOAS verified compilation
+- [x] Algebraic universes, W-types, Sigma types
+- [x] Induction-recursion and higher inductive types
+- [x] Level-polymorphic declarations
 
 ## License
 

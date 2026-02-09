@@ -69,6 +69,7 @@ pub fn reflect(
         provenance: Some(metatheorem.name.clone()),
         implicit_args: vec![],
         context_extensions: vec![],
+
     };
 
     let record = ReflectionRecord {
@@ -168,6 +169,7 @@ mod tests {
                 Expr::sym("Prop"),
                 Expr::sym("Prop"),
             ]),
+    
         });
         theory.judgments.push(JudgmentForm {
             name: "proves".to_string(),
@@ -188,6 +190,7 @@ mod tests {
             provenance: None,
             implicit_args: vec![],
             context_extensions: vec![],
+    
         });
         theory.compute_hash();
         theory
@@ -261,6 +264,7 @@ mod tests {
             provenance: None,
             implicit_args: vec![],
             context_extensions: vec![],
+    
         }).unwrap();
 
         // After modification: should be stale
