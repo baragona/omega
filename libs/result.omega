@@ -1,0 +1,46 @@
+;;; Result(T, E) — Generic Result Type
+;;;
+;;; A parameterized theory for result values with two type parameters,
+;;; testing multi-parameter instantiation. Models success/failure with
+;;; distinct ok and err constructors.
+;;;
+;;; Usage:
+;;;   (import Result Int String :as Res)
+;;;   ;; gives Res.ok : (-> Int Res.Result), Res.err : (-> String Res.Result), ...
+
+(theory Result
+  :params ((T Type) (E Type))
+
+  ;; The Result sort
+  (sort Result)
+  (sort Prop)
+
+  ;; Constructors: ok wraps success, err wraps failure
+  (constructor ok : (-> T Result))
+  (constructor err : (-> E Result))
+
+  ;; Equality on results
+  (constructor result-eq : (-> Result Result Prop))
+
+  ;; Judgment
+  (judgment (proves ?P) :where P : Prop)
+
+  ;; Equational rules
+  (rule res-refl
+    :premises ()
+    :conclusion (proves (result-eq ?a ?a)))
+
+  (rule res-symm
+    :premises ((proves (result-eq ?a ?b)))
+    :conclusion (proves (result-eq ?b ?a)))
+
+  (rule res-trans
+    :premises ((proves (result-eq ?a ?b)) (proves (result-eq ?b ?c)))
+    :conclusion (proves (result-eq ?a ?c)))
+
+  ;; Elimination: to prove P for any result, prove for ok and err cases.
+  (rule res-elim
+    :premises ((proves (?P (ok ?t))) (proves (?P (err ?e))))
+    :conclusion (proves (?P ?r))))
+
+(check-theory Result)

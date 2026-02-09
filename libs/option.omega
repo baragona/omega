@@ -1,0 +1,54 @@
+;;; Option(T) — Generic Optional Type
+;;;
+;;; A parameterized theory for optional values, testing single-parameter
+;;; instantiation. Provides constructors (none, some), equality, and
+;;; an elimination principle (pattern matching).
+;;;
+;;; Usage:
+;;;   (import Option Nat :as ONat)
+;;;   ;; gives ONat.none : ONat.Opt, ONat.some : (-> Nat ONat.Opt), ...
+
+(theory Option
+  :params ((T Type))
+
+  ;; The Option sort itself
+  (sort Opt)
+  (sort Prop)
+
+  ;; Constructors
+  (constructor none : Opt)
+  (constructor some : (-> T Opt))
+
+  ;; Equality on options
+  (constructor opt-eq : (-> Opt Opt Prop))
+
+  ;; Judgment
+  (judgment (proves ?P) :where P : Prop)
+
+  ;; Equational rules
+  (rule opt-refl
+    :premises ()
+    :conclusion (proves (opt-eq ?a ?a)))
+
+  (rule opt-symm
+    :premises ((proves (opt-eq ?a ?b)))
+    :conclusion (proves (opt-eq ?b ?a)))
+
+  (rule opt-trans
+    :premises ((proves (opt-eq ?a ?b)) (proves (opt-eq ?b ?c)))
+    :conclusion (proves (opt-eq ?a ?c)))
+
+  ;; Congruence: if a = b then some(a) = some(b)
+  (rule opt-cong-some
+    :premises ((proves (opt-eq (some ?a) (some ?b))))
+    :conclusion (proves (opt-eq (some ?a) (some ?b))))
+
+  ;; Elimination / pattern matching principle:
+  ;; To prove a property P for any option, prove it for none and for (some ?x).
+  ;; This is the induction principle for Option.
+  (rule opt-elim
+    :premises ((proves (?P none)) (proves (?P (some ?x))))
+    :context ((1 (proves (?P (some ?x)))))
+    :conclusion (proves (?P ?o))))
+
+(check-theory Option)

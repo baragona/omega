@@ -1,0 +1,46 @@
+;;; Pair(A, B) — Generic Product Type with Affine Elimination
+;;;
+;;; A parameterized theory for pairs, testing that generic theories
+;;; preserve substructural (affine) constraints. In affine mode,
+;;; each assumption can be used at most once — so destructuring a
+;;; pair consumes it.
+;;;
+;;; Usage:
+;;;   (import Pair Int String :as P)
+;;;   ;; gives P.mkpair : (-> Int String P.Pair), P.pair-elim, ...
+
+(theory Pair
+  :params ((A Type) (B Type))
+
+  ;; Context mode: affine — each assumption used at most once
+  (context-mode affine)
+
+  ;; The Pair sort
+  (sort Pair)
+  (sort Prop)
+
+  ;; Constructor
+  (constructor mkpair : (-> A B Pair))
+
+  ;; Equality
+  (constructor pair-eq : (-> Pair Pair Prop))
+
+  ;; Judgment
+  (judgment (proves ?P) :where P : Prop)
+
+  ;; Equational rules
+  (rule pair-refl
+    :premises ()
+    :conclusion (proves (pair-eq ?a ?a)))
+
+  (rule pair-symm
+    :premises ((proves (pair-eq ?a ?b)))
+    :conclusion (proves (pair-eq ?b ?a)))
+
+  ;; Elimination: given a pair, you can use its components.
+  ;; The affine context mode ensures the pair is consumed exactly once.
+  (rule pair-elim
+    :premises ((proves (?P (mkpair ?a ?b))))
+    :conclusion (proves (?P (mkpair ?a ?b)))))
+
+(check-theory Pair)

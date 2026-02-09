@@ -156,6 +156,44 @@ fn monoid_example() {
 }
 
 #[test]
+fn option_lib() {
+    let results = check_example("libs/option.omega");
+    assert!(results.iter().any(|r| r.contains("Theory Option: registered OK")));
+}
+
+#[test]
+fn result_lib() {
+    let results = check_example("libs/result.omega");
+    assert!(results.iter().any(|r| r.contains("Theory Result: registered OK")));
+}
+
+#[test]
+fn pair_lib() {
+    let results = check_example("libs/pair.omega");
+    assert!(results.iter().any(|r| r.contains("Theory Pair: registered OK")));
+}
+
+#[test]
+fn compiler_demo_example() {
+    let results = check_example("examples/compiler-demo.omega");
+    assert!(results.iter().any(|r| r.contains("Theory CompilerDemo: registered OK")));
+    // Single-parameter instantiation
+    assert!(results.iter().any(|r| r.contains("Proof opt-refl-zero: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof opt-symm-test: VALID")));
+    // Multi-parameter instantiation
+    assert!(results.iter().any(|r| r.contains("Proof res-ok-refl: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof res-err-refl: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof res-symm-test: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof res-trans-test: VALID")));
+    // Pair with affine context
+    assert!(results.iter().any(|r| r.contains("Proof pair-refl-test: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof pair-symm-test: VALID")));
+    // Cross-module
+    assert!(results.iter().any(|r| r.contains("Proof opt-none-refl: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof res-ok-one-refl: VALID")));
+}
+
+#[test]
 fn torture_example() {
     let results = check_example("examples/torture.omega");
     assert!(results.iter().any(|r| r.contains("Theory TortureArith: registered OK")));

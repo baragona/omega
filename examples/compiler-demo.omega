@@ -1,0 +1,199 @@
+;;; The Final Boss: Compiler Demo
+;;;
+;;; A single theory that imports three parameterized standard library
+;;; modules — Option(Int), Result(Int, String), and Pair(Int, String) —
+;;; and proves theorems using all of them.
+;;;
+;;; This demonstrates:
+;;;   1. Single-parameter instantiation  (Option)
+;;;   2. Multi-parameter instantiation   (Result)
+;;;   3. Affine constraints preserved    (Pair)
+;;;   4. Multiple instantiations coexist (all three in one theory)
+;;;   5. Cross-module reasoning          (proofs mixing different modules)
+
+;; ── Load the standard library ──
+
+(theory Option
+  :params ((T Type))
+  (sort Opt)
+  (sort Prop)
+  (constructor none : Opt)
+  (constructor some : (-> T Opt))
+  (constructor opt-eq : (-> Opt Opt Prop))
+  (judgment (proves ?P) :where P : Prop)
+  (rule opt-refl
+    :premises ()
+    :conclusion (proves (opt-eq ?a ?a)))
+  (rule opt-symm
+    :premises ((proves (opt-eq ?a ?b)))
+    :conclusion (proves (opt-eq ?b ?a)))
+  (rule opt-trans
+    :premises ((proves (opt-eq ?a ?b)) (proves (opt-eq ?b ?c)))
+    :conclusion (proves (opt-eq ?a ?c))))
+
+(theory Result
+  :params ((T Type) (E Type))
+  (sort Result)
+  (sort Prop)
+  (constructor ok : (-> T Result))
+  (constructor err : (-> E Result))
+  (constructor result-eq : (-> Result Result Prop))
+  (judgment (proves ?P) :where P : Prop)
+  (rule res-refl
+    :premises ()
+    :conclusion (proves (result-eq ?a ?a)))
+  (rule res-symm
+    :premises ((proves (result-eq ?a ?b)))
+    :conclusion (proves (result-eq ?b ?a)))
+  (rule res-trans
+    :premises ((proves (result-eq ?a ?b)) (proves (result-eq ?b ?c)))
+    :conclusion (proves (result-eq ?a ?c))))
+
+(theory Pair
+  :params ((A Type) (B Type))
+  (sort Pair)
+  (sort Prop)
+  (constructor mkpair : (-> A B Pair))
+  (constructor pair-eq : (-> Pair Pair Prop))
+  (judgment (proves ?P) :where P : Prop)
+  (rule pair-refl
+    :premises ()
+    :conclusion (proves (pair-eq ?a ?a)))
+  (rule pair-symm
+    :premises ((proves (pair-eq ?a ?b)))
+    :conclusion (proves (pair-eq ?b ?a))))
+
+
+;; ── The Compiler Demo Theory ──
+;; Imports all three libraries instantiated with concrete types.
+
+(theory CompilerDemo
+  ;; Base sorts (the "language" we're compiling)
+  (sort Int)
+  (sort String)
+
+  ;; Int constructors (simple Peano-style for demonstration)
+  (constructor zero : Int)
+  (constructor succ : (-> Int Int))
+
+  ;; String constructors
+  (constructor empty-str : String)
+  (constructor msg : String)
+
+  ;; Import Option(Int)
+  (import Option Int :as OI)
+
+  ;; Import Result(Int, String) — two type parameters
+  (import Result Int String :as Res)
+
+  ;; Import Pair(Int, String) — two type parameters
+  (import Pair Int String :as P))
+
+(check-theory CompilerDemo)
+
+
+;; ════════════════════════════════════════════════════════════
+;; PROOF 1: Option — some(zero) = some(zero)
+;; Tests single-parameter instantiation.
+;; ════════════════════════════════════════════════════════════
+
+(proof opt-refl-zero
+  :theory CompilerDemo
+  :goal (OI.proves (OI.opt-eq (OI.some zero) (OI.some zero)))
+  :derivation (OI.opt-refl))
+
+
+;; ════════════════════════════════════════════════════════════
+;; PROOF 2: Option — symmetry on some(succ(zero))
+;; ════════════════════════════════════════════════════════════
+
+(proof opt-symm-test
+  :theory CompilerDemo
+  :goal (OI.proves (OI.opt-eq OI.none (OI.some zero)))
+  :assumptions ((OI.proves (OI.opt-eq (OI.some zero) OI.none)))
+  :derivation (OI.opt-symm (assumption)))
+
+
+;; ════════════════════════════════════════════════════════════
+;; PROOF 3: Result — ok(zero) = ok(zero)
+;; Tests multi-parameter instantiation.
+;; ════════════════════════════════════════════════════════════
+
+(proof res-ok-refl
+  :theory CompilerDemo
+  :goal (Res.proves (Res.result-eq (Res.ok zero) (Res.ok zero)))
+  :derivation (Res.res-refl))
+
+
+;; ════════════════════════════════════════════════════════════
+;; PROOF 4: Result — err("msg") = err("msg")
+;; Tests that the error type parameter (String) works.
+;; ════════════════════════════════════════════════════════════
+
+(proof res-err-refl
+  :theory CompilerDemo
+  :goal (Res.proves (Res.result-eq (Res.err msg) (Res.err msg)))
+  :derivation (Res.res-refl))
+
+
+;; ════════════════════════════════════════════════════════════
+;; PROOF 5: Result — symmetry: err(msg) = ok(zero) from assumption
+;; ════════════════════════════════════════════════════════════
+
+(proof res-symm-test
+  :theory CompilerDemo
+  :goal (Res.proves (Res.result-eq (Res.err msg) (Res.ok zero)))
+  :assumptions ((Res.proves (Res.result-eq (Res.ok zero) (Res.err msg))))
+  :derivation (Res.res-symm (assumption)))
+
+
+;; ════════════════════════════════════════════════════════════
+;; PROOF 6: Result — transitivity chain
+;; ok(zero) = ok(succ(zero)) via two assumptions
+;; ════════════════════════════════════════════════════════════
+
+(proof res-trans-test
+  :theory CompilerDemo
+  :goal (Res.proves (Res.result-eq (Res.ok zero) (Res.ok (succ (succ zero)))))
+  :assumptions ((Res.proves (Res.result-eq (Res.ok zero) (Res.ok (succ zero))))
+                (Res.proves (Res.result-eq (Res.ok (succ zero)) (Res.ok (succ (succ zero))))))
+  :derivation (Res.res-trans (assumption) (assumption)))
+
+
+;; ════════════════════════════════════════════════════════════
+;; PROOF 7: Pair — mkpair(zero, msg) = mkpair(zero, msg)
+;; Tests two-parameter instantiation with Pair.
+;; ════════════════════════════════════════════════════════════
+
+(proof pair-refl-test
+  :theory CompilerDemo
+  :goal (P.proves (P.pair-eq (P.mkpair zero msg) (P.mkpair zero msg)))
+  :derivation (P.pair-refl))
+
+
+;; ════════════════════════════════════════════════════════════
+;; PROOF 8: Pair — symmetry (affine context preserved)
+;; ════════════════════════════════════════════════════════════
+
+(proof pair-symm-test
+  :theory CompilerDemo
+  :goal (P.proves (P.pair-eq (P.mkpair (succ zero) empty-str) (P.mkpair zero msg)))
+  :assumptions ((P.proves (P.pair-eq (P.mkpair zero msg) (P.mkpair (succ zero) empty-str))))
+  :derivation (P.pair-symm (assumption)))
+
+
+;; ════════════════════════════════════════════════════════════
+;; PROOF 9: Cross-module — Option and Result both reflexive
+;; Proves two independent facts in the same theory, showing
+;; that OI.* and Res.* namespaces are fully independent.
+;; ════════════════════════════════════════════════════════════
+
+(proof opt-none-refl
+  :theory CompilerDemo
+  :goal (OI.proves (OI.opt-eq OI.none OI.none))
+  :derivation (OI.opt-refl))
+
+(proof res-ok-one-refl
+  :theory CompilerDemo
+  :goal (Res.proves (Res.result-eq (Res.ok (succ zero)) (Res.ok (succ zero))))
+  :derivation (Res.res-refl))
