@@ -1,0 +1,91 @@
+;; Eta-contraction demo: (lambda (x:T) (f #0)) ≡ f at intern time.
+;;
+;; With (binder-behavior lambda :substitutive :eta), the arena
+;; canonicalizes eta-redexes to their contracted form, making
+;; eta-equivalence a definitional equality (eq-refl suffices).
+
+(theory EtaDemo
+  ;; Declare lambda as both substitutive (beta) and eta-contractible
+  (binder-behavior lambda :substitutive :eta)
+
+  (sort Obj)
+  (sort Mor)
+
+  ;; Simple morphism constructors
+  (constructor id : (-> Obj Mor))
+  (constructor comp : (-> Mor Mor Mor))
+  (constructor apply-mor : (-> Mor Obj Obj))
+
+  ;; Morphism equality judgment
+  (judgment (mor-eq ?f ?g) :where f : Mor g : Mor)
+  (rule meq-refl
+    :premises ()
+    :conclusion (mor-eq ?f ?f))
+
+  ;; Composition identity rewrites
+  (rewrite comp-id-l (comp (id ?A) ?f) ?f)
+  (rewrite comp-id-r (comp ?f (id ?A)) ?f))
+
+(check-theory EtaDemo)
+
+;; Test 1: Basic eta-contraction
+;; (lambda (x : Mor) (f #0)) eta-contracts to f
+;; Body is App([f, Bound(0)]). Last arg is Bound(0), head is f which
+;; has no Bound(0). So eta-contracts to f. Both sides identical.
+(proof eta-basic :theory EtaDemo
+  :goal (mor-eq (lambda (x : Mor) (f #0)) f)
+  :derivation (meq-refl))
+
+;; Test 2: Eta with a compound head
+;; (lambda (x : Mor) (comp g #0)) → App([comp, g, Bound(0)])
+;; Last arg is Bound(0), App([comp, g]) has no Bound(0).
+;; Eta contracts to (comp g) = partial application.
+;; But comp : Mor -> Mor -> Mor, so (comp g) is a curried function.
+;; Not directly usable as Mor, but the eta-contraction itself works.
+;; Let's verify through comp: the original and contracted are the same.
+(proof eta-compound :theory EtaDemo
+  :goal (mor-eq (lambda (x : Mor) (comp g #0)) (comp g))
+  :derivation (meq-refl))
+
+;; Test 3: Nested eta — (lambda (x:_) (lambda (y:_) (f #1 #0)))
+;; Inner: (lambda (y:_) (f #1 #0)) — body is App([f, Bound(1), Bound(0)])
+;; Last arg is Bound(0), App([f, Bound(1)]) has Bound(1) but NOT Bound(0).
+;; Wait: in inner lambda's scope, Bound(1) refers to outer x. After stripping
+;; the inner binder, Bound(1) needs to shift down to Bound(0).
+;; So inner contracts to App([f, Bound(0)]) = (f #0) in outer scope.
+;; Outer: (lambda (x:_) (f #0)) — same as Test 1, contracts to f.
+(proof eta-nested :theory EtaDemo
+  :goal (mor-eq (lambda (x : Mor) (lambda (y : Mor) (f #1 #0))) f)
+  :derivation (meq-refl))
+
+;; Test 4: Eta does NOT fire when variable appears in head
+;; (lambda (x : Mor) (#0 g)) — body is App([Bound(0), g])
+;; Last arg is g (not Bound(0)), so no eta-contraction.
+;; Head args: [Bound(0)] does contain Bound(0). No contraction.
+;; This is expected — #0 is used as a function, not just an argument.
+
+;; Test 5: Composition rewrites + eta
+;; comp(id(A), f) rewrites to f, and f = f by refl.
+(proof comp-id-left :theory EtaDemo
+  :goal (mor-eq (comp (id A) f) f)
+  :derivation (meq-refl))
+
+(proof comp-id-right :theory EtaDemo
+  :goal (mor-eq (comp f (id A)) f)
+  :derivation (meq-refl))
+
+;; Test 6: Eta inside a larger term
+;; (comp (lambda (x : Mor) (f #0)) g) = (comp f g)
+;; The lambda eta-contracts to f, so both sides become (comp f g).
+(proof eta-inside-comp :theory EtaDemo
+  :goal (mor-eq (comp (lambda (x : Mor) (f #0)) g) (comp f g))
+  :derivation (meq-refl))
+
+;; Test 7: No eta when variable is free in f
+;; (lambda (x : Mor) (comp #0 #0)) — body is App([comp, Bound(0), Bound(0)])
+;; Last arg is Bound(0), but f_args = [comp, Bound(0)] contains Bound(0).
+;; No eta-contraction. This term is kept as-is.
+;; We can test it equals itself:
+(proof no-eta-when-used :theory EtaDemo
+  :goal (mor-eq (lambda (x : Mor) (comp #0 #0)) (lambda (x : Mor) (comp #0 #0)))
+  :derivation (meq-refl))

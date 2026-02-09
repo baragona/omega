@@ -48,6 +48,12 @@ impl InternedTheory {
                 arena.ac_symbols.insert(name.clone());
             }
         }
+        // Thread binder behavior flags from theory into arena
+        arena.substitutive_binders = theory.substitutive_binders.clone();
+        arena.eta_binders = theory.eta_binders.clone();
+        arena.linear_binders = theory.linear_binders.clone();
+        arena.affine_binders = theory.affine_binders.clone();
+
         let mut rule_cache: HashMap<String, InternedRule> = HashMap::new();
         for rule in &theory.rules {
             let h_conclusion = arena.from_expr(&rule.conclusion);
@@ -609,6 +615,16 @@ fn check_inner(
                         local_subst.insert(k.clone(), *v);
                     }
                 }
+            }
+
+            // Validate linear/affine binder usage in the goal
+            if !arena.linear_binders.is_empty() || !arena.affine_binders.is_empty() {
+                let resolved_goal = apply_fixpoint(arena, goal, global_subst);
+                arena.validate_binder_usage(resolved_goal).map_err(|msg| {
+                    OmegaError::MalformedDerivation(format!(
+                        "in rule {}: {}", rule_name, msg
+                    ))
+                })?;
             }
 
             for (k, v) in local_subst {

@@ -69,6 +69,13 @@ pub struct Theory {
     /// Binder kinds that trigger beta-reduction (substitution on application).
     /// Typically contains "lambda". Theories can add custom substitutive binders.
     pub substitutive_binders: HashSet<Name>,
+    /// Binder kinds that trigger eta-contraction at intern time.
+    /// `(kind (x:T) (f x))` → `f` when `x ∉ FV(f)`.
+    pub eta_binders: HashSet<Name>,
+    /// Binder kinds with linear usage: bound variable must be used exactly once.
+    pub linear_binders: HashSet<Name>,
+    /// Binder kinds with affine usage: bound variable must be used at most once.
+    pub affine_binders: HashSet<Name>,
     /// Symbol attributes (AC, ACI, etc.).
     pub attributes: HashMap<Name, HashSet<Attribute>>,
 }
@@ -89,6 +96,9 @@ impl Theory {
             imports: Vec::new(),
             params: Vec::new(),
             substitutive_binders: HashSet::new(),
+            eta_binders: HashSet::new(),
+            linear_binders: HashSet::new(),
+            affine_binders: HashSet::new(),
             attributes: HashMap::new(),
         }
     }
@@ -277,6 +287,16 @@ impl Theory {
         for sb in &other.substitutive_binders {
             self.substitutive_binders.insert(sb.clone());
         }
+        // Merge eta/linear/affine binders
+        for b in &other.eta_binders {
+            self.eta_binders.insert(b.clone());
+        }
+        for b in &other.linear_binders {
+            self.linear_binders.insert(b.clone());
+        }
+        for b in &other.affine_binders {
+            self.affine_binders.insert(b.clone());
+        }
         // Merge attributes
         for (name, attrs) in &other.attributes {
             self.attributes.entry(name.clone()).or_default().extend(attrs.iter().cloned());
@@ -423,6 +443,9 @@ impl Theory {
             imports: Vec::new(),
             params: Vec::new(), // instance is concrete
             substitutive_binders: self.substitutive_binders.clone(),
+            eta_binders: self.eta_binders.clone(),
+            linear_binders: self.linear_binders.clone(),
+            affine_binders: self.affine_binders.clone(),
             attributes: self.attributes.clone(),
         };
         theory.compute_hash();

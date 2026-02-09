@@ -428,6 +428,31 @@ fn desugar_theory(items: &[Sexp], span: Span) -> Result<Command> {
                     alias,
                 });
             }
+            "binder-behavior" => {
+                // (binder-behavior name :substitutive :eta :linear :affine)
+                if decl.len() < 3 {
+                    return Err(DesugarError {
+                        message: "binder-behavior expects a name and at least one flag".to_string(),
+                        span: decl[0].span(),
+                    });
+                }
+                let binder_name = expect_atom(&decl[1])?;
+                for flag_sexp in &decl[2..] {
+                    let flag = expect_atom(flag_sexp)?;
+                    match flag {
+                        ":substitutive" => { theory.substitutive_binders.insert(binder_name.to_string()); }
+                        ":eta" => { theory.eta_binders.insert(binder_name.to_string()); }
+                        ":linear" => { theory.linear_binders.insert(binder_name.to_string()); }
+                        ":affine" => { theory.affine_binders.insert(binder_name.to_string()); }
+                        _ => {
+                            return Err(DesugarError {
+                                message: format!("unknown binder-behavior flag: {} (expected :substitutive, :eta, :linear, :affine)", flag),
+                                span: flag_sexp.span(),
+                            });
+                        }
+                    }
+                }
+            }
             "attribute" => {
                 // (attribute symbol-name :ac) or (attribute symbol-name :aci)
                 if decl.len() != 3 {
@@ -1106,7 +1131,20 @@ pub fn desugar_expr(sexp: &Sexp) -> Result<Expr> {
                         let level_expr = desugar_level_expr(&items[1])?;
                         return Ok(Expr::app(vec![Expr::sym("Type"), level_expr]));
                     }
-                    _ => {}
+                    _ => {
+                        // Check for custom binder syntax: (name (x : T) body)
+                        // A 3-element list where the second element looks like a binding form
+                        if items.len() == 3 {
+                            if let Some(binding) = items[1].as_list() {
+                                if binding.len() == 3 {
+                                    if let Some(":") = binding[1].as_atom() {
+                                        // This looks like a custom binder
+                                        return desugar_custom_binder(items, *span);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -1135,6 +1173,43 @@ fn desugar_binder(items: &[Sexp], span: Span) -> Result<Expr> {
         "forall" => omega_core::expr::FORALL.to_string(),
         _ => unreachable!(),
     };
+
+    let binding = items[1].as_list().ok_or_else(|| DesugarError {
+        message: "binding must be a list (x : T)".to_string(),
+        span: items[1].span(),
+    })?;
+
+    let (hint, ty) = if binding.len() == 3 && binding[1].is_keyword(":") {
+        (expect_atom(&binding[0])?.to_string(), desugar_expr(&binding[2])?)
+    } else if binding.len() == 1 {
+        (expect_atom(&binding[0])?.to_string(), Expr::sym("_"))
+    } else {
+        return Err(DesugarError {
+            message: "binding must be (x : T) or (x)".to_string(),
+            span: items[1].span(),
+        });
+    };
+
+    let body = desugar_expr(&items[2])?;
+
+    Ok(Expr::Binder {
+        kind,
+        hint,
+        ty: Box::new(ty),
+        body: Box::new(body),
+    })
+}
+
+fn desugar_custom_binder(items: &[Sexp], span: Span) -> Result<Expr> {
+    // (kind (x : T) body) — custom binder kind
+    if items.len() != 3 {
+        return Err(DesugarError {
+            message: "custom binder needs exactly a binding and a body".to_string(),
+            span,
+        });
+    }
+
+    let kind = expect_atom(&items[0])?.to_string();
 
     let binding = items[1].as_list().ok_or_else(|| DesugarError {
         message: "binding must be a list (x : T)".to_string(),

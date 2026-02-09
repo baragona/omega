@@ -69,6 +69,14 @@ pub struct Arena {
     pub ac_symbols: HashSet<Name>,
     /// Symbols declared as AC + idempotent.
     pub aci_symbols: HashSet<Name>,
+    /// Binder kinds that trigger beta-reduction (substitution on application).
+    pub substitutive_binders: HashSet<Name>,
+    /// Binder kinds that trigger eta-contraction at intern time.
+    pub eta_binders: HashSet<Name>,
+    /// Binder kinds with linear usage (exactly once).
+    pub linear_binders: HashSet<Name>,
+    /// Binder kinds with affine usage (at most once).
+    pub affine_binders: HashSet<Name>,
 }
 
 impl Arena {
@@ -80,6 +88,10 @@ impl Arena {
             structural_hash: Vec::new(),
             ac_symbols: HashSet::new(),
             aci_symbols: HashSet::new(),
+            substitutive_binders: HashSet::new(),
+            eta_binders: HashSet::new(),
+            linear_binders: HashSet::new(),
+            affine_binders: HashSet::new(),
         }
     }
 
@@ -288,8 +300,105 @@ impl Arena {
         result
     }
 
-    /// Create a binder.
+    /// Check if an HExpr contains Bound(idx).
+    fn contains_bound(&self, h: HExpr, idx: usize) -> bool {
+        match &self.nodes[h.0 as usize] {
+            HNode::Bound(i) => *i == idx,
+            HNode::Free(_) | HNode::Meta(_) | HNode::Sym(_) => false,
+            HNode::App(args) => args.iter().any(|a| self.contains_bound(*a, idx)),
+            HNode::Binder { ty, body, .. } => {
+                self.contains_bound(*ty, idx) || self.contains_bound(*body, idx + 1)
+            }
+            HNode::UserBind { params, body, .. } => {
+                params.iter().any(|p| self.contains_bound(*p, idx))
+                    || self.contains_bound(*body, idx + 1)
+            }
+        }
+    }
+
+    /// Count occurrences of Bound(idx) in an HExpr.
+    pub fn count_bound_h(&self, h: HExpr, idx: usize) -> usize {
+        match &self.nodes[h.0 as usize] {
+            HNode::Bound(i) if *i == idx => 1,
+            HNode::Bound(_) | HNode::Free(_) | HNode::Meta(_) | HNode::Sym(_) => 0,
+            HNode::App(args) => args.iter().map(|a| self.count_bound_h(*a, idx)).sum(),
+            HNode::Binder { ty, body, .. } => {
+                self.count_bound_h(*ty, idx) + self.count_bound_h(*body, idx + 1)
+            }
+            HNode::UserBind { params, body, .. } => {
+                params.iter().map(|p| self.count_bound_h(*p, idx)).sum::<usize>()
+                    + self.count_bound_h(*body, idx + 1)
+            }
+        }
+    }
+
+    /// Validate linear/affine binder usage in an HExpr tree.
+    /// Returns Err with a message if any binder violates its usage constraint.
+    pub fn validate_binder_usage(&self, h: HExpr) -> std::result::Result<(), String> {
+        match &self.nodes[h.0 as usize] {
+            HNode::Binder { kind, body, ty, .. } => {
+                if self.linear_binders.contains(kind) {
+                    let count = self.count_bound_h(*body, 0);
+                    if count != 1 {
+                        return Err(format!(
+                            "linear binder '{}': variable used {} times (expected exactly 1)",
+                            kind, count
+                        ));
+                    }
+                }
+                if self.affine_binders.contains(kind) {
+                    let count = self.count_bound_h(*body, 0);
+                    if count > 1 {
+                        return Err(format!(
+                            "affine binder '{}': variable used {} times (expected at most 1)",
+                            kind, count
+                        ));
+                    }
+                }
+                self.validate_binder_usage(*ty)?;
+                self.validate_binder_usage(*body)?;
+                Ok(())
+            }
+            HNode::App(args) => {
+                for a in args {
+                    self.validate_binder_usage(*a)?;
+                }
+                Ok(())
+            }
+            HNode::UserBind { params, body, .. } => {
+                for p in params {
+                    self.validate_binder_usage(*p)?;
+                }
+                self.validate_binder_usage(*body)?;
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// Create a binder. If the binder kind has eta enabled, eta-contract:
+    /// `(kind (x:T) (f x))` → `f` when `x ∉ FV(f)`.
     pub fn binder(&mut self, kind: BinderKind, hint: &str, ty: HExpr, body: HExpr) -> HExpr {
+        // Eta-contraction: (kind (x:T) (f x)) → f  when x ∉ FV(f)
+        if self.eta_binders.contains(&kind) {
+            if let HNode::App(ref args) = self.nodes[body.0 as usize] {
+                if args.len() >= 2 {
+                    let last_arg = *args.last().unwrap();
+                    if matches!(self.nodes[last_arg.0 as usize], HNode::Bound(0)) {
+                        let f_args = &args[..args.len() - 1];
+                        if f_args.iter().all(|a| !self.contains_bound(*a, 0)) {
+                            let f = if f_args.len() == 1 {
+                                f_args[0]
+                            } else {
+                                let f_args_vec = f_args.to_vec();
+                                self.app(f_args_vec)
+                            };
+                            return self.shift_pub(f, 0, -1);
+                        }
+                    }
+                }
+            }
+        }
         self.intern(HNode::Binder {
             kind,
             hint: hint.to_string(),
@@ -1085,7 +1194,7 @@ impl Arena {
             HNode::App(args) if args.len() >= 2 => {
                 let head = self.whnf(args[0]);
                 match self.nodes[head.0 as usize].clone() {
-                    HNode::Binder { ref kind, body, .. } if kind == crate::expr::LAMBDA => {
+                    HNode::Binder { ref kind, body, .. } if self.substitutive_binders.contains(kind) => {
                         let reduced = self.open(body, 0, args[1]);
                         if args.len() == 2 {
                             self.whnf(reduced)
@@ -1128,7 +1237,7 @@ impl Arena {
                     if let HNode::Binder { ref kind, body, .. } =
                         self.nodes[normalized[0].0 as usize].clone()
                     {
-                        if kind == crate::expr::LAMBDA {
+                        if self.substitutive_binders.contains(kind) {
                             let reduced = self.open(body, 0, normalized[1]);
                             if normalized.len() == 2 {
                                 return self.beta_normalize(reduced, fuel);

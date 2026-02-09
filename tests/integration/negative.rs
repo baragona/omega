@@ -165,6 +165,99 @@ fn structural_allows_double_use() {
 }
 
 #[test]
+fn reject_linear_double_use() {
+    // linear-lam binder requires variable used exactly once; 2 uses should fail
+    let source = "
+    (theory LinearFail
+      (binder-behavior linear-lam :substitutive :linear)
+      (sort Ty) (sort Tm)
+      (constructor A : Ty)
+      (constructor pair : (-> Tm Tm Tm))
+      (constructor lolli : (-> Ty Ty Ty))
+      (constructor tensor : (-> Ty Ty Ty))
+      (judgment (has-type ?e ?T) :where e : Tm T : Ty)
+      (rule t-linear-lam
+        :premises ((has-type ?body ?B))
+        :conclusion (has-type (linear-lam (x : ?A) ?body) (lolli ?A ?B))))
+    (proof bad
+      :theory LinearFail
+      :goal (has-type (linear-lam (x : A) (pair #0 #0)) (lolli A (tensor A A)))
+      :derivation (t-linear-lam assumption)
+      :assumptions ((has-type (pair #0 #0) (tensor A A))))
+    ";
+    let result = check_source(source);
+    assert!(result.is_err(), "linear double-use should be rejected");
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("linear binder") && err.contains("2 times"),
+        "expected linear violation error, got: {}",
+        err
+    );
+}
+
+#[test]
+fn reject_linear_zero_use() {
+    // linear-lam binder requires variable used exactly once; 0 uses should fail
+    let source = "
+    (theory LinearZero
+      (binder-behavior linear-lam :substitutive :linear)
+      (sort Ty) (sort Tm)
+      (constructor A : Ty)
+      (constructor star : Tm)
+      (constructor lolli : (-> Ty Ty Ty))
+      (constructor unit : Ty)
+      (judgment (has-type ?e ?T) :where e : Tm T : Ty)
+      (rule t-linear-lam
+        :premises ((has-type ?body ?B))
+        :conclusion (has-type (linear-lam (x : ?A) ?body) (lolli ?A ?B)))
+      (rule t-star :premises () :conclusion (has-type star unit)))
+    (proof bad
+      :theory LinearZero
+      :goal (has-type (linear-lam (x : A) star) (lolli A unit))
+      :derivation (t-linear-lam (t-star)))
+    ";
+    let result = check_source(source);
+    assert!(result.is_err(), "linear zero-use should be rejected");
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("linear binder") && err.contains("0 times"),
+        "expected linear violation error, got: {}",
+        err
+    );
+}
+
+#[test]
+fn reject_affine_double_use_binder() {
+    // affine-lam binder requires variable used at most once; 2 uses should fail
+    let source = "
+    (theory AffineFail
+      (binder-behavior affine-lam :substitutive :affine)
+      (sort Ty) (sort Tm)
+      (constructor A : Ty)
+      (constructor pair : (-> Tm Tm Tm))
+      (constructor lolli : (-> Ty Ty Ty))
+      (constructor tensor : (-> Ty Ty Ty))
+      (judgment (has-type ?e ?T) :where e : Tm T : Ty)
+      (rule t-affine-lam
+        :premises ((has-type ?body ?B))
+        :conclusion (has-type (affine-lam (x : ?A) ?body) (lolli ?A ?B))))
+    (proof bad
+      :theory AffineFail
+      :goal (has-type (affine-lam (x : A) (pair #0 #0)) (lolli A (tensor A A)))
+      :derivation (t-affine-lam assumption)
+      :assumptions ((has-type (pair #0 #0) (tensor A A))))
+    ";
+    let result = check_source(source);
+    assert!(result.is_err(), "affine double-use should be rejected");
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("affine binder") && err.contains("2 times"),
+        "expected affine violation error, got: {}",
+        err
+    );
+}
+
+#[test]
 fn reject_affine_triple_use() {
     // Three uses of one assumption in affine mode.
     let source = "

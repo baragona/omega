@@ -251,6 +251,57 @@ fn beta_normalize_fuel(expr: &Expr, fuel: &mut usize) -> Expr {
     }
 }
 
+/// Check if an expression contains Bound(idx).
+pub fn contains_bound_var(expr: &Expr, idx: usize) -> bool {
+    match expr {
+        Expr::Bound(i) => *i == idx,
+        Expr::Free(_) | Expr::Meta(_) | Expr::Sym(_) => false,
+        Expr::App(args) => args.iter().any(|a| contains_bound_var(a, idx)),
+        Expr::Binder { ty, body, .. } => {
+            contains_bound_var(ty, idx) || contains_bound_var(body, idx + 1)
+        }
+    }
+}
+
+/// Eta-contract: `(kind (x:T) (f x))` → `f` when `x ∉ FV(f)`.
+/// Only contracts if `kind` is in the provided set of eta binder kinds.
+pub fn eta_contract(expr: &Expr, eta_binders: &std::collections::HashSet<Name>) -> Expr {
+    match expr {
+        Expr::Binder { kind, ty, body, hint } => {
+            let new_ty = eta_contract(ty, eta_binders);
+            let new_body = eta_contract(body, eta_binders);
+            if eta_binders.contains(kind) {
+                if let Expr::App(args) = &new_body {
+                    if args.len() >= 2 {
+                        if let Expr::Bound(0) = args.last().unwrap() {
+                            let f_args = &args[..args.len() - 1];
+                            if f_args.iter().all(|a| !contains_bound_var(a, 0)) {
+                                let f = if f_args.len() == 1 {
+                                    f_args[0].clone()
+                                } else {
+                                    Expr::App(f_args.to_vec())
+                                };
+                                return shift(&f, 0, -1);
+                            }
+                        }
+                    }
+                }
+            }
+            Expr::Binder {
+                kind: kind.clone(),
+                hint: hint.clone(),
+                ty: Box::new(new_ty),
+                body: Box::new(new_body),
+            }
+        }
+        Expr::App(args) => {
+            let new_args: Vec<Expr> = args.iter().map(|a| eta_contract(a, eta_binders)).collect();
+            Expr::App(new_args)
+        }
+        _ => expr.clone(),
+    }
+}
+
 /// Collect all free variable names in an expression.
 pub fn free_vars(expr: &Expr) -> Vec<Name> {
     let mut vars = Vec::new();

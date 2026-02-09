@@ -445,6 +445,30 @@ fn level_poly_example() {
 }
 
 #[test]
+fn eta_demo_example() {
+    let results = check_example("examples/eta-demo.omega");
+    assert!(results.iter().any(|r| r.contains("Theory EtaDemo: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof eta-basic: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof eta-compound: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof eta-nested: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof comp-id-left: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof comp-id-right: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof eta-inside-comp: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof no-eta-when-used: VALID")));
+}
+
+#[test]
+fn linear_demo_example() {
+    let results = check_example("examples/linear-demo.omega");
+    assert!(results.iter().any(|r| r.contains("Theory LinearDemo: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof linear-id: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof affine-use-once: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof affine-unused: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof standard-double: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof standard-unused: VALID")));
+}
+
+#[test]
 fn ac_demo_example() {
     let results = check_example("examples/ac-demo.omega");
     assert!(results.iter().any(|r| r.contains("Theory ACDemo: registered OK")));

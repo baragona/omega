@@ -1,0 +1,103 @@
+;; Per-binder linear and affine usage checks.
+;;
+;; (binder-behavior linear-lam :substitutive :linear) — bound variable must be
+;; used exactly once in the body.
+;;
+;; (binder-behavior affine-lam :substitutive :affine) — bound variable must be
+;; used at most once in the body (0 or 1 times).
+;;
+;; These checks are enforced during derivation checking, not at intern time.
+
+(theory LinearDemo
+  ;; Standard lambda is substitutive only (no usage restrictions)
+  (binder-behavior lambda :substitutive)
+  ;; Linear lambda: variable must be used exactly once
+  (binder-behavior linear-lam :substitutive :linear)
+  ;; Affine lambda: variable must be used at most once (0 or 1)
+  (binder-behavior affine-lam :substitutive :affine)
+
+  (sort Ty)
+  (sort Tm)
+
+  ;; Types
+  (constructor A : Ty)
+  (constructor B : Ty)
+  (constructor lolli : (-> Ty Ty Ty))
+  (constructor tensor : (-> Ty Ty Ty))
+  (constructor unit : Ty)
+
+  ;; Terms
+  (constructor app : (-> Tm Tm Tm))
+  (constructor pair : (-> Tm Tm Tm))
+  (constructor star : Tm)
+
+  ;; Typing and term-equality judgments
+  (judgment (has-type ?e ?T) :where e : Tm T : Ty)
+  (judgment (tm-eq ?a ?b) :where a : Tm b : Tm)
+
+  ;; Lambda introduction rules
+  (rule t-linear-lam
+    :premises ((has-type ?body ?B))
+    :conclusion (has-type (linear-lam (x : ?A) ?body) (lolli ?A ?B)))
+
+  (rule t-affine-lam
+    :premises ((has-type ?body ?B))
+    :conclusion (has-type (affine-lam (x : ?A) ?body) (lolli ?A ?B)))
+
+  (rule t-lam
+    :premises ((has-type ?body ?B))
+    :conclusion (has-type (lambda (x : ?A) ?body) (lolli ?A ?B)))
+
+  ;; Reflexivity
+  (rule eq-refl
+    :premises ()
+    :conclusion (tm-eq ?a ?a))
+
+  ;; Application
+  (rule t-app
+    :premises ((has-type ?e1 (lolli ?A ?B)) (has-type ?e2 ?A))
+    :conclusion (has-type (app ?e1 ?e2) ?B))
+
+  ;; Pair intro
+  (rule t-pair
+    :premises ((has-type ?e1 ?A) (has-type ?e2 ?B))
+    :conclusion (has-type (pair ?e1 ?e2) (tensor ?A ?B)))
+
+  ;; Unit intro
+  (rule t-star
+    :premises ()
+    :conclusion (has-type star unit)))
+
+(check-theory LinearDemo)
+
+;; ═══════════════════════════════════════════
+;; POSITIVE TESTS (should all pass)
+;; ═══════════════════════════════════════════
+
+;; Test 1: Linear lambda with variable used exactly once — PASS
+(proof linear-id :theory LinearDemo
+  :goal (has-type (linear-lam (x : A) #0) (lolli A A))
+  :derivation (t-linear-lam assumption)
+  :assumptions ((has-type #0 A)))
+
+;; Test 2: Affine lambda with variable used once — PASS
+(proof affine-use-once :theory LinearDemo
+  :goal (has-type (affine-lam (x : A) #0) (lolli A A))
+  :derivation (t-affine-lam assumption)
+  :assumptions ((has-type #0 A)))
+
+;; Test 3: Affine lambda with variable unused — PASS (0 ≤ 1)
+(proof affine-unused :theory LinearDemo
+  :goal (has-type (affine-lam (x : A) star) (lolli A unit))
+  :derivation (t-affine-lam (t-star)))
+
+;; Test 4: Standard lambda with variable used twice — PASS (unrestricted)
+(proof standard-double :theory LinearDemo
+  :goal (has-type (lambda (x : A) (pair #0 #0)) (lolli A (tensor A A)))
+  :derivation (t-lam assumption)
+  :assumptions ((has-type (pair #0 #0) (tensor A A))))
+
+;; Test 5: Standard lambda with variable unused — PASS (unrestricted)
+(proof standard-unused :theory LinearDemo
+  :goal (has-type (lambda (x : A) star) (lolli A unit))
+  :derivation (t-lam (t-star)))
