@@ -143,6 +143,19 @@ fn number_theory_example() {
 }
 
 #[test]
+fn monoid_example() {
+    let results = check_example("examples/monoid.omega");
+    assert!(results.iter().any(|r| r.contains("Theory EqTheory: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Theory PeanoEq: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Theory TwoSorted: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof nat-refl: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof nat-symm: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof nat-trans: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof bool-refl: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof bool-symm: VALID")));
+}
+
+#[test]
 fn torture_example() {
     let results = check_example("examples/torture.omega");
     assert!(results.iter().any(|r| r.contains("Theory TortureArith: registered OK")));

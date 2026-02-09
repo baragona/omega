@@ -13,15 +13,28 @@ pub fn process_command(session: &mut Session, cmd: Command) -> Result<String, St
         Command::TheoryDef(mut theory) => {
             // Resolve imports: merge declarations from imported theories
             let imports = theory.imports.clone();
-            for import_name in &imports {
+            for import in &imports {
                 let imported = session
                     .kernel
-                    .get_theory(import_name)
-                    .ok_or_else(|| format!("import error: unknown theory '{}'", import_name))?
+                    .get_theory(&import.theory_name)
+                    .ok_or_else(|| format!("import error: unknown theory '{}'", import.theory_name))?
                     .clone();
-                theory
-                    .merge_from(&imported)
-                    .map_err(|e| format!("import error in theory {}: {}", theory.name, e))?;
+
+                if import.args.is_empty() && import.alias.is_none() {
+                    // Simple import, no alias: merge as-is (existing behavior)
+                    theory
+                        .merge_from(&imported)
+                        .map_err(|e| format!("import error in theory {}: {}", theory.name, e))?;
+                } else {
+                    // Parameterized or aliased import: instantiate then merge
+                    let alias = import.alias.as_deref().unwrap_or(&import.theory_name);
+                    let instance = imported
+                        .instantiate(&import.args, alias)
+                        .map_err(|e| format!("import error in theory {}: {}", theory.name, e))?;
+                    theory
+                        .merge_from(&instance)
+                        .map_err(|e| format!("import error in theory {}: {}", theory.name, e))?;
+                }
             }
             let name = theory.name.clone();
             session

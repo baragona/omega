@@ -4,10 +4,22 @@
 /// but is otherwise logic-agnostic.
 use std::collections::HashMap;
 
+use crate::binding::subst_syms;
 use crate::binding_spec::BindingSpec;
 use crate::error::{OmegaError, Result};
-use crate::expr::Name;
+use crate::expr::{Expr, Name};
 use crate::judgment::{ConstructorDecl, JudgmentForm, RewriteRule, Rule, SortDecl};
+
+/// An import directive: import a theory, optionally with parameterized arguments and alias.
+#[derive(Debug, Clone)]
+pub struct Import {
+    /// Name of the theory to import.
+    pub theory_name: Name,
+    /// Arguments for parameterized imports (empty for simple imports).
+    pub args: Vec<Expr>,
+    /// Optional alias prefix for imported names.
+    pub alias: Option<Name>,
+}
 
 /// Controls the structural rules of the context.
 ///
@@ -41,8 +53,10 @@ pub struct Theory {
     pub context_mode: ContextMode,
     /// A hash of the theory content for staleness detection.
     pub content_hash: u64,
-    /// Names of theories to import (resolved at registration time).
-    pub imports: Vec<Name>,
+    /// Import directives (resolved at registration time).
+    pub imports: Vec<Import>,
+    /// Theory parameters: (name, sort/type). Empty for non-parameterized theories.
+    pub params: Vec<(Name, Expr)>,
 }
 
 impl Theory {
@@ -59,6 +73,7 @@ impl Theory {
             context_mode: ContextMode::default(),
             content_hash: 0,
             imports: Vec::new(),
+            params: Vec::new(),
         }
     }
 
@@ -245,6 +260,149 @@ impl Theory {
         Ok(())
     }
 
+    /// Create a concrete theory by substituting parameters with arguments
+    /// and prefixing all internal names with the alias.
+    ///
+    /// The resulting theory is fully concrete (params = []) and can be
+    /// merged into the importing theory.
+    pub fn instantiate(&self, args: &[Expr], alias: &str) -> Result<Theory> {
+        if args.len() != self.params.len() {
+            return Err(OmegaError::MalformedDerivation(format!(
+                "theory {} expects {} parameters, got {}",
+                self.name,
+                self.params.len(),
+                args.len()
+            )));
+        }
+
+        // 1. Build param_map: parameter name → argument expr
+        let mut combined_map: HashMap<Name, Expr> = HashMap::new();
+        for (i, (param_name, _param_ty)) in self.params.iter().enumerate() {
+            combined_map.insert(param_name.clone(), args[i].clone());
+        }
+
+        // 2. Build rename_map: internal name → Sym("alias.name")
+        //    Only add if not already in param_map (param substitution wins)
+        let mut internal_names: Vec<Name> = Vec::new();
+        for s in &self.sorts {
+            internal_names.push(s.name.clone());
+        }
+        for c in &self.constructors {
+            internal_names.push(c.name.clone());
+        }
+        for j in &self.judgments {
+            internal_names.push(j.name.clone());
+        }
+        for r in &self.rules {
+            internal_names.push(r.name.clone());
+        }
+        for rw in &self.rewrites {
+            internal_names.push(rw.name.clone());
+        }
+
+        for name in &internal_names {
+            if !combined_map.contains_key(name) {
+                combined_map.insert(
+                    name.clone(),
+                    Expr::Sym(format!("{}.{}", alias, name)),
+                );
+            }
+        }
+
+        // 3. Apply subst_syms to all Expr fields, rename string name fields
+        let sorts: Vec<SortDecl> = self
+            .sorts
+            .iter()
+            .map(|s| SortDecl {
+                name: format!("{}.{}", alias, s.name),
+            })
+            .collect();
+
+        let constructors: Vec<ConstructorDecl> = self
+            .constructors
+            .iter()
+            .map(|c| ConstructorDecl {
+                name: format!("{}.{}", alias, c.name),
+                ty: subst_syms(&c.ty, &combined_map),
+            })
+            .collect();
+
+        let judgments: Vec<JudgmentForm> = self
+            .judgments
+            .iter()
+            .map(|j| JudgmentForm {
+                name: format!("{}.{}", alias, j.name),
+                pattern: subst_syms(&j.pattern, &combined_map),
+                constraints: j
+                    .constraints
+                    .iter()
+                    .map(|(var, sort)| {
+                        // Sort names in constraints that reference internal sorts need renaming
+                        let new_sort = if internal_names.contains(sort) && !self.params.iter().any(|(p, _)| p == sort) {
+                            format!("{}.{}", alias, sort)
+                        } else {
+                            sort.clone()
+                        };
+                        (var.clone(), new_sort)
+                    })
+                    .collect(),
+            })
+            .collect();
+
+        let rules: Vec<Rule> = self
+            .rules
+            .iter()
+            .map(|r| Rule {
+                name: format!("{}.{}", alias, r.name),
+                premises: r.premises.iter().map(|p| subst_syms(p, &combined_map)).collect(),
+                conclusion: subst_syms(&r.conclusion, &combined_map),
+                reflected: r.reflected,
+                provenance: r.provenance.clone(),
+                implicit_args: r.implicit_args.clone(), // metas stay as-is
+                context_extensions: r
+                    .context_extensions
+                    .iter()
+                    .map(|(idx, expr)| (*idx, subst_syms(expr, &combined_map)))
+                    .collect(),
+            })
+            .collect();
+
+        let rewrites: Vec<RewriteRule> = self
+            .rewrites
+            .iter()
+            .map(|rw| RewriteRule {
+                name: format!("{}.{}", alias, rw.name),
+                lhs: subst_syms(&rw.lhs, &combined_map),
+                rhs: subst_syms(&rw.rhs, &combined_map),
+            })
+            .collect();
+
+        let binding_specs: Vec<BindingSpec> = self
+            .binding_specs
+            .iter()
+            .map(|bs| BindingSpec {
+                name: format!("{}.{}", alias, bs.name),
+                ..bs.clone()
+            })
+            .collect();
+
+        let mut theory = Theory {
+            name: format!("{}${}", self.name, alias),
+            sorts,
+            constructors,
+            judgments,
+            rules,
+            rewrites,
+            binding_specs,
+            context_mode: self.context_mode,
+            content_hash: 0,
+            imports: Vec::new(),
+            params: Vec::new(), // instance is concrete
+        };
+        theory.compute_hash();
+        Ok(theory)
+    }
+
     /// Add a rule (e.g., from reflection).
     pub fn add_rule(&mut self, rule: Rule) -> Result<()> {
         if self.get_rule(&rule.name).is_some() {
@@ -386,6 +544,66 @@ mod tests {
             name: "Prop".to_string(), // Same as base
         });
         let result = derived.merge_from(&base);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn instantiate_basic() {
+        // A parameterized theory with one sort, one constructor, one rule
+        let mut theory = Theory::new("EqT");
+        theory.params = vec![
+            ("T".to_string(), Expr::sym("Type")),
+            ("eq-T".to_string(), Expr::app(vec![
+                Expr::sym("->"), Expr::sym("T"), Expr::sym("T"), Expr::sym("Prop"),
+            ])),
+        ];
+        theory.sorts.push(SortDecl { name: "Prop".to_string() });
+        theory.judgments.push(JudgmentForm {
+            name: "proves".to_string(),
+            pattern: Expr::app(vec![Expr::sym("proves"), Expr::meta("P")]),
+            constraints: vec![("P".to_string(), "Prop".to_string())],
+        });
+        theory.rules.push(Rule {
+            name: "refl".to_string(),
+            premises: vec![],
+            conclusion: Expr::app(vec![
+                Expr::sym("proves"),
+                Expr::app(vec![Expr::sym("eq-T"), Expr::meta("a"), Expr::meta("a")]),
+            ]),
+            reflected: false,
+            provenance: None,
+            implicit_args: vec![],
+            context_extensions: vec![],
+        });
+        theory.compute_hash();
+
+        let instance = theory.instantiate(
+            &[Expr::sym("Nat"), Expr::sym("nat-eq")],
+            "NE",
+        ).unwrap();
+
+        // Check renamed declarations
+        assert_eq!(instance.sorts[0].name, "NE.Prop");
+        assert_eq!(instance.judgments[0].name, "NE.proves");
+        assert_eq!(instance.rules[0].name, "NE.refl");
+
+        // Check parameter substitution in rule conclusion
+        // eq-T should be replaced with nat-eq, proves should be renamed to NE.proves
+        let expected_conclusion = Expr::app(vec![
+            Expr::sym("NE.proves"),
+            Expr::app(vec![Expr::sym("nat-eq"), Expr::meta("a"), Expr::meta("a")]),
+        ]);
+        assert_eq!(instance.rules[0].conclusion, expected_conclusion);
+
+        // Instance is concrete
+        assert!(instance.params.is_empty());
+    }
+
+    #[test]
+    fn instantiate_wrong_arg_count() {
+        let mut theory = Theory::new("T");
+        theory.params = vec![("X".to_string(), Expr::sym("Type"))];
+        let result = theory.instantiate(&[], "A");
         assert!(result.is_err());
     }
 }

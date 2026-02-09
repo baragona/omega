@@ -4,7 +4,7 @@ use omega_core::derivation::Derivation;
 use omega_core::expr::Expr;
 use omega_core::judgment::{ConstructorDecl, JudgmentForm, RewriteRule, Rule, SortDecl};
 use omega_core::metatheorem::{MetaCase, MetaProof, MetaTheorem};
-use omega_core::theory::{ContextMode, Theory};
+use omega_core::theory::{ContextMode, Import, Theory};
 
 use crate::sexp::Sexp;
 use crate::span::Span;
@@ -133,7 +133,33 @@ fn desugar_theory(items: &[Sexp], span: Span) -> Result<Command> {
     let name = expect_atom(&items[1])?;
     let mut theory = Theory::new(name);
 
-    for item in &items[2..] {
+    // Check for :params keyword before declarations
+    let decl_start = if items.len() > 3 && items[2].is_keyword(":params") {
+        let param_list = items[3].as_list().ok_or_else(|| DesugarError {
+            message: ":params expects a list of (name type) pairs".to_string(),
+            span: items[3].span(),
+        })?;
+        for param_sexp in param_list {
+            let pair = param_sexp.as_list().ok_or_else(|| DesugarError {
+                message: "each parameter must be (name type)".to_string(),
+                span: param_sexp.span(),
+            })?;
+            if pair.len() != 2 {
+                return Err(DesugarError {
+                    message: "parameter must be (name type)".to_string(),
+                    span: param_sexp.span(),
+                });
+            }
+            let param_name = expect_atom(&pair[0])?;
+            let param_ty = desugar_expr(&pair[1])?;
+            theory.params.push((param_name.to_string(), param_ty));
+        }
+        4 // declarations start after :params and the param list
+    } else {
+        2
+    };
+
+    for item in &items[decl_start..] {
         let decl = item
             .as_list()
             .ok_or_else(|| DesugarError {
@@ -258,15 +284,46 @@ fn desugar_theory(items: &[Sexp], span: Span) -> Result<Command> {
                 });
             }
             "import" => {
-                // (import theory-name)
-                if decl.len() != 2 {
+                // (import TheoryName)
+                // (import TheoryName :as Alias)
+                // (import TheoryName arg1 arg2 ... :as Alias)
+                if decl.len() < 2 {
                     return Err(DesugarError {
-                        message: "import expects exactly one argument: the theory name".to_string(),
+                        message: "import expects at least a theory name".to_string(),
                         span: decl[0].span(),
                     });
                 }
                 let import_name = expect_atom(&decl[1])?;
-                theory.imports.push(import_name.to_string());
+                let mut args = Vec::new();
+                let mut alias = None;
+                let mut ii = 2;
+                while ii < decl.len() {
+                    if decl[ii].is_keyword(":as") {
+                        ii += 1;
+                        if ii >= decl.len() {
+                            return Err(DesugarError {
+                                message: ":as requires an alias name".to_string(),
+                                span: decl[ii - 1].span(),
+                            });
+                        }
+                        alias = Some(expect_atom(&decl[ii])?.to_string());
+                        ii += 1;
+                    } else {
+                        args.push(desugar_expr(&decl[ii])?);
+                        ii += 1;
+                    }
+                }
+                if !args.is_empty() && alias.is_none() {
+                    return Err(DesugarError {
+                        message: "parameterized import requires :as alias".to_string(),
+                        span: decl[0].span(),
+                    });
+                }
+                theory.imports.push(Import {
+                    theory_name: import_name.to_string(),
+                    args,
+                    alias,
+                });
             }
             _ => {
                 return Err(DesugarError {

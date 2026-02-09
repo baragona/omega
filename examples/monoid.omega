@@ -1,0 +1,99 @@
+;;; Parameterized Theories (Modules)
+;;;
+;;; Demonstrates parameterized theories: write a theory once, instantiate
+;;; it many times with different types and operations.
+;;;
+;;; EqTheory is parameterized over a type T and an equality predicate.
+;;; We instantiate it twice:
+;;;   - For Nat with nat-eq  (alias NE)
+;;;   - For Bool with bool-eq (alias BE)
+;;; Both coexist in the same theory without name collisions.
+
+;; ── Parameterized Equational Theory ──
+;; Parameters: T (the carrier type), eq-rel (the equality predicate)
+;; The theory body uses T and eq-rel as plain symbols.
+
+(theory EqTheory
+  :params ((T Type) (eq-rel (-> T T Prop)))
+  (sort Prop)
+  (judgment (proves ?P) :where P : Prop)
+
+  (rule refl
+    :premises ()
+    :conclusion (proves (eq-rel ?a ?a)))
+
+  (rule symm
+    :premises ((proves (eq-rel ?a ?b)))
+    :conclusion (proves (eq-rel ?b ?a)))
+
+  (rule trans
+    :premises ((proves (eq-rel ?a ?b)) (proves (eq-rel ?b ?c)))
+    :conclusion (proves (eq-rel ?a ?c))))
+
+(check-theory EqTheory)
+
+
+;; ── Instantiate for Nat ──
+
+(theory PeanoEq
+  (sort Nat)
+  (constructor z : Nat)
+  (constructor s : (-> Nat Nat))
+  (constructor nat-eq : (-> Nat Nat NE.Prop))
+  (import EqTheory Nat nat-eq :as NE))
+
+(check-theory PeanoEq)
+
+
+;; ── Instantiate for Bool (in same theory as Nat!) ──
+
+(theory TwoSorted
+  (sort Nat)
+  (sort Bool)
+  (constructor z : Nat)
+  (constructor s : (-> Nat Nat))
+  (constructor tt : Bool)
+  (constructor ff : Bool)
+  (constructor nat-eq : (-> Nat Nat NE.Prop))
+  (constructor bool-eq : (-> Bool Bool BE.Prop))
+
+  ;; Two instances of EqTheory coexist: NE.* for Nat, BE.* for Bool
+  (import EqTheory Nat nat-eq :as NE)
+  (import EqTheory Bool bool-eq :as BE))
+
+(check-theory TwoSorted)
+
+
+;; ── Proofs using Nat equality ──
+
+(proof nat-refl
+  :theory PeanoEq
+  :goal (NE.proves (nat-eq z z))
+  :derivation (NE.refl))
+
+(proof nat-symm
+  :theory PeanoEq
+  :goal (NE.proves (nat-eq z (s z)))
+  :assumptions ((NE.proves (nat-eq (s z) z)))
+  :derivation (NE.symm (assumption)))
+
+(proof nat-trans
+  :theory PeanoEq
+  :goal (NE.proves (nat-eq z (s (s z))))
+  :assumptions ((NE.proves (nat-eq z (s z)))
+                (NE.proves (nat-eq (s z) (s (s z)))))
+  :derivation (NE.trans (assumption) (assumption)))
+
+
+;; ── Proofs using Bool equality ──
+
+(proof bool-refl
+  :theory TwoSorted
+  :goal (BE.proves (bool-eq tt tt))
+  :derivation (BE.refl))
+
+(proof bool-symm
+  :theory TwoSorted
+  :goal (BE.proves (bool-eq ff tt))
+  :assumptions ((BE.proves (bool-eq tt ff)))
+  :derivation (BE.symm (assumption)))

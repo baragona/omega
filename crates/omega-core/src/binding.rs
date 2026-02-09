@@ -305,6 +305,36 @@ fn collect_abstractable(expr: &Expr, acc: &mut Vec<Expr>) {
     }
 }
 
+/// Replace symbol names in the given map with their replacements.
+/// Used for instantiating theory parameters and renaming internal symbols.
+/// Sym nodes are never captured by binders, so no shifting is needed.
+pub fn subst_syms(expr: &Expr, map: &std::collections::HashMap<Name, Expr>) -> Expr {
+    match expr {
+        Expr::Sym(n) => {
+            if let Some(replacement) = map.get(n) {
+                replacement.clone()
+            } else {
+                expr.clone()
+            }
+        }
+        Expr::Free(_) | Expr::Bound(_) | Expr::Meta(_) => expr.clone(),
+        Expr::App(args) => {
+            Expr::App(args.iter().map(|a| subst_syms(a, map)).collect())
+        }
+        Expr::Binder {
+            kind,
+            hint,
+            ty,
+            body,
+        } => Expr::Binder {
+            kind: kind.clone(),
+            hint: hint.clone(),
+            ty: Box::new(subst_syms(ty, map)),
+            body: Box::new(subst_syms(body, map)),
+        },
+    }
+}
+
 /// Apply all meta-substitutions from a map.
 pub fn apply_meta_subst(expr: &Expr, subst_map: &std::collections::HashMap<Name, Expr>) -> Expr {
     match expr {
@@ -484,6 +514,67 @@ mod tests {
         let e = Expr::app(vec![Expr::sym("f"), Expr::app(vec![id, Expr::sym("a")])]);
         let result = beta_normalize(&e);
         let expected = Expr::app(vec![Expr::sym("f"), Expr::sym("a")]);
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn subst_syms_basic() {
+        use std::collections::HashMap;
+        let mut map = HashMap::new();
+        map.insert("T".to_string(), Expr::sym("Nat"));
+        map.insert("op".to_string(), Expr::sym("add"));
+
+        let e = Expr::app(vec![Expr::sym("op"), Expr::meta("a"), Expr::sym("T")]);
+        let result = subst_syms(&e, &map);
+        let expected = Expr::app(vec![Expr::sym("add"), Expr::meta("a"), Expr::sym("Nat")]);
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn subst_syms_nested() {
+        use std::collections::HashMap;
+        let mut map = HashMap::new();
+        map.insert("eq-T".to_string(), Expr::sym("nat-eq"));
+
+        let e = Expr::app(vec![
+            Expr::sym("proves"),
+            Expr::app(vec![Expr::sym("eq-T"), Expr::meta("a"), Expr::meta("b")]),
+        ]);
+        let result = subst_syms(&e, &map);
+        let expected = Expr::app(vec![
+            Expr::sym("proves"),
+            Expr::app(vec![Expr::sym("nat-eq"), Expr::meta("a"), Expr::meta("b")]),
+        ]);
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn subst_syms_noop() {
+        use std::collections::HashMap;
+        let map = HashMap::new();
+        let e = Expr::app(vec![Expr::sym("f"), Expr::sym("x")]);
+        assert_eq!(subst_syms(&e, &map), e);
+    }
+
+    #[test]
+    fn subst_syms_binder() {
+        use std::collections::HashMap;
+        let mut map = HashMap::new();
+        map.insert("T".to_string(), Expr::sym("Nat"));
+
+        let e = Expr::Binder {
+            kind: crate::expr::BinderKind::Arrow,
+            hint: "_".to_string(),
+            ty: Box::new(Expr::sym("T")),
+            body: Box::new(Expr::sym("T")),
+        };
+        let result = subst_syms(&e, &map);
+        let expected = Expr::Binder {
+            kind: crate::expr::BinderKind::Arrow,
+            hint: "_".to_string(),
+            ty: Box::new(Expr::sym("Nat")),
+            body: Box::new(Expr::sym("Nat")),
+        };
         assert_eq!(result, expected);
     }
 
