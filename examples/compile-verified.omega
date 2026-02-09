@@ -1,0 +1,281 @@
+;;; compile-verified.omega — The Grand Unification (HOAS Edition)
+;;;
+;;; ONE program definition.  TWO uses:
+;;;   - VERIFY by applying the function to concrete values
+;;;   - COMPILE by applying the function to (var "name")
+;;;
+;;; The kernel's built-in beta reduction bridges the two worlds.
+;;; No string-based substitution.  No explicit variable lookup.
+;;; Just lambda calculus.
+;;;
+;;; Key insight: a function body like  λx. x + x  serves BOTH as:
+;;;   - An evaluator (apply to 21 → 21 + 21 → 42)
+;;;   - A compiler  (apply to var("x") → var("x") + var("x") → "x + x")
+
+
+;;; ════════════════════════════════════════════════════════════
+;;; THE SHARED AST — defined once, imported by all theories
+;;; ════════════════════════════════════════════════════════════
+
+(theory RustAST
+  (sort Expr)
+  (sort Ty)
+
+  ;; ── Types ──
+  (constructor U32  : Ty)
+  (constructor Bool : Ty)
+
+  ;; ── Values ──
+  (constructor z  : Expr)                         ;; Peano zero (for eval)
+  (constructor s  : (-> Expr Expr))               ;; Peano successor
+  (constructor tt : Expr)                         ;; true
+  (constructor ff : Expr)                         ;; false
+
+  ;; ── String-named variables (for compilation) ──
+  (constructor var : (-> Expr Expr))              ;; var("x")
+
+  ;; ── Operations ──
+  (constructor add-expr  : (-> Expr Expr Expr))   ;; a + b
+  (constructor mul-expr  : (-> Expr Expr Expr))   ;; a * b
+  (constructor sub-expr  : (-> Expr Expr Expr))   ;; a - b
+  (constructor eq-expr   : (-> Expr Expr Expr))   ;; a == b
+  (constructor if-expr   : (-> Expr Expr Expr Expr))  ;; if c then a else b
+  (constructor call-expr : (-> Expr Expr Expr))   ;; f(arg)  — for recursive calls in compiled output
+
+  ;; ═══════════════════════════════════════════════════════
+  ;; PROGRAM DEFINITIONS (HOAS — lambdas with de Bruijn #0)
+  ;; Each function body is a lambda.
+  ;;   - Eval applies it to concrete Peano values
+  ;;   - Compile applies it to (var "name") for C output
+  ;; ═══════════════════════════════════════════════════════
+
+  ;; double(x) = x + x
+  (constructor double-body : Expr)
+  (rewrite def-double double-body
+    (lambda (x : Expr) (add-expr #0 #0)))
+
+  ;; square(x) = x * x
+  (constructor square-body : Expr)
+  (rewrite def-square square-body
+    (lambda (x : Expr) (mul-expr #0 #0)))
+
+  ;; abs(x) = if x == 0 then 0 else x  (simplified)
+  (constructor abs-body : Expr)
+  (rewrite def-abs abs-body
+    (lambda (x : Expr) (if-expr (eq-expr #0 z) z #0))))
+
+(check-theory RustAST)
+
+
+;;; ════════════════════════════════════════════════════════════
+;;; ACT I — THE EVALUATOR
+;;; Import the shared AST.  Add Peano computation rules.
+;;; Apply HOAS functions to concrete values.
+;;; ════════════════════════════════════════════════════════════
+
+(theory Eval
+  (import RustAST)
+  (sort Prop)
+
+  ;; ── Peano arithmetic (computation rules) ──
+  (rewrite add-z   (add-expr z ?n)      ?n)
+  (rewrite add-s   (add-expr (s ?n) ?m) (s (add-expr ?n ?m)))
+  (rewrite mul-z   (mul-expr z ?n)      z)
+  (rewrite mul-s   (mul-expr (s ?n) ?m) (add-expr ?m (mul-expr ?n ?m)))
+  (rewrite sub-z   (sub-expr ?n z)      ?n)
+  (rewrite sub-s   (sub-expr (s ?n) (s ?m)) (sub-expr ?n ?m))
+  (rewrite eq-zz   (eq-expr z z)        tt)
+  (rewrite eq-zs   (eq-expr z (s ?n))   ff)
+  (rewrite eq-sz   (eq-expr (s ?n) z)   ff)
+  (rewrite eq-ss   (eq-expr (s ?n) (s ?m)) (eq-expr ?n ?m))
+  (rewrite if-true  (if-expr tt ?a ?b)  ?a)
+  (rewrite if-false (if-expr ff ?a ?b)  ?b)
+
+  ;; ── Factorial (recursive rewrite — works on concrete Peano values) ──
+  (constructor factorial : (-> Expr Expr))
+  (rewrite fact-base (factorial z)      (s z))
+  (rewrite fact-step (factorial (s ?n)) (mul-expr (s ?n) (factorial ?n)))
+
+  ;; ── Equality judgment ──
+  (constructor eq : (-> Expr Expr Prop))
+  (judgment (proves ?P) :where P : Prop)
+  (rule eq-refl :premises () :conclusion (proves (eq ?a ?a))))
+
+(check-theory Eval)
+
+
+;; ── VERIFICATION: HOAS functions applied to concrete values ──
+;; The lambda BODY is the shared program.
+;; Beta reduction substitutes the argument.  Rewrites compute the result.
+
+;; double(0) = 0
+(proof double-0
+  :theory Eval
+  :goal (proves (eq (double-body z) z))
+  :derivation (eq-refl))
+
+;; double(1) = 2
+(proof double-1
+  :theory Eval
+  :goal (proves (eq (double-body (s z)) (s (s z))))
+  :derivation (eq-refl))
+
+;; double(3) = 6
+(proof double-3
+  :theory Eval
+  :goal (proves (eq (double-body (s (s (s z)))) (s (s (s (s (s (s z))))))))
+  :derivation (eq-refl))
+
+;; square(3) = 9
+(proof square-3
+  :theory Eval
+  :goal (proves (eq (square-body (s (s (s z))))
+                    (s (s (s (s (s (s (s (s (s z)))))))))))
+  :derivation (eq-refl))
+
+;; square(4) = 16  (expressed as 4 * 4)
+(proof square-4
+  :theory Eval
+  :goal (proves (eq (square-body (s (s (s (s z)))))
+                    (mul-expr (s (s (s (s z)))) (s (s (s (s z)))))))
+  :derivation (eq-refl))
+
+;; abs(0) = 0
+(proof abs-0
+  :theory Eval
+  :goal (proves (eq (abs-body z) z))
+  :derivation (eq-refl))
+
+;; abs(3) = 3
+(proof abs-3
+  :theory Eval
+  :goal (proves (eq (abs-body (s (s (s z)))) (s (s (s z)))))
+  :derivation (eq-refl))
+
+;; factorial(3) = 6
+(proof fact-3
+  :theory Eval
+  :goal (proves (eq (factorial (s (s (s z))))
+                    (s (s (s (s (s (s z))))))))
+  :derivation (eq-refl))
+
+;; factorial(4) = 4 * 6  (= 24)
+(proof fact-4
+  :theory Eval
+  :goal (proves (eq (factorial (s (s (s (s z)))))
+                    (mul-expr (s (s (s (s z))))
+                              (s (s (s (s (s (s z)))))))))
+  :derivation (eq-refl))
+
+
+;;; ════════════════════════════════════════════════════════════
+;;; ACT II — THE COMPILER
+;;; Import the shared AST + StringLib.
+;;; Apply HOAS functions to (var "name") — beta reduction inserts
+;;; string-named variables, then expr-to-c translates to C ropes.
+;;; ════════════════════════════════════════════════════════════
+
+(theory StringLib
+  (sort String)
+  (constructor empty : String)
+  (constructor cat : (-> String String String))
+  (constructor newline : String)
+  (rewrite id-l (cat empty ?s) ?s)
+  (rewrite id-r (cat ?s empty) ?s))
+
+(check-theory StringLib)
+
+
+(theory Compiler
+  (import RustAST)
+  (import StringLib)
+
+  ;; ── Translation: Expr → C source rope ──
+  (constructor expr-to-c : (-> Expr String))
+  (constructor ty-to-c   : (-> Ty String))
+  (constructor stmt-to-c : (-> Expr String))
+
+  ;; Types
+  (rewrite tr-u32  (ty-to-c U32)  "int")
+  (rewrite tr-bool (ty-to-c Bool) "int")
+
+  ;; Atoms
+  (rewrite tr-z    (expr-to-c z)  "0")
+  (rewrite tr-s    (expr-to-c (s ?n))
+    (cat "(" (cat (expr-to-c ?n) " + 1)")))
+  (rewrite tr-tt   (expr-to-c tt) "1")
+  (rewrite tr-ff   (expr-to-c ff) "0")
+  (rewrite tr-var  (expr-to-c (var ?x)) ?x)
+
+  ;; Binary operations
+  (rewrite tr-add  (expr-to-c (add-expr ?a ?b))
+    (cat (expr-to-c ?a) (cat " + " (expr-to-c ?b))))
+  (rewrite tr-mul  (expr-to-c (mul-expr ?a ?b))
+    (cat (expr-to-c ?a) (cat " * " (expr-to-c ?b))))
+  (rewrite tr-sub  (expr-to-c (sub-expr ?a ?b))
+    (cat (expr-to-c ?a) (cat " - " (expr-to-c ?b))))
+  (rewrite tr-eq   (expr-to-c (eq-expr ?a ?b))
+    (cat (expr-to-c ?a) (cat " == " (expr-to-c ?b))))
+
+  ;; Conditionals
+  (rewrite tr-if   (expr-to-c (if-expr ?c ?a ?b))
+    (cat "(" (cat (expr-to-c ?c) (cat " ? " (cat (expr-to-c ?a) (cat " : " (cat (expr-to-c ?b) ")")))))))
+
+  ;; Function calls (for recursive references in compiled output)
+  (rewrite tr-call (expr-to-c (call-expr ?f ?arg))
+    (cat (expr-to-c ?f) (cat "(" (cat (expr-to-c ?arg) ")"))))
+
+  ;; Return statement
+  (rewrite tr-return (stmt-to-c ?e)
+    (cat "    return " (cat (expr-to-c ?e) ";")))
+
+  ;; ── Top-level function generation ──
+  (constructor c-func : (-> String String String Expr String))
+
+  (rewrite tr-func (c-func ?ret ?name ?params ?body)
+    (cat ?ret (cat " " (cat ?name (cat "(" (cat ?params
+      (cat ") {" (cat newline
+        (cat (stmt-to-c ?body) (cat newline "}")))))))))))
+
+(check-theory Compiler)
+
+
+;;; ════════════════════════════════════════════════════════════
+;;; ACT III — COMPILATION
+;;;
+;;; THE MAGIC: we apply the SAME HOAS lambda to (var "x").
+;;; Beta reduction opens the body with string-named variables.
+;;; Then expr-to-c translates to C source.
+;;;
+;;;   double-body                          — Expr (a lambda)
+;;;   (double-body (var "x"))              — beta-reduces to add-expr(var("x"), var("x"))
+;;;   (expr-to-c (double-body (var "x")))  — translates to "x + x"
+;;; ════════════════════════════════════════════════════════════
+
+;; int double(int x) { return x + x; }
+(emit :theory Compiler
+  (c-func "int" "double" "int x"
+    (double-body (var "x"))))
+
+;; int square(int x) { return x * x; }
+(emit :theory Compiler
+  (c-func "int" "square" "int x"
+    (square-body (var "x"))))
+
+;; int abs_val(int x) { return (x == 0 ? 0 : x); }
+(emit :theory Compiler
+  (c-func "int" "abs_val" "int x"
+    (abs-body (var "x"))))
+
+;; int factorial(int n) {
+;;     return (n == 0 ? 1 : n * factorial(n - 1));
+;; }
+;; NOTE: factorial uses recursive rewrite rules for EVAL but for
+;; COMPILE we express it as an AST using call-expr for the self-call.
+(emit :theory Compiler
+  (c-func "int" "factorial" "int n"
+    (if-expr (eq-expr (var "n") (var "0"))
+      (var "1")
+      (mul-expr (var "n")
+                (call-expr (var "factorial")
+                           (sub-expr (var "n") (var "1")))))))

@@ -330,3 +330,27 @@ fn dep_types_example() {
     assert!(results.iter().any(|r| r.contains("Proof nested-pi: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof partial-app: VALID")));
 }
+
+#[test]
+fn compile_verified_example() {
+    let results = check_example("examples/compile-verified.omega");
+    // Theories
+    assert!(results.iter().any(|r| r.contains("Theory RustAST: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Theory Eval: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Theory Compiler: registered OK")));
+    // HOAS verification proofs (Act I)
+    assert!(results.iter().any(|r| r.contains("Proof double-0: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof double-1: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof double-3: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof square-3: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof square-4: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof abs-0: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof abs-3: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof fact-3: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof fact-4: VALID")));
+    // HOAS compilation output (Act III)
+    assert!(results.iter().any(|r| r.contains("return x + x;")));
+    assert!(results.iter().any(|r| r.contains("return x * x;")));
+    assert!(results.iter().any(|r| r.contains("int factorial(int n)")));
+    assert!(results.iter().any(|r| r.contains("n * factorial(n - 1)")));
+}

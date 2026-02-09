@@ -79,6 +79,13 @@ pub fn normalize_expr(expr: &Expr, rewrites: &[RewriteRule], fuel: &mut usize) -
         _ => whnf_ed,
     };
 
+    // Step 1.5: WHNF again — child normalization may have exposed
+    // beta-redexes (e.g. a rewrite expanded a constructor into a lambda)
+    let after_whnf = whnf(&children_normalized);
+    if after_whnf != children_normalized {
+        return normalize_expr(&after_whnf, rewrites, fuel);
+    }
+
     // Step 2: Try rewrite rules at the head
     let mut current = children_normalized;
     loop {

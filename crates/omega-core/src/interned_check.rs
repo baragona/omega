@@ -326,6 +326,15 @@ fn normalize(
         whnf_ed
     };
 
+    // Step 1.5: WHNF again — child normalization may have exposed
+    // beta-redexes (e.g. a rewrite expanded a constructor into a lambda)
+    let after_whnf = arena.whnf(children_normalized);
+    if after_whnf != children_normalized {
+        let result = normalize(arena, rewrites, cache, after_whnf, fuel);
+        cache.insert(h, result);
+        return result;
+    }
+
     // Step 2: Try rewrite rules at the head
     let mut current = children_normalized;
     loop {
