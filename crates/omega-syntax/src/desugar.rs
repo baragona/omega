@@ -1,7 +1,7 @@
 /// Desugaring: Sexp → Core types (Theory, Derivation, MetaTheorem, etc.)
 use omega_core::binding_spec::BindingSpec;
 use omega_core::derivation::Derivation;
-use omega_core::expr::Expr;
+use omega_core::expr::{Expr, Level};
 use omega_core::judgment::{ConstructorDecl, JudgmentForm, RewriteRule, Rule, SortDecl};
 use omega_core::metatheorem::{MetaCase, MetaProof, MetaTheorem};
 use omega_core::theory::{ContextMode, Import, Theory};
@@ -937,6 +937,10 @@ pub fn desugar_expr(sexp: &Sexp) -> Result<Expr> {
                     "->" if items.len() >= 3 => {
                         return desugar_arrow(items, *span);
                     }
+                    "Type" if items.len() == 2 => {
+                        let level = desugar_level(&items[1])?;
+                        return Ok(Expr::Universe(level));
+                    }
                     _ => {}
                 }
             }
@@ -1020,6 +1024,77 @@ fn desugar_arrow(items: &[Sexp], span: Span) -> Result<Expr> {
     }
 
     Ok(result)
+}
+
+/// Parse a universe level from an S-expression.
+fn desugar_level(sexp: &Sexp) -> Result<Level> {
+    match sexp {
+        Sexp::Atom(s, span) => {
+            // Numeric literal: 0, 1, 2, ...
+            if let Ok(n) = s.parse::<usize>() {
+                return Ok(Level::from_num(n));
+            }
+            // Named atoms
+            match s.as_str() {
+                "lzero" => Ok(Level::Zero),
+                _ if s.starts_with('?') => {
+                    // Level parameter: ?u → Param("u")
+                    Ok(Level::Param(s[1..].to_string()))
+                }
+                _ => Err(DesugarError {
+                    message: format!("invalid universe level: {}", s),
+                    span: *span,
+                }),
+            }
+        }
+        Sexp::List(items, span) => {
+            if items.is_empty() {
+                return Err(DesugarError {
+                    message: "empty level expression".to_string(),
+                    span: *span,
+                });
+            }
+            let head = expect_atom(&items[0])?;
+            match head {
+                "lsuc" => {
+                    if items.len() != 2 {
+                        return Err(DesugarError {
+                            message: "lsuc expects exactly one argument".to_string(),
+                            span: *span,
+                        });
+                    }
+                    let inner = desugar_level(&items[1])?;
+                    Ok(Level::Succ(Box::new(inner)))
+                }
+                "lmax" => {
+                    if items.len() != 3 {
+                        return Err(DesugarError {
+                            message: "lmax expects exactly two arguments".to_string(),
+                            span: *span,
+                        });
+                    }
+                    let a = desugar_level(&items[1])?;
+                    let b = desugar_level(&items[2])?;
+                    Ok(Level::Max(Box::new(a), Box::new(b)))
+                }
+                "imax" => {
+                    if items.len() != 3 {
+                        return Err(DesugarError {
+                            message: "imax expects exactly two arguments".to_string(),
+                            span: *span,
+                        });
+                    }
+                    let a = desugar_level(&items[1])?;
+                    let b = desugar_level(&items[2])?;
+                    Ok(Level::IMax(Box::new(a), Box::new(b)))
+                }
+                _ => Err(DesugarError {
+                    message: format!("unknown level form: {}", head),
+                    span: items[0].span(),
+                }),
+            }
+        }
+    }
 }
 
 fn expect_atom<'a>(sexp: &'a Sexp) -> Result<&'a str> {

@@ -1,0 +1,112 @@
+;;; W-Types: Algebraic Universes, W-type Recursion, and Sigma Types
+;;;
+;;; Demonstrates three type-theoretic kernel primitives:
+;;; 1. Algebraic Universes with impredicative Prop (IMax)
+;;; 2. W-types with built-in wrec reduction
+;;; 3. Sigma types via user rewrite rules (zero kernel changes)
+
+(theory WTypes
+  (sort Type) (sort Tm)
+
+  ;; Judgments
+  (judgment (has-type ?e ?T) :where e : Tm T : Type)
+  (judgment (ty-eq ?A ?B) :where A : Type B : Type)
+  (rule teq-refl :premises () :conclusion (ty-eq ?A ?A))
+
+  ;; Type u : Type (u+1)
+  (rule type-in-type :premises ()
+    :conclusion (has-type (Type ?u) (Type (lsuc ?u))))
+
+  ;; Pi type: Pi(A : Type u, B : Type v) : Type(imax(u, v))
+  ;; imax gives impredicativity: Pi(A : Type 100, B : Prop) : Prop
+  (constructor Pi : (-> Type Type Type))
+  (rule pi-type
+    :premises ((has-type ?A (Type ?u)) (has-type ?B (Type ?v)))
+    :conclusion (has-type (Pi ?A ?B) (Type (imax ?u ?v))))
+
+  ;; Sigma types (computation via rewrite rules — no kernel change)
+  (constructor Sigma : (-> Type Type Type))
+  (constructor pair : (-> Tm Tm Tm))
+  (constructor fst : (-> Tm Tm))
+  (constructor snd : (-> Tm Tm))
+  (rewrite fst-beta (fst (pair ?a ?b)) ?a)
+  (rewrite snd-beta (snd (pair ?a ?b)) ?b)
+
+  ;; W-types (wrec reduction is built-in to the kernel)
+  (constructor W : (-> Type Type Type))
+  (constructor sup : (-> Tm Tm Tm))
+  (constructor wrec : (-> Type Tm Tm Tm))
+
+  ;; Nat via rewrite rules
+  (constructor ze : Tm)
+  (constructor su : (-> Tm Tm))
+  (constructor nat-rec : (-> Type Tm Tm Tm Tm))
+  (rewrite nat-rec-z (nat-rec ?C ze ?z ?s) ?z)
+  (rewrite nat-rec-s (nat-rec ?C (su ?n) ?z ?s) (?s ?n (nat-rec ?C ?n ?z ?s)))
+  (constructor add : (-> Tm Tm Tm))
+  (rewrite add-def (add ?n ?m)
+    (nat-rec Tm ?n ?m (lambda (k : Tm) (lambda (r : Tm) (su #0)))))
+
+  ;; W-type wrec helper: extract(a, f, rec) = a (returns first component)
+  (constructor extract : (-> Tm Tm Tm Tm))
+  (rewrite extract-def (extract ?a ?f ?rec) ?a))
+
+(check-theory WTypes)
+
+;;; --- Universe tests ---
+
+;; Type 0 : Type 1
+(proof type-0-in-1 :theory WTypes
+  :goal (has-type (Type 0) (Type 1)) :derivation (type-in-type))
+
+;; lsuc normalizes: Type(lsuc 2) = Type 3
+(proof lsuc-test :theory WTypes
+  :goal (ty-eq (Type (lsuc 2)) (Type 3)) :derivation (teq-refl))
+
+;; lmax normalizes: lmax(1, 3) = 3
+(proof lmax-test :theory WTypes
+  :goal (ty-eq (Type (lmax 1 3)) (Type 3)) :derivation (teq-refl))
+
+;; IMPREDICATIVITY: imax(100, 0) = 0
+;; This is the key: Pi(A : Type 100, B : Prop) : Prop
+(proof imax-prop :theory WTypes
+  :goal (ty-eq (Type (imax 100 0)) (Type 0)) :derivation (teq-refl))
+
+;; Predicative case: imax(1, 2) = max(1, 2) = 2
+(proof imax-pred :theory WTypes
+  :goal (ty-eq (Type (imax 1 2)) (Type 2)) :derivation (teq-refl))
+
+;; Max is commutative: lmax(2, 1) = lmax(1, 2) = 2
+(proof lmax-comm :theory WTypes
+  :goal (ty-eq (Type (lmax 2 1)) (Type 2)) :derivation (teq-refl))
+
+;;; --- Sigma tests ---
+
+(proof fst-test :theory WTypes
+  :goal (ty-eq (fst (pair (Type 0) (Type 1))) (Type 0)) :derivation (teq-refl))
+
+(proof snd-test :theory WTypes
+  :goal (ty-eq (snd (pair (Type 0) (Type 1))) (Type 1)) :derivation (teq-refl))
+
+;;; --- Computation: 2 + 1 = 3 ---
+
+(proof add-test :theory WTypes
+  :goal (ty-eq (add (su (su ze)) (su ze)) (su (su (su ze)))) :derivation (teq-refl))
+
+;;; --- W-type wrec reduction ---
+;;; wrec(C, sup(a, f), h) → h(a, f, λb. wrec(C, f(b), h))
+
+;; Build a simple W-type value and reduce with wrec.
+;; We use Nat as the branching type: sup(z, f) where f is a function from branches.
+;; A leaf is sup(leaf-tag, f) where f is never called.
+;; wrec(Tm, sup(leaf-tag, f), h) → h(leaf-tag, f, λb. wrec(Tm, f(b), h))
+
+;; For a concrete test: wrec reduces and h can extract the value.
+;; extract(a, f, rec) = a  (returns first component of sup)
+
+;; wrec(Tm, sup(ze, (lambda (x : Tm) ze)), extract)
+;; → extract(ze, (lambda (x : Tm) ze), λb. wrec(Tm, ((lambda (x : Tm) ze) b), extract))
+;; → ze
+(proof wrec-test :theory WTypes
+  :goal (ty-eq (wrec Tm (sup ze (lambda (x : Tm) ze)) extract) ze)
+  :derivation (teq-refl))

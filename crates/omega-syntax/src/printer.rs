@@ -50,6 +50,7 @@ pub fn print_expr(expr: &Expr) -> String {
             };
             format!("({} ({} : {}) {})", kw, hint, print_expr(ty), print_expr(body))
         }
+        Expr::Universe(level) => format!("(Type {})", level),
     }
 }
 

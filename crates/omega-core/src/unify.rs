@@ -309,6 +309,11 @@ fn occurs(name: &str, expr: &Expr) -> bool {
         Expr::Free(_) | Expr::Bound(_) | Expr::Sym(_) => false,
         Expr::App(args) => args.iter().any(|a| occurs(name, a)),
         Expr::Binder { ty, body, .. } => occurs(name, ty) || occurs(name, body),
+        Expr::Universe(level) => {
+            let mut params = Vec::new();
+            level.collect_params(&mut params);
+            params.contains(&name.to_string())
+        }
     }
 }
 

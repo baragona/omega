@@ -5,9 +5,9 @@
 /// that each step is valid.
 use std::collections::{HashMap, HashSet};
 
-use crate::binding::{apply_meta_subst, abstract_over, abstractable_vars, beta_normalize, whnf};
+use crate::binding::{apply_meta_subst, abstract_over, abstractable_vars, beta_normalize, normalize_level, shift, whnf};
 use crate::error::{OmegaError, Result};
-use crate::expr::{BinderKind, Expr, Name};
+use crate::expr::{BinderKind, Expr, Level, Name};
 use crate::judgment::RewriteRule;
 use crate::pattern::{match_expr, Substitution};
 use crate::theory::{ContextMode, Theory};
@@ -59,6 +59,15 @@ pub fn normalize_expr(expr: &Expr, rewrites: &[RewriteRule], fuel: &mut usize) -
     // Step 0: WHNF first to reduce any head beta-redexes
     let whnf_ed = whnf(expr);
 
+    // Normalize Universe levels eagerly
+    if let Expr::Universe(level) = &whnf_ed {
+        let normalized = normalize_level(level);
+        if normalized != *level {
+            return Expr::Universe(normalized);
+        }
+        return whnf_ed;
+    }
+
     if rewrites.is_empty() {
         return whnf_ed;
     }
@@ -85,6 +94,53 @@ pub fn normalize_expr(expr: &Expr, rewrites: &[RewriteRule], fuel: &mut usize) -
     if after_whnf != children_normalized {
         return normalize_expr(&after_whnf, rewrites, fuel);
     }
+
+    // Step 1.75: Built-in W-type reduction: wrec(C, sup(a, f), h) → h(a, f, λb. wrec(C, f(b), h))
+    let children_normalized = if let Expr::App(args) = &children_normalized {
+        if args.len() == 4 {
+            if let Expr::Sym(name) = &args[0] {
+                if name == "wrec" {
+                    if let Expr::App(sup_args) = &args[2] {
+                        if sup_args.len() == 3 {
+                            if let Expr::Sym(sup_name) = &sup_args[0] {
+                                if sup_name == "sup" {
+                                    let c = &args[1];
+                                    let a = &sup_args[1];
+                                    let f = &sup_args[2];
+                                    let h = &args[3];
+
+                                    // Build: λb. wrec(C, f(b), h)
+                                    let c_s = shift(c, 0, 1);
+                                    let f_s = shift(f, 0, 1);
+                                    let h_s = shift(h, 0, 1);
+                                    let wrec_body = Expr::app(vec![
+                                        Expr::sym("wrec"), c_s,
+                                        Expr::app(vec![f_s, Expr::Bound(0)]),
+                                        h_s,
+                                    ]);
+                                    let callback = Expr::Binder {
+                                        kind: BinderKind::Lambda,
+                                        hint: "b".into(),
+                                        ty: Box::new(Expr::sym("_")),
+                                        body: Box::new(wrec_body),
+                                    };
+
+                                    *fuel = fuel.saturating_sub(1);
+                                    let result = Expr::app(vec![
+                                        h.clone(), a.clone(), f.clone(), callback,
+                                    ]);
+                                    return normalize_expr(&result, rewrites, fuel);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        children_normalized
+    } else {
+        children_normalized
+    };
 
     // Step 2: Try rewrite rules at the head
     let mut current = children_normalized;
@@ -260,6 +316,44 @@ fn unify_inner(a: &Expr, b: &Expr, subst: &mut Substitution) -> bool {
             let t2_wild = matches!(t2.as_ref(), Expr::Sym(s) if s == "_");
             let ty_ok = t1_wild || t2_wild || unify_inner(t1, t2, subst);
             ty_ok && unify_inner(b1, b2, subst)
+        }
+        (Expr::Universe(l1), Expr::Universe(l2)) => {
+            unify_levels(l1, l2, subst)
+        }
+        _ => false,
+    }
+}
+
+/// Unify two universe levels. Level::Param binds like Meta.
+fn unify_levels(a: &Level, b: &Level, subst: &mut Substitution) -> bool {
+    if a == b {
+        return true;
+    }
+    match (a, b) {
+        (Level::Param(name), _) => {
+            let wrapped = Expr::Universe(b.clone());
+            if let Some(existing) = subst.get(name) {
+                *existing == wrapped
+            } else {
+                subst.insert(name.clone(), wrapped);
+                true
+            }
+        }
+        (_, Level::Param(name)) => {
+            let wrapped = Expr::Universe(a.clone());
+            if let Some(existing) = subst.get(name) {
+                *existing == wrapped
+            } else {
+                subst.insert(name.clone(), wrapped);
+                true
+            }
+        }
+        (Level::Succ(a), Level::Succ(b)) => unify_levels(a, b, subst),
+        (Level::Max(a1, a2), Level::Max(b1, b2)) => {
+            unify_levels(a1, b1, subst) && unify_levels(a2, b2, subst)
+        }
+        (Level::IMax(a1, a2), Level::IMax(b1, b2)) => {
+            unify_levels(a1, b1, subst) && unify_levels(a2, b2, subst)
         }
         _ => false,
     }

@@ -4,7 +4,7 @@
 /// - `close`: replace a free var with bound var `index` (leaving a scope)
 /// - `shift`: adjust all bound var indices (for substitution under binders)
 /// - `subst`: replace a free variable with an expression
-use crate::expr::{Expr, Name};
+use crate::expr::{Expr, Level, Name};
 
 /// Replace all occurrences of `Bound(index)` with `replacement` in `expr`.
 /// This is used when "opening" a binder: we instantiate the bound variable.
@@ -17,7 +17,7 @@ pub fn open(expr: &Expr, index: usize, replacement: &Expr) -> Expr {
                 expr.clone()
             }
         }
-        Expr::Free(_) | Expr::Meta(_) | Expr::Sym(_) => expr.clone(),
+        Expr::Free(_) | Expr::Meta(_) | Expr::Sym(_) | Expr::Universe(_) => expr.clone(),
         Expr::App(args) => {
             Expr::App(args.iter().map(|a| open(a, index, replacement)).collect())
         }
@@ -41,7 +41,7 @@ pub fn open(expr: &Expr, index: usize, replacement: &Expr) -> Expr {
 pub fn close(expr: &Expr, name: &str, index: usize) -> Expr {
     match expr {
         Expr::Free(n) if n == name => Expr::Bound(index),
-        Expr::Free(_) | Expr::Bound(_) | Expr::Meta(_) | Expr::Sym(_) => expr.clone(),
+        Expr::Free(_) | Expr::Bound(_) | Expr::Meta(_) | Expr::Sym(_) | Expr::Universe(_) => expr.clone(),
         Expr::App(args) => {
             Expr::App(args.iter().map(|a| close(a, name, index)).collect())
         }
@@ -71,7 +71,7 @@ pub fn shift(expr: &Expr, cutoff: usize, amount: isize) -> Expr {
                 expr.clone()
             }
         }
-        Expr::Free(_) | Expr::Meta(_) | Expr::Sym(_) => expr.clone(),
+        Expr::Free(_) | Expr::Meta(_) | Expr::Sym(_) | Expr::Universe(_) => expr.clone(),
         Expr::App(args) => {
             Expr::App(args.iter().map(|a| shift(a, cutoff, amount)).collect())
         }
@@ -93,7 +93,7 @@ pub fn shift(expr: &Expr, cutoff: usize, amount: isize) -> Expr {
 pub fn subst(expr: &Expr, name: &str, replacement: &Expr) -> Expr {
     match expr {
         Expr::Free(n) if n == name => replacement.clone(),
-        Expr::Free(_) | Expr::Bound(_) | Expr::Meta(_) | Expr::Sym(_) => expr.clone(),
+        Expr::Free(_) | Expr::Bound(_) | Expr::Meta(_) | Expr::Sym(_) | Expr::Universe(_) => expr.clone(),
         Expr::App(args) => {
             Expr::App(args.iter().map(|a| subst(a, name, replacement)).collect())
         }
@@ -112,6 +112,7 @@ pub fn subst(expr: &Expr, name: &str, replacement: &Expr) -> Expr {
 }
 
 /// Apply a meta-substitution: replace `Meta(name)` with `replacement` everywhere.
+/// Also resolves `Universe(Param(name))` by extracting the Level from a Universe wrapper.
 pub fn subst_meta(expr: &Expr, name: &str, replacement: &Expr) -> Expr {
     match expr {
         Expr::Meta(n) if n == name => replacement.clone(),
@@ -130,6 +131,10 @@ pub fn subst_meta(expr: &Expr, name: &str, replacement: &Expr) -> Expr {
             ty: Box::new(subst_meta(ty, name, replacement)),
             body: Box::new(subst_meta(body, name, replacement)),
         },
+        Expr::Universe(level) => {
+            let new_level = subst_level_param(level, name, replacement);
+            if new_level == *level { expr.clone() } else { Expr::Universe(new_level) }
+        }
     }
 }
 
@@ -143,7 +148,7 @@ pub fn abstract_over(expr: &Expr, target: &Expr, depth: usize) -> Expr {
         return Expr::Bound(depth);
     }
     match expr {
-        Expr::Free(_) | Expr::Meta(_) | Expr::Sym(_) => expr.clone(),
+        Expr::Free(_) | Expr::Meta(_) | Expr::Sym(_) | Expr::Universe(_) => expr.clone(),
         Expr::Bound(i) => {
             // Shift existing bound vars >= depth up by 1 to make room
             if *i >= depth {
@@ -210,7 +215,8 @@ fn beta_normalize_fuel(expr: &Expr, fuel: &mut usize) -> Expr {
         return expr.clone();
     }
     match expr {
-        Expr::Free(_) | Expr::Bound(_) | Expr::Meta(_) | Expr::Sym(_) => expr.clone(),
+        Expr::Free(_) | Expr::Bound(_) | Expr::Meta(_) | Expr::Sym(_)
+        | Expr::Universe(_) => expr.clone(),
         Expr::App(args) => {
             // First, normalize all children
             let normalized: Vec<Expr> = args.iter().map(|a| beta_normalize_fuel(a, fuel)).collect();
@@ -263,7 +269,7 @@ fn collect_free_vars(expr: &Expr, acc: &mut Vec<Name>) {
                 acc.push(n.clone());
             }
         }
-        Expr::Bound(_) | Expr::Meta(_) | Expr::Sym(_) => {}
+        Expr::Bound(_) | Expr::Meta(_) | Expr::Sym(_) | Expr::Universe(_) => {}
         Expr::App(args) => {
             for a in args {
                 collect_free_vars(a, acc);
@@ -292,7 +298,7 @@ fn collect_abstractable(expr: &Expr, acc: &mut Vec<Expr>) {
                 acc.push(expr.clone());
             }
         }
-        Expr::Bound(_) | Expr::Sym(_) => {}
+        Expr::Bound(_) | Expr::Sym(_) | Expr::Universe(_) => {}
         Expr::App(args) => {
             for a in args {
                 collect_abstractable(a, acc);
@@ -317,7 +323,7 @@ pub fn subst_syms(expr: &Expr, map: &std::collections::HashMap<Name, Expr>) -> E
                 expr.clone()
             }
         }
-        Expr::Free(_) | Expr::Bound(_) | Expr::Meta(_) => expr.clone(),
+        Expr::Free(_) | Expr::Bound(_) | Expr::Meta(_) | Expr::Universe(_) => expr.clone(),
         Expr::App(args) => {
             Expr::App(args.iter().map(|a| subst_syms(a, map)).collect())
         }
@@ -336,6 +342,7 @@ pub fn subst_syms(expr: &Expr, map: &std::collections::HashMap<Name, Expr>) -> E
 }
 
 /// Apply all meta-substitutions from a map.
+/// Also resolves `Universe(Param(name))` from the substitution.
 pub fn apply_meta_subst(expr: &Expr, subst_map: &std::collections::HashMap<Name, Expr>) -> Expr {
     match expr {
         Expr::Meta(n) => {
@@ -360,6 +367,136 @@ pub fn apply_meta_subst(expr: &Expr, subst_map: &std::collections::HashMap<Name,
             ty: Box::new(apply_meta_subst(ty, subst_map)),
             body: Box::new(apply_meta_subst(body, subst_map)),
         },
+        Expr::Universe(level) => {
+            let new_level = apply_meta_subst_level(level, subst_map);
+            if new_level == *level { expr.clone() } else { Expr::Universe(new_level) }
+        }
+    }
+}
+
+/// Substitute a single meta/param name in a Level (used by subst_meta).
+fn subst_level_param(level: &Level, name: &str, replacement: &Expr) -> Level {
+    match level {
+        Level::Zero => Level::Zero,
+        Level::Succ(l) => Level::Succ(Box::new(subst_level_param(l, name, replacement))),
+        Level::Max(a, b) => Level::Max(
+            Box::new(subst_level_param(a, name, replacement)),
+            Box::new(subst_level_param(b, name, replacement)),
+        ),
+        Level::IMax(a, b) => Level::IMax(
+            Box::new(subst_level_param(a, name, replacement)),
+            Box::new(subst_level_param(b, name, replacement)),
+        ),
+        Level::Param(n) if n == name => {
+            // Extract Level from Universe wrapper, or keep as-is
+            if let Expr::Universe(l) = replacement {
+                l.clone()
+            } else {
+                level.clone()
+            }
+        }
+        Level::Param(_) => level.clone(),
+    }
+}
+
+/// Apply all meta-substitutions to a Level (resolving Param names).
+fn apply_meta_subst_level(level: &Level, subst_map: &std::collections::HashMap<Name, Expr>) -> Level {
+    match level {
+        Level::Zero => Level::Zero,
+        Level::Succ(l) => Level::Succ(Box::new(apply_meta_subst_level(l, subst_map))),
+        Level::Max(a, b) => Level::Max(
+            Box::new(apply_meta_subst_level(a, subst_map)),
+            Box::new(apply_meta_subst_level(b, subst_map)),
+        ),
+        Level::IMax(a, b) => Level::IMax(
+            Box::new(apply_meta_subst_level(a, subst_map)),
+            Box::new(apply_meta_subst_level(b, subst_map)),
+        ),
+        Level::Param(n) => {
+            if let Some(replacement) = subst_map.get(n) {
+                if let Expr::Universe(l) = replacement {
+                    l.clone()
+                } else {
+                    level.clone()
+                }
+            } else {
+                level.clone()
+            }
+        }
+    }
+}
+
+/// Canonical ordering for Level terms (used to sort Max arguments).
+fn level_order(l: &Level) -> u8 {
+    match l {
+        Level::Zero => 0,
+        Level::Succ(_) => 1,
+        Level::Max(_, _) => 2,
+        Level::IMax(_, _) => 3,
+        Level::Param(_) => 4,
+    }
+}
+
+/// Compare levels for canonical ordering.
+fn level_cmp(a: &Level, b: &Level) -> std::cmp::Ordering {
+    let oa = level_order(a);
+    let ob = level_order(b);
+    if oa != ob {
+        return oa.cmp(&ob);
+    }
+    // Same variant — compare recursively
+    match (a, b) {
+        (Level::Zero, Level::Zero) => std::cmp::Ordering::Equal,
+        (Level::Succ(a), Level::Succ(b)) => level_cmp(a, b),
+        (Level::Max(a1, a2), Level::Max(b1, b2))
+        | (Level::IMax(a1, a2), Level::IMax(b1, b2)) => {
+            level_cmp(a1, b1).then_with(|| level_cmp(a2, b2))
+        }
+        (Level::Param(a), Level::Param(b)) => a.cmp(b),
+        _ => std::cmp::Ordering::Equal,
+    }
+}
+
+/// Normalize a universe level to canonical form.
+pub fn normalize_level(level: &Level) -> Level {
+    match level {
+        Level::Zero => Level::Zero,
+        Level::Param(_) => level.clone(),
+        Level::Succ(l) => Level::Succ(Box::new(normalize_level(l))),
+        Level::Max(a, b) => {
+            let a = normalize_level(a);
+            let b = normalize_level(b);
+            // Max(Zero, l) → l
+            if a == Level::Zero { return b; }
+            // Max(l, Zero) → l
+            if b == Level::Zero { return a; }
+            // Max(Succ(a), Succ(b)) → Succ(Max(a, b))
+            if let (Level::Succ(ia), Level::Succ(ib)) = (&a, &b) {
+                return Level::Succ(Box::new(normalize_level(
+                    &Level::Max(ia.clone(), ib.clone()),
+                )));
+            }
+            // Max(a, a) → a
+            if a == b { return a; }
+            // Canonical ordering: sort by level_cmp
+            if level_cmp(&a, &b) == std::cmp::Ordering::Greater {
+                Level::Max(Box::new(b), Box::new(a))
+            } else {
+                Level::Max(Box::new(a), Box::new(b))
+            }
+        }
+        Level::IMax(a, b) => {
+            let a = normalize_level(a);
+            let b = normalize_level(b);
+            // IMax(_, Zero) → Zero (THE impredicativity rule)
+            if b == Level::Zero { return Level::Zero; }
+            // IMax(l1, Succ(l2)) → Max(l1, Succ(l2)) (predicative when non-zero)
+            if let Level::Succ(_) = &b {
+                return normalize_level(&Level::Max(Box::new(a), Box::new(b)));
+            }
+            // Leave unreduced if b has Params
+            Level::IMax(Box::new(a), Box::new(b))
+        }
     }
 }
 

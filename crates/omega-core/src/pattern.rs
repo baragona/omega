@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 
 use crate::binding::{abstract_over, abstractable_vars, whnf};
-use crate::expr::{BinderKind, Expr, Name};
+use crate::expr::{BinderKind, Expr, Level, Name};
 
 /// Result of a successful pattern match: a mapping from meta-variable names to expressions.
 pub type Substitution = HashMap<Name, Expr>;
@@ -201,6 +201,57 @@ fn match_inner_core(pattern: &Expr, expr: &Expr, subst: &mut Substitution) -> Re
                 expr: expr.clone(),
             }),
         },
+
+        // Universe: match levels structurally, with Param binding like Meta
+        Expr::Universe(pat_level) => match expr {
+            Expr::Universe(expr_level) => match_levels(pat_level, expr_level, subst),
+            _ => Err(MatchError::Mismatch {
+                pattern: pattern.clone(),
+                expr: expr.clone(),
+            }),
+        },
+    }
+}
+
+/// Match universe levels. Level::Param binds like Meta (stores as Universe wrapper).
+fn match_levels(
+    pat: &Level,
+    expr: &Level,
+    subst: &mut Substitution,
+) -> Result<(), MatchError> {
+    match (pat, expr) {
+        (Level::Zero, Level::Zero) => Ok(()),
+        (Level::Succ(a), Level::Succ(b)) => match_levels(a, b, subst),
+        (Level::Max(a1, a2), Level::Max(b1, b2)) => {
+            match_levels(a1, b1, subst)?;
+            match_levels(a2, b2, subst)
+        }
+        (Level::IMax(a1, a2), Level::IMax(b1, b2)) => {
+            match_levels(a1, b1, subst)?;
+            match_levels(a2, b2, subst)
+        }
+        // Param acts like Meta: bind or check consistency
+        (Level::Param(name), _) => {
+            let wrapped = Expr::Universe(expr.clone());
+            if let Some(existing) = subst.get(name) {
+                if *existing == wrapped {
+                    Ok(())
+                } else {
+                    Err(MatchError::Conflict {
+                        meta: name.clone(),
+                        existing: existing.clone(),
+                        new: wrapped,
+                    })
+                }
+            } else {
+                subst.insert(name.clone(), wrapped);
+                Ok(())
+            }
+        }
+        _ => Err(MatchError::Mismatch {
+            pattern: Expr::Universe(pat.clone()),
+            expr: Expr::Universe(expr.clone()),
+        }),
     }
 }
 

@@ -14,7 +14,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
 
-use crate::expr::{BinderKind, Expr, Name};
+use crate::expr::{BinderKind, Expr, Level, Name};
 
 /// A handle to an interned expression. O(1) equality via index comparison.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -31,6 +31,16 @@ impl fmt::Debug for HExpr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "H#{}", self.0)
     }
+}
+
+/// Interned universe level.
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum HLevel {
+    Zero,
+    Succ(Box<HLevel>),
+    Max(Box<HLevel>, Box<HLevel>),
+    IMax(Box<HLevel>, Box<HLevel>),
+    Param(Name),
 }
 
 /// The internal representation stored in the arena.
@@ -53,6 +63,8 @@ enum HNode {
         params: Vec<HExpr>,
         body: HExpr,
     },
+    /// Universe with algebraic level.
+    Universe(HLevel),
 }
 
 /// The hash-consing arena.
@@ -121,6 +133,98 @@ impl Arena {
         })
     }
 
+    /// Create a universe.
+    pub fn universe(&mut self, level: &Level) -> HExpr {
+        let hlevel = Self::level_to_hlevel(level);
+        self.intern(HNode::Universe(hlevel))
+    }
+
+    fn level_to_hlevel(level: &Level) -> HLevel {
+        match level {
+            Level::Zero => HLevel::Zero,
+            Level::Succ(l) => HLevel::Succ(Box::new(Self::level_to_hlevel(l))),
+            Level::Max(a, b) => HLevel::Max(
+                Box::new(Self::level_to_hlevel(a)),
+                Box::new(Self::level_to_hlevel(b)),
+            ),
+            Level::IMax(a, b) => HLevel::IMax(
+                Box::new(Self::level_to_hlevel(a)),
+                Box::new(Self::level_to_hlevel(b)),
+            ),
+            Level::Param(n) => HLevel::Param(n.clone()),
+        }
+    }
+
+    fn hlevel_to_level(hlevel: &HLevel) -> Level {
+        match hlevel {
+            HLevel::Zero => Level::Zero,
+            HLevel::Succ(l) => Level::Succ(Box::new(Self::hlevel_to_level(l))),
+            HLevel::Max(a, b) => Level::Max(
+                Box::new(Self::hlevel_to_level(a)),
+                Box::new(Self::hlevel_to_level(b)),
+            ),
+            HLevel::IMax(a, b) => Level::IMax(
+                Box::new(Self::hlevel_to_level(a)),
+                Box::new(Self::hlevel_to_level(b)),
+            ),
+            HLevel::Param(n) => Level::Param(n.clone()),
+        }
+    }
+
+    fn hlevel_has_params(level: &HLevel) -> bool {
+        match level {
+            HLevel::Zero => false,
+            HLevel::Succ(l) => Self::hlevel_has_params(l),
+            HLevel::Max(a, b) | HLevel::IMax(a, b) => {
+                Self::hlevel_has_params(a) || Self::hlevel_has_params(b)
+            }
+            HLevel::Param(_) => true,
+        }
+    }
+
+    fn hlevel_collect_params(level: &HLevel, acc: &mut Vec<Name>) {
+        match level {
+            HLevel::Zero => {}
+            HLevel::Succ(l) => Self::hlevel_collect_params(l, acc),
+            HLevel::Max(a, b) | HLevel::IMax(a, b) => {
+                Self::hlevel_collect_params(a, acc);
+                Self::hlevel_collect_params(b, acc);
+            }
+            HLevel::Param(n) => {
+                if !acc.contains(n) {
+                    acc.push(n.clone());
+                }
+            }
+        }
+    }
+
+    /// Apply a meta-substitution to an HLevel, resolving Param names.
+    fn apply_meta_subst_hlevel(level: &HLevel, subst: &HashMap<Name, HExpr>, arena_nodes: &[HNode]) -> HLevel {
+        match level {
+            HLevel::Zero => HLevel::Zero,
+            HLevel::Succ(l) => HLevel::Succ(Box::new(Self::apply_meta_subst_hlevel(l, subst, arena_nodes))),
+            HLevel::Max(a, b) => HLevel::Max(
+                Box::new(Self::apply_meta_subst_hlevel(a, subst, arena_nodes)),
+                Box::new(Self::apply_meta_subst_hlevel(b, subst, arena_nodes)),
+            ),
+            HLevel::IMax(a, b) => HLevel::IMax(
+                Box::new(Self::apply_meta_subst_hlevel(a, subst, arena_nodes)),
+                Box::new(Self::apply_meta_subst_hlevel(b, subst, arena_nodes)),
+            ),
+            HLevel::Param(n) => {
+                if let Some(&h) = subst.get(n) {
+                    if let HNode::Universe(ref l) = arena_nodes[h.0 as usize] {
+                        l.clone()
+                    } else {
+                        level.clone()
+                    }
+                } else {
+                    level.clone()
+                }
+            }
+        }
+    }
+
     /// Create a user-defined binding form.
     pub fn user_bind(&mut self, spec: &str, params: Vec<HExpr>, body: HExpr) -> HExpr {
         self.intern(HNode::UserBind {
@@ -162,6 +266,7 @@ impl Arena {
             HNode::UserBind { params, body, .. } => {
                 params.iter().any(|p| self.has_metas(*p)) || self.has_metas(body)
             }
+            HNode::Universe(ref level) => Self::hlevel_has_params(level),
         };
         self.has_metas_cache[idx] = Some(result);
         result
@@ -200,6 +305,9 @@ impl Arena {
                     self.meta_vars_inner(*p, acc);
                 }
                 self.meta_vars_inner(body, acc);
+            }
+            HNode::Universe(ref level) => {
+                Self::hlevel_collect_params(level, acc);
             }
         }
     }
@@ -250,6 +358,9 @@ impl Arena {
             (HNode::Sym(a_n), HNode::Sym(b_n)) => a_n == b_n,
             (HNode::Free(a_n), HNode::Free(b_n)) => a_n == b_n,
             (HNode::Bound(a_i), HNode::Bound(b_i)) => a_i == b_i,
+            (HNode::Universe(ref la), HNode::Universe(ref lb)) => {
+                self.unify_hlevels(la, lb, subst)
+            }
             (HNode::App(aa), HNode::App(ba)) => {
                 if aa.len() != ba.len() {
                     // Miller fragment: try if either side is meta-headed
@@ -386,6 +497,7 @@ impl Arena {
                 let hbody = self.from_expr(body);
                 self.binder(kind.clone(), hint, hty, hbody)
             }
+            Expr::Universe(level) => self.universe(level),
         }
     }
 
@@ -421,6 +533,7 @@ impl Arena {
                 args.push(self.to_expr(*body));
                 Expr::App(args)
             }
+            HNode::Universe(ref level) => Expr::Universe(Self::hlevel_to_level(level)),
         }
     }
 
@@ -438,6 +551,17 @@ impl Arena {
                 }
             }
             HNode::Free(_) | HNode::Bound(_) | HNode::Sym(_) => h,
+            HNode::Universe(ref level) => {
+                if !Self::hlevel_has_params(level) {
+                    return h;
+                }
+                let new_level = Self::apply_meta_subst_hlevel(level, subst, &self.nodes);
+                if new_level == *level {
+                    h
+                } else {
+                    self.intern(HNode::Universe(new_level))
+                }
+            }
             HNode::App(args) => {
                 let new_args: Vec<HExpr> =
                     args.iter().map(|a| self.apply_meta_subst(*a, subst)).collect();
@@ -543,6 +667,10 @@ impl Arena {
             (HNode::Sym(a), HNode::Sym(b)) if a == b => Ok(()),
             (HNode::Free(a), HNode::Free(b)) if a == b => Ok(()),
             (HNode::Bound(a), HNode::Bound(b)) if a == b => Ok(()),
+            (HNode::Universe(ref la), HNode::Universe(ref lb)) => {
+                let (la, lb) = (la.clone(), lb.clone());
+                self.match_hlevels(&la, &lb, subst)
+            }
             (HNode::App(pa), HNode::App(ea)) => {
                 if pa.len() != ea.len() {
                     // Miller fragment: check if pattern head is a meta
@@ -674,6 +802,86 @@ impl Arena {
         }
     }
 
+    /// Unify two HLevels. Param binds like Meta.
+    fn unify_hlevels(
+        &mut self,
+        a: &HLevel,
+        b: &HLevel,
+        subst: &mut HashMap<Name, HExpr>,
+    ) -> bool {
+        if a == b {
+            return true;
+        }
+        match (a, b) {
+            (HLevel::Param(name), _) => {
+                let level = Self::hlevel_to_level(b);
+                let wrapped = self.universe(&level);
+                if let Some(&existing) = subst.get(name) {
+                    existing == wrapped
+                } else {
+                    subst.insert(name.clone(), wrapped);
+                    true
+                }
+            }
+            (_, HLevel::Param(name)) => {
+                let level = Self::hlevel_to_level(a);
+                let wrapped = self.universe(&level);
+                if let Some(&existing) = subst.get(name) {
+                    existing == wrapped
+                } else {
+                    subst.insert(name.clone(), wrapped);
+                    true
+                }
+            }
+            (HLevel::Succ(a), HLevel::Succ(b)) => self.unify_hlevels(a, b, subst),
+            (HLevel::Max(a1, a2), HLevel::Max(b1, b2)) => {
+                self.unify_hlevels(a1, b1, subst) && self.unify_hlevels(a2, b2, subst)
+            }
+            (HLevel::IMax(a1, a2), HLevel::IMax(b1, b2)) => {
+                self.unify_hlevels(a1, b1, subst) && self.unify_hlevels(a2, b2, subst)
+            }
+            _ => false,
+        }
+    }
+
+    /// Match two HLevels during pattern matching. Param binds like Meta.
+    fn match_hlevels(
+        &mut self,
+        pat: &HLevel,
+        expr: &HLevel,
+        subst: &mut HashMap<Name, HExpr>,
+    ) -> Result<(), String> {
+        if pat == expr {
+            return Ok(());
+        }
+        match (pat, expr) {
+            (HLevel::Param(name), _) => {
+                let level = Self::hlevel_to_level(expr);
+                let wrapped = self.universe(&level);
+                if let Some(&existing) = subst.get(name) {
+                    if existing == wrapped {
+                        Ok(())
+                    } else {
+                        Err(format!("level param ?{} conflict", name))
+                    }
+                } else {
+                    subst.insert(name.clone(), wrapped);
+                    Ok(())
+                }
+            }
+            (HLevel::Succ(a), HLevel::Succ(b)) => self.match_hlevels(a, b, subst),
+            (HLevel::Max(a1, a2), HLevel::Max(b1, b2)) => {
+                self.match_hlevels(a1, b1, subst)?;
+                self.match_hlevels(a2, b2, subst)
+            }
+            (HLevel::IMax(a1, a2), HLevel::IMax(b1, b2)) => {
+                self.match_hlevels(a1, b1, subst)?;
+                self.match_hlevels(a2, b2, subst)
+            }
+            _ => Err("level mismatch".to_string()),
+        }
+    }
+
     /// Construct a lambda binder.
     pub fn make_lambda(&mut self, hint: &str, body: HExpr) -> HExpr {
         let ty = self.sym("_");
@@ -687,7 +895,7 @@ impl Arena {
             return self.bound(depth);
         }
         match self.nodes[expr.0 as usize].clone() {
-            HNode::Free(_) | HNode::Meta(_) | HNode::Sym(_) => expr,
+            HNode::Free(_) | HNode::Meta(_) | HNode::Sym(_) | HNode::Universe(_) => expr,
             HNode::Bound(i) => {
                 if i >= depth {
                     self.bound(i + 1)
@@ -740,7 +948,7 @@ impl Arena {
                     expr
                 }
             }
-            HNode::Free(_) | HNode::Meta(_) | HNode::Sym(_) => expr,
+            HNode::Free(_) | HNode::Meta(_) | HNode::Sym(_) | HNode::Universe(_) => expr,
             HNode::App(args) => {
                 let shifted_rep = self.shift(replacement, 0, 0); // no shift needed at this level
                 let _ = shifted_rep;
@@ -779,6 +987,11 @@ impl Arena {
         }
     }
 
+    /// Shift bound variable indices >= cutoff by amount (public version).
+    pub fn shift_pub(&mut self, expr: HExpr, cutoff: usize, amount: i32) -> HExpr {
+        self.shift(expr, cutoff, amount)
+    }
+
     /// Shift bound variable indices >= cutoff by amount.
     fn shift(&mut self, expr: HExpr, cutoff: usize, amount: i32) -> HExpr {
         match self.nodes[expr.0 as usize].clone() {
@@ -789,7 +1002,7 @@ impl Arena {
                     expr
                 }
             }
-            HNode::Free(_) | HNode::Meta(_) | HNode::Sym(_) => expr,
+            HNode::Free(_) | HNode::Meta(_) | HNode::Sym(_) | HNode::Universe(_) => expr,
             HNode::App(args) => {
                 let new_args: Vec<HExpr> = args
                     .iter()
@@ -863,7 +1076,8 @@ impl Arena {
             return expr;
         }
         match self.nodes[expr.0 as usize].clone() {
-            HNode::Free(_) | HNode::Bound(_) | HNode::Meta(_) | HNode::Sym(_) => expr,
+            HNode::Free(_) | HNode::Bound(_) | HNode::Meta(_) | HNode::Sym(_)
+            | HNode::Universe(_) => expr,
             HNode::App(args) => {
                 *fuel = fuel.saturating_sub(1);
                 let normalized: Vec<HExpr> = args
@@ -930,7 +1144,7 @@ impl Arena {
                     acc.push(n.clone());
                 }
             }
-            HNode::Bound(_) | HNode::Meta(_) | HNode::Sym(_) => {}
+            HNode::Bound(_) | HNode::Meta(_) | HNode::Sym(_) | HNode::Universe(_) => {}
             HNode::App(args) => {
                 let args = args.clone();
                 for a in &args {
@@ -969,7 +1183,7 @@ impl Arena {
                     acc.push(h);
                 }
             }
-            HNode::Bound(_) | HNode::Sym(_) => {}
+            HNode::Bound(_) | HNode::Sym(_) | HNode::Universe(_) => {}
             HNode::App(args) => {
                 let args = args.clone();
                 for a in &args {
@@ -990,6 +1204,20 @@ impl Arena {
                 self.abstractable_vars_inner(body, acc);
             }
         }
+    }
+
+    /// If h is a Universe, return its Level (without full tree conversion).
+    pub fn get_universe_level(&self, h: HExpr) -> Option<crate::expr::Level> {
+        if let HNode::Universe(ref level) = self.node(h) {
+            Some(Self::hlevel_to_level(level))
+        } else {
+            None
+        }
+    }
+
+    /// Create a Universe HExpr from a Level.
+    pub fn universe_from_level(&mut self, level: &crate::expr::Level) -> HExpr {
+        self.universe(level)
     }
 
     /// Number of unique expressions stored.
@@ -1038,6 +1266,10 @@ impl Arena {
                 } else {
                     format!("(@bind:{} {} {})", spec, ps.join(" "), self.display(*body))
                 }
+            }
+            HNode::Universe(ref level) => {
+                let level = Self::hlevel_to_level(level);
+                format!("(Type {})", level)
             }
         }
     }

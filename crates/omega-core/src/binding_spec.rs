@@ -149,7 +149,8 @@ fn count_bound_occurrences(expr: &crate::expr::Expr, index: usize) -> usize {
     use crate::expr::Expr;
     match expr {
         Expr::Bound(i) if *i == index => 1,
-        Expr::Bound(_) | Expr::Free(_) | Expr::Meta(_) | Expr::Sym(_) => 0,
+        Expr::Bound(_) | Expr::Free(_) | Expr::Meta(_) | Expr::Sym(_)
+        | Expr::Universe(_) => 0,
         Expr::App(args) => args.iter().map(|a| count_bound_occurrences(a, index)).sum(),
         Expr::Binder { ty, body, .. } => {
             count_bound_occurrences(ty, index)

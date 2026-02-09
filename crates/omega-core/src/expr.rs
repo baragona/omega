@@ -9,6 +9,22 @@ use std::fmt;
 /// A name for free variables and identifiers.
 pub type Name = String;
 
+/// Universe levels for the algebraic universe hierarchy.
+/// Supports impredicative Prop via IMax.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub enum Level {
+    /// Level 0 (Prop)
+    Zero,
+    /// Successor level: lsuc(l)
+    Succ(Box<Level>),
+    /// Maximum of two levels: lmax(l1, l2)
+    Max(Box<Level>, Box<Level>),
+    /// Impredicative maximum: imax(l1, l2) = 0 when l2 = 0, else max(l1, l2)
+    IMax(Box<Level>, Box<Level>),
+    /// Level parameter (shares Meta namespace for substitution)
+    Param(Name),
+}
+
 /// De Bruijn index for bound variables (0-based, counting from the innermost binder).
 pub type DeBruijnIndex = usize;
 
@@ -41,6 +57,9 @@ pub enum Expr {
         /// The body (bound var 0 refers to this binder)
         body: Box<Expr>,
     },
+
+    /// A universe: `(Type 0)`, `(Type 1)`, `(Type (lmax ?u ?v))`, etc.
+    Universe(Level),
 }
 
 /// Kinds of binders supported by the framework.
@@ -85,6 +104,7 @@ impl Expr {
             Expr::Free(_) | Expr::Bound(_) | Expr::Sym(_) => false,
             Expr::App(args) => args.iter().any(|a| a.has_metas()),
             Expr::Binder { ty, body, .. } => ty.has_metas() || body.has_metas(),
+            Expr::Universe(level) => level.has_params(),
         }
     }
 
@@ -110,15 +130,78 @@ impl Expr {
                 ty.collect_metas(acc);
                 body.collect_metas(acc);
             }
+            Expr::Universe(level) => level.collect_params(acc),
         }
     }
 
     /// Size of the expression tree (number of nodes).
     pub fn size(&self) -> usize {
         match self {
-            Expr::Free(_) | Expr::Bound(_) | Expr::Meta(_) | Expr::Sym(_) => 1,
+            Expr::Free(_) | Expr::Bound(_) | Expr::Meta(_) | Expr::Sym(_)
+            | Expr::Universe(_) => 1,
             Expr::App(args) => 1 + args.iter().map(|a| a.size()).sum::<usize>(),
             Expr::Binder { ty, body, .. } => 1 + ty.size() + body.size(),
+        }
+    }
+}
+
+impl Level {
+    /// Check if this level contains any Param (used as metas).
+    pub fn has_params(&self) -> bool {
+        match self {
+            Level::Zero => false,
+            Level::Succ(l) => l.has_params(),
+            Level::Max(a, b) | Level::IMax(a, b) => a.has_params() || b.has_params(),
+            Level::Param(_) => true,
+        }
+    }
+
+    /// Collect Param names (treated as meta-variables for substitution).
+    pub fn collect_params(&self, acc: &mut Vec<Name>) {
+        match self {
+            Level::Zero => {}
+            Level::Succ(l) => l.collect_params(acc),
+            Level::Max(a, b) | Level::IMax(a, b) => {
+                a.collect_params(acc);
+                b.collect_params(acc);
+            }
+            Level::Param(n) => acc.push(n.clone()),
+        }
+    }
+
+    /// Convert a concrete level to a number, if possible.
+    pub fn to_num(&self) -> Option<usize> {
+        match self {
+            Level::Zero => Some(0),
+            Level::Succ(l) => l.to_num().map(|n| n + 1),
+            _ => None,
+        }
+    }
+
+    /// Create a level from a concrete number.
+    pub fn from_num(n: usize) -> Level {
+        let mut level = Level::Zero;
+        for _ in 0..n {
+            level = Level::Succ(Box::new(level));
+        }
+        level
+    }
+}
+
+impl fmt::Display for Level {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Level::Zero => write!(f, "0"),
+            Level::Succ(l) => {
+                if let Some(n) = self.to_num() {
+                    write!(f, "{}", n)
+                } else {
+                    write!(f, "(lsuc {})", l)
+                }
+            }
+            Level::Max(a, b) => write!(f, "(lmax {} {})", a, b),
+            Level::IMax(a, b) => write!(f, "(imax {} {})", a, b),
+            Level::Param(n) => write!(f, "?{}", n),
         }
     }
 }
@@ -145,6 +228,7 @@ impl fmt::Debug for Expr {
             } => {
                 write!(f, "({:?} ({} : {:?}) {:?})", kind, hint, ty, body)
             }
+            Expr::Universe(level) => write!(f, "(Type {})", level),
         }
     }
 }
@@ -176,6 +260,7 @@ impl fmt::Display for Expr {
                 };
                 write!(f, "({} ({} : {}) {})", kw, hint, ty, body)
             }
+            Expr::Universe(level) => write!(f, "(Type {})", level),
         }
     }
 }

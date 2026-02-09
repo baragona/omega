@@ -354,3 +354,23 @@ fn compile_verified_example() {
     assert!(results.iter().any(|r| r.contains("int factorial(int n)")));
     assert!(results.iter().any(|r| r.contains("n * factorial(n - 1)")));
 }
+
+#[test]
+fn w_types_example() {
+    let results = check_example("examples/w-types.omega");
+    assert!(results.iter().any(|r| r.contains("Theory WTypes: registered OK")));
+    // Universe tests
+    assert!(results.iter().any(|r| r.contains("Proof type-0-in-1: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof lsuc-test: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof lmax-test: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof imax-prop: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof imax-pred: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof lmax-comm: VALID")));
+    // Sigma tests
+    assert!(results.iter().any(|r| r.contains("Proof fst-test: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof snd-test: VALID")));
+    // Computation
+    assert!(results.iter().any(|r| r.contains("Proof add-test: VALID")));
+    // W-type wrec
+    assert!(results.iter().any(|r| r.contains("Proof wrec-test: VALID")));
+}
