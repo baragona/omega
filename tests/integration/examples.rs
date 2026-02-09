@@ -306,3 +306,27 @@ fn compile_factorial_example() {
     assert!(results.iter().any(|r| r.contains("return 1;")));
     assert!(results.iter().any(|r| r.contains("n * factorial((n - 1))")));
 }
+
+#[test]
+fn classical_logic_example() {
+    let results = check_example("examples/classical-logic.omega");
+    assert!(results.iter().any(|r| r.contains("Theory ClassicalLogic: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof dne-thm: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof lem: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof peirce: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof contraposition: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof not-imp-left: VALID")));
+}
+
+#[test]
+fn dep_types_example() {
+    let results = check_example("examples/dep-types.omega");
+    assert!(results.iter().any(|r| r.contains("Theory DepTypes: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof eq-z-z: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof dep-refl: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof pi-id: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof pi-app-id: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof dep-app: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof nested-pi: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof partial-app: VALID")));
+}

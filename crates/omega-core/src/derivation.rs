@@ -5,7 +5,7 @@
 /// that each step is valid.
 use std::collections::{HashMap, HashSet};
 
-use crate::binding::{apply_meta_subst, abstract_over, abstractable_vars, whnf};
+use crate::binding::{apply_meta_subst, abstract_over, abstractable_vars, beta_normalize, whnf};
 use crate::error::{OmegaError, Result};
 use crate::expr::{BinderKind, Expr, Name};
 use crate::judgment::RewriteRule;
@@ -246,7 +246,14 @@ fn unify_inner(a: &Expr, b: &Expr, subst: &mut Substitution) -> bool {
                 body: b2,
                 ..
             },
-        ) => k1 == k2 && unify_inner(t1, t2, subst) && unify_inner(b1, b2, subst),
+        ) => {
+            if k1 != k2 { return false; }
+            // Skip type comparison if either side is the wildcard `_`
+            let t1_wild = matches!(t1.as_ref(), Expr::Sym(s) if s == "_");
+            let t2_wild = matches!(t2.as_ref(), Expr::Sym(s) if s == "_");
+            let ty_ok = t1_wild || t2_wild || unify_inner(t1, t2, subst);
+            ty_ok && unify_inner(b1, b2, subst)
+        }
         _ => false,
     }
 }
@@ -267,11 +274,11 @@ fn try_miller_unify(
         })
         .collect();
 
-    // Check strict Miller condition: each arg must be a distinct Free or Bound var
+    // Check strict Miller condition: each arg must be a distinct Free, Bound, or Sym var
     let mut arg_values = Vec::new();
     for arg in &resolved_args {
         match arg {
-            Expr::Free(_) | Expr::Bound(_) => {
+            Expr::Free(_) | Expr::Bound(_) | Expr::Sym(_) => {
                 if arg_values.contains(arg) {
                     return false; // Duplicate
                 }
@@ -527,7 +534,9 @@ fn check_derivation_inner(
             {
                 let mut premise_goal = apply_meta_subst(premise_pattern, &local_subst);
                 premise_goal = apply_meta_subst(&premise_goal, global_subst);
-                premise_goal = whnf(&premise_goal);
+                // Beta-normalize premise goals to reduce any beta-redexes
+                // created by meta substitution (e.g., (?B ?e2) → ((λx.T) e2) → T[e2/x])
+                premise_goal = beta_normalize(&premise_goal);
 
                 // If the premise goal has unsolved metas, infer the derivation's
                 // conclusion first, then unify it with the goal to solve metas,
@@ -542,7 +551,7 @@ fn check_derivation_inner(
                                 global_subst.insert(k.clone(), v.clone());
                             }
                             premise_goal = apply_meta_subst(&premise_goal, &s);
-                            premise_goal = whnf(&premise_goal);
+                            premise_goal = beta_normalize(&premise_goal);
                         }
                     }
                 }

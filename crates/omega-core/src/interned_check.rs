@@ -519,7 +519,9 @@ fn check_inner(
                 let mut premise_goal =
                     arena.apply_meta_subst(premise_pattern, &local_subst);
                 premise_goal = arena.apply_meta_subst(premise_goal, global_subst);
-                premise_goal = arena.whnf(premise_goal);
+                // Beta-normalize premise goals to reduce any beta-redexes
+                // created by meta substitution (e.g., (?B ?e2) → ((λx.T) e2) → T[e2/x])
+                premise_goal = arena.beta_normalize(premise_goal, &mut fuel);
 
                 // Bidirectional: infer conclusion and unify when metas remain
                 if arena.has_metas(premise_goal) {
@@ -537,7 +539,7 @@ fn check_inner(
                                 global_subst.insert(k.clone(), *v);
                             }
                             premise_goal = arena.apply_meta_subst(premise_goal, &s);
-                            premise_goal = arena.whnf(premise_goal);
+                            premise_goal = arena.beta_normalize(premise_goal, &mut fuel);
                         }
                     }
                 }

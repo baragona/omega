@@ -1,0 +1,208 @@
+;;; Classical Logic — Non-Constructive Reasoning
+;;;
+;;; Classical logic extends intuitionistic logic with the principle
+;;; that ¬¬A → A (double negation elimination).  This seemingly
+;;; small addition enables powerful non-constructive reasoning:
+;;; the law of excluded middle, proof by contradiction, and
+;;; De Morgan's laws in full generality.
+;;;
+;;; The key difference from the intuitionistic prop-logic.omega:
+;;; there, (or P (not P)) is NOT provable.  Here it is.
+;;;
+;;; Proved here:
+;;;   1. ¬¬P → P                           (DNE as theorem)
+;;;   2. P ∨ ¬P                             (law of excluded middle)
+;;;   3. ((P → Q) → P) → P                 (Peirce's law)
+;;;   4. (¬Q → ¬P) → (P → Q)              (classical contraposition)
+;;;   5. ¬(P → Q) → P                      (negation of implication)
+
+(theory ClassicalLogic
+  (sort Prop)
+
+  ;; ── Atomic propositions ──
+  (constructor P : Prop)
+  (constructor Q : Prop)
+
+  ;; ── Connectives ──
+  (constructor and  : (-> Prop Prop Prop))
+  (constructor or   : (-> Prop Prop Prop))
+  (constructor imp  : (-> Prop Prop Prop))
+  (constructor not  : (-> Prop Prop))
+  (constructor false : Prop)
+
+  ;; ── Judgment ──
+  (judgment (proves ?A) :where A : Prop)
+
+  ;; ── Conjunction ──
+  (rule and-intro
+    :premises ((proves ?A) (proves ?B))
+    :conclusion (proves (and ?A ?B)))
+
+  (rule and-elim-l
+    :premises ((proves (and ?A ?B)))
+    :conclusion (proves ?A))
+
+  (rule and-elim-r
+    :premises ((proves (and ?A ?B)))
+    :conclusion (proves ?B))
+
+  ;; ── Disjunction ──
+  (rule or-intro-l
+    :premises ((proves ?A))
+    :conclusion (proves (or ?A ?B)))
+
+  (rule or-intro-r
+    :premises ((proves ?B))
+    :conclusion (proves (or ?A ?B)))
+
+  ;; ── Implication ──
+  (rule imp-intro
+    :premises ((proves ?B))
+    :context ((0 (proves ?A)))
+    :conclusion (proves (imp ?A ?B)))
+
+  (rule imp-elim
+    :premises ((proves (imp ?A ?B)) (proves ?A))
+    :conclusion (proves ?B))
+
+  ;; ── Negation ──
+  ;; not-intro: assume A, derive false → ¬A
+  (rule not-intro
+    :premises ((proves false))
+    :context ((0 (proves ?A)))
+    :conclusion (proves (not ?A)))
+
+  ;; not-elim: ¬A and A → false (modus tollens)
+  (rule not-elim
+    :premises ((proves (not ?A)) (proves ?A))
+    :conclusion (proves false))
+
+  ;; ── Ex falso quodlibet ──
+  (rule false-elim
+    :premises ((proves false))
+    :conclusion (proves ?A))
+
+  ;; ══════════════════════════════════════
+  ;; THE classical axiom
+  ;; ══════════════════════════════════════
+  ;;
+  ;; Double negation elimination: ¬¬A → A
+  ;; This is the ONLY rule that distinguishes classical
+  ;; from intuitionistic logic.  Everything below follows.
+  (rule dne
+    :premises ((proves (not (not ?A))))
+    :conclusion (proves ?A)))
+
+(check-theory ClassicalLogic)
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 1:  ¬¬P → P   (DNE as an implication)
+;; ════════════════════════════════════════════════════════════
+;;
+;; Trivially follows from the axiom: assume ¬¬P, apply DNE.
+
+(proof dne-thm
+  :theory ClassicalLogic
+  :goal (proves (imp (not (not P)) P))
+  :derivation (imp-intro (dne (assumption))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 2:  P ∨ ¬P   (law of excluded middle)
+;; ════════════════════════════════════════════════════════════
+;;
+;; The hallmark theorem of classical logic.
+;; Proof: by DNE, prove ¬¬(P ∨ ¬P).
+;; Assume ¬(P ∨ ¬P).  Build ¬P: assume P, then P∨¬P
+;; by or-intro-l, contradicts ¬(P∨¬P).  Now P∨¬P by
+;; or-intro-r with ¬P — again contradicts ¬(P∨¬P).
+
+(proof lem
+  :theory ClassicalLogic
+  :goal (proves (or P (not P)))
+  :derivation
+    (dne
+      (not-intro
+        (not-elim
+          (assumption)
+          (or-intro-r
+            (not-intro
+              (not-elim
+                (assumption 0)
+                (or-intro-l (assumption)))))))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 3:  ((P → Q) → P) → P   (Peirce's law)
+;; ════════════════════════════════════════════════════════════
+;;
+;; A classically valid schema that fails intuitionistically.
+;; Assume (P→Q)→P.  By DNE, prove ¬¬P.  Assume ¬P.
+;; Build P→Q: assume P, contradiction with ¬P gives false,
+;; ex falso gives Q.  Apply (P→Q)→P to get P.
+;; Now ¬P and P contradict.
+
+(proof peirce
+  :theory ClassicalLogic
+  :goal (proves (imp (imp (imp P Q) P) P))
+  :derivation
+    (imp-intro
+      (dne
+        (not-intro
+          (not-elim
+            (assumption)
+            (imp-elim
+              (assumption 0)
+              (imp-intro
+                (false-elim
+                  (not-elim
+                    (assumption 1)
+                    (assumption))))))))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 4:  (¬Q → ¬P) → (P → Q)   (classical contraposition)
+;; ════════════════════════════════════════════════════════════
+;;
+;; The converse of contraposition is intuitionistically valid;
+;; this direction requires classical reasoning.
+;; Assume ¬Q → ¬P and P.  By DNE, prove ¬¬Q.  Assume ¬Q,
+;; apply ¬Q→¬P to get ¬P, then ¬P and P contradict.
+
+(proof contraposition
+  :theory ClassicalLogic
+  :goal (proves (imp (imp (not Q) (not P)) (imp P Q)))
+  :derivation
+    (imp-intro
+      (imp-intro
+        (dne
+          (not-intro
+            (not-elim
+              (imp-elim (assumption 0) (assumption))
+              (assumption 1)))))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 5:  ¬(P → Q) → P   (negation of implication gives antecedent)
+;; ════════════════════════════════════════════════════════════
+;;
+;; If P→Q is false, then P must be true (classically).
+;; Assume ¬(P→Q).  By DNE, prove ¬¬P.  Assume ¬P.
+;; Build P→Q: assume P, contradiction with ¬P, ex falso Q.
+;; Now (P→Q) contradicts ¬(P→Q).
+
+(proof not-imp-left
+  :theory ClassicalLogic
+  :goal (proves (imp (not (imp P Q)) P))
+  :derivation
+    (imp-intro
+      (dne
+        (not-intro
+          (not-elim
+            (assumption 0)
+            (imp-intro
+              (false-elim
+                (not-elim
+                  (assumption 1)
+                  (assumption)))))))))

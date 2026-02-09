@@ -292,7 +292,11 @@ impl Arena {
                 }
                 let (t1, b1) = (*t1, *b1);
                 let (t2, b2) = (*t2, *b2);
-                self.unify_exprs(t1, t2, subst) && self.unify_exprs(b1, b2, subst)
+                // Skip type comparison if either side is the wildcard `_`
+                let t1_wild = matches!(self.nodes[t1.0 as usize], HNode::Sym(ref s) if s == "_");
+                let t2_wild = matches!(self.nodes[t2.0 as usize], HNode::Sym(ref s) if s == "_");
+                let ty_ok = t1_wild || t2_wild || self.unify_exprs(t1, t2, subst);
+                ty_ok && self.unify_exprs(b1, b2, subst)
             }
             _ => false,
         }
@@ -320,7 +324,7 @@ impl Arena {
         let mut arg_values = Vec::new();
         for &arg in &resolved_args {
             match self.nodes[arg.0 as usize].clone() {
-                HNode::Free(_) | HNode::Bound(_) => {
+                HNode::Free(_) | HNode::Bound(_) | HNode::Sym(_) => {
                     if arg_values.contains(&arg) { return false; }
                     arg_values.push(arg);
                 }
@@ -506,7 +510,30 @@ impl Arena {
                     if existing == expr {
                         Ok(())
                     } else {
-                        Err(format!("meta ?{} conflict", name))
+                        // Try structural match (handles wildcard _ in binder types)
+                        let mut dummy_subst = HashMap::new();
+                        if self.match_inner(existing, expr, &mut dummy_subst).is_ok()
+                            && dummy_subst.is_empty()
+                        {
+                            Ok(())
+                        } else {
+                            // Try WHNF comparison for beta-equivalent terms
+                            let existing_whnf = self.whnf(existing);
+                            let expr_whnf = self.whnf(expr);
+                            if existing_whnf == expr_whnf {
+                                Ok(())
+                            } else {
+                                // Try structural match on WHNF'd terms
+                                let mut dummy_subst2 = HashMap::new();
+                                if self.match_inner(existing_whnf, expr_whnf, &mut dummy_subst2).is_ok()
+                                    && dummy_subst2.is_empty()
+                                {
+                                    Ok(())
+                                } else {
+                                    Err(format!("meta ?{} conflict", name))
+                                }
+                            }
+                        }
                     }
                 } else {
                     subst.insert(name.clone(), expr);
@@ -558,7 +585,12 @@ impl Arena {
             ) if k1 == k2 => {
                 let (t1, b1) = (*t1, *b1);
                 let (t2, b2) = (*t2, *b2);
-                self.match_inner(t1, t2, subst)?;
+                // Skip type comparison if either side is the wildcard `_`
+                let t1_wild = matches!(self.nodes[t1.0 as usize], HNode::Sym(ref s) if s == "_");
+                let t2_wild = matches!(self.nodes[t2.0 as usize], HNode::Sym(ref s) if s == "_");
+                if !t1_wild && !t2_wild {
+                    self.match_inner(t1, t2, subst)?;
+                }
                 self.match_inner(b1, b2, subst)?;
                 Ok(())
             }
@@ -592,7 +624,7 @@ impl Arena {
         let mut arg_values = Vec::new();
         for &arg in &resolved_args {
             match self.node(arg).clone() {
-                HNode::Free(_) | HNode::Bound(_) => {
+                HNode::Free(_) | HNode::Bound(_) | HNode::Sym(_) => {
                     if arg_values.contains(&arg) {
                         return Err("Miller: duplicate arg".to_string());
                     }

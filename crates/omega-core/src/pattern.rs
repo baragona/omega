@@ -95,11 +95,18 @@ fn match_inner_core(pattern: &Expr, expr: &Expr, subst: &mut Substitution) -> Re
                 if existing == expr {
                     Ok(())
                 } else {
-                    Err(MatchError::Conflict {
-                        meta: name.clone(),
-                        existing: existing.clone(),
-                        new: expr.clone(),
-                    })
+                    // Try WHNF comparison for beta-equivalent terms
+                    let existing_whnf = whnf(existing);
+                    let expr_whnf = whnf(expr);
+                    if existing_whnf == expr_whnf {
+                        Ok(())
+                    } else {
+                        Err(MatchError::Conflict {
+                            meta: name.clone(),
+                            existing: existing.clone(),
+                            new: expr.clone(),
+                        })
+                    }
                 }
             } else {
                 subst.insert(name.clone(), expr.clone());
@@ -167,7 +174,7 @@ fn match_inner_core(pattern: &Expr, expr: &Expr, subst: &mut Substitution) -> Re
             }
         },
 
-        // Binders: match kind, type, and body
+        // Binders: match kind, type (unless wildcard _), and body
         Expr::Binder {
             kind: k1,
             ty: t1,
@@ -180,7 +187,12 @@ fn match_inner_core(pattern: &Expr, expr: &Expr, subst: &mut Substitution) -> Re
                 body: b2,
                 ..
             } if k1 == k2 => {
-                match_inner(t1, t2, subst)?;
+                // Skip type comparison if either side is the wildcard `_`
+                let t1_wild = matches!(t1.as_ref(), Expr::Sym(s) if s == "_");
+                let t2_wild = matches!(t2.as_ref(), Expr::Sym(s) if s == "_");
+                if !t1_wild && !t2_wild {
+                    match_inner(t1, t2, subst)?;
+                }
                 match_inner(b1, b2, subst)?;
                 Ok(())
             }
@@ -220,7 +232,7 @@ fn try_miller_match(
     let mut arg_values = Vec::new();
     for (i, arg) in resolved_args.iter().enumerate() {
         match arg {
-            Expr::Free(_) | Expr::Bound(_) => {
+            Expr::Free(_) | Expr::Bound(_) | Expr::Sym(_) => {
                 // Check linearity (no duplicate args)
                 if arg_values.contains(arg) {
                     return Err(MatchError::Deferred {

@@ -1,0 +1,274 @@
+;;; Dependent Types — Type Families and the Identity Type
+;;;
+;;; This extends the simply typed lambda calculus with dependent
+;;; function types (Pi types) and the identity type (propositional
+;;; equality).  Types can now depend on terms: the return type of
+;;; a function can mention its argument.
+;;;
+;;; The key advance over stlc.omega:
+;;;   - Pi types:  Π(x:A).B(x)  — the result type B depends on x
+;;;   - Identity:  Eq A a b      — propositional equality of terms
+;;;   - Type computation: applying a Pi-typed function requires
+;;;     beta-reducing the type family, handled by WHNF comparison
+;;;
+;;; Proved here:
+;;;   1. refl : Eq Nat z z                           (reflexivity at z)
+;;;   2. λx.refl : Π(x:Nat). Eq Nat x x             (dependent identity)
+;;;   3. λx.x : Π(x:Nat). Nat                        (non-dependent Pi)
+;;;   4. (λx.x) z : Nat                              (Pi elimination + type computation)
+;;;   5. (λx.refl) z : Eq Nat z z                    (dependent application)
+;;;   6. λx.λy.refl : Π(x:Nat). Π(y:Nat). Eq Nat y y  (nested Pi)
+;;;   7. (λx.λy.refl) z : Π(y:Nat). Eq Nat y y        (partial application)
+
+(theory DepTypes
+  (sort Ty)
+  (sort Tm)
+  (sort Ctx)
+
+  ;; ── Types ──
+  (constructor Nat   : Ty)
+  (constructor Bool  : Ty)
+  (constructor Arrow : (-> Ty Ty Ty))          ;; A → B  (non-dependent)
+  (constructor Pi    : (-> Ty Ty Ty))          ;; Π(x:A).B  (B is a lambda / type family)
+  (constructor Eq    : (-> Ty Tm Tm Ty))       ;; Eq A a b  (identity type)
+
+  ;; ── Nat terms ──
+  (constructor z  : Tm)
+  (constructor s  : (-> Tm Tm))
+
+  ;; ── Bool terms ──
+  (constructor tt : Tm)
+  (constructor ff : Tm)
+
+  ;; ── Lambda calculus (de Bruijn) ──
+  (constructor vz  : Tm)                       ;; variable index 0
+  (constructor vs  : (-> Tm Tm))               ;; shift up
+  (constructor lam : (-> Ty Tm Tm))            ;; λ(x:A).e
+  (constructor app : (-> Tm Tm Tm))            ;; e₁ e₂
+
+  ;; ── Equality proof ──
+  (constructor refl : Tm)                      ;; reflexivity witness
+
+  ;; ── Typing contexts ──
+  (constructor nil  : Ctx)
+  (constructor cons : (-> Ty Ctx Ctx))
+
+  ;; ── Judgments ──
+  (judgment (has-type ?G ?e ?T) :where G : Ctx e : Tm T : Ty)
+  (judgment (ty-eq ?A ?B)       :where A : Ty  B : Ty)
+
+  ;; ════════════════════════════════════════
+  ;; Variable Lookup
+  ;; ════════════════════════════════════════
+
+  (rule t-vz
+    :premises ()
+    :conclusion (has-type (cons ?A ?G) vz ?A))
+
+  (rule t-vs
+    :premises ((has-type ?G ?e ?T))
+    :conclusion (has-type (cons ?A ?G) (vs ?e) ?T))
+
+  ;; ════════════════════════════════════════
+  ;; Arrow Types (non-dependent, simple)
+  ;; ════════════════════════════════════════
+
+  (rule t-lam-arrow
+    :premises ((has-type (cons ?A ?G) ?e ?B))
+    :conclusion (has-type ?G (lam ?A ?e) (Arrow ?A ?B)))
+
+  (rule t-app-arrow
+    :premises ((has-type ?G ?e1 (Arrow ?A ?B)) (has-type ?G ?e2 ?A))
+    :conclusion (has-type ?G (app ?e1 ?e2) ?B))
+
+  ;; ════════════════════════════════════════
+  ;; Pi Types (dependent function types)
+  ;; ════════════════════════════════════════
+  ;;
+  ;; The type family ?B is an Omega lambda: (lambda (x : _) ...)
+  ;; In the premise, (?B vz) applies the family to the bound
+  ;; variable vz, which Miller matching solves by abstracting
+  ;; vz from the inferred body type.
+
+  (rule t-lam-pi
+    :premises ((has-type (cons ?A ?G) ?e (?B vz)))
+    :conclusion (has-type ?G (lam ?A ?e) (Pi ?A ?B)))
+
+  ;; Pi elimination with type computation.
+  ;; (?B ?e2) is a beta-redex when ?B is a lambda;
+  ;; the ty-eq premise witnesses that it equals ?T.
+  ;; WHNF comparison in the kernel handles the reduction.
+
+  (rule t-app-pi
+    :premises ((has-type ?G ?e1 (Pi ?A ?B))
+               (has-type ?G ?e2 ?A)
+               (ty-eq (?B ?e2) ?T))
+    :conclusion (has-type ?G (app ?e1 ?e2) ?T))
+
+  ;; ════════════════════════════════════════
+  ;; Type Equality
+  ;; ════════════════════════════════════════
+  ;;
+  ;; teq-refl handles type computation: when (?B ?e2) beta-reduces
+  ;; to some concrete type T, the WHNF comparison in the pattern
+  ;; matcher recognizes that (ty-eq (?B ?e2) T) matches (ty-eq ?A ?A).
+
+  (rule teq-refl
+    :premises ()
+    :conclusion (ty-eq ?A ?A))
+
+  ;; ════════════════════════════════════════
+  ;; Identity Type
+  ;; ════════════════════════════════════════
+
+  ;; refl : Eq A a a  (diagonal — both endpoints must be the same)
+  (rule t-refl
+    :premises ((has-type ?G ?a ?A))
+    :conclusion (has-type ?G refl (Eq ?A ?a ?a)))
+
+  ;; ════════════════════════════════════════
+  ;; Nat introduction
+  ;; ════════════════════════════════════════
+
+  (rule t-zero
+    :premises ()
+    :conclusion (has-type ?G z Nat))
+
+  (rule t-succ
+    :premises ((has-type ?G ?n Nat))
+    :conclusion (has-type ?G (s ?n) Nat)))
+
+(check-theory DepTypes)
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 1:  refl : Eq Nat z z   (reflexivity at zero)
+;; ════════════════════════════════════════════════════════════
+;;
+;; The simplest identity proof: z = z witnessed by refl.
+;; t-refl requires a proof that z : Nat (by t-zero).
+
+(proof eq-z-z
+  :theory DepTypes
+  :goal (has-type nil refl (Eq Nat z z))
+  :derivation (t-refl (t-zero)))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 2:  λx.refl : Π(x:Nat). Eq Nat x x
+;;             (dependent function: for any n, refl proves n = n)
+;; ════════════════════════════════════════════════════════════
+;;
+;; This is the first truly dependent type: the return type
+;; Eq Nat x x mentions the parameter x.
+;;
+;; The type family B = λx. Eq Nat x x is solved by Miller
+;; matching: the premise (?B vz) is matched against
+;; (Eq Nat vz vz), abstracting vz to get the lambda.
+
+(proof dep-refl
+  :theory DepTypes
+  :goal (has-type nil
+          (lam Nat refl)
+          (Pi Nat (lambda (x : Nat) (Eq Nat #0 #0))))
+  :derivation (t-lam-pi (t-refl (t-vz))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 3:  λx.x : Π(x:Nat). Nat
+;;             (identity on Nat as a Pi type)
+;; ════════════════════════════════════════════════════════════
+;;
+;; Even non-dependent types can be expressed as Pi types.
+;; Here B = λx.Nat (constant type family), which Miller
+;; matching solves since Nat doesn't mention vz.
+
+(proof pi-id
+  :theory DepTypes
+  :goal (has-type nil
+          (lam Nat vz)
+          (Pi Nat (lambda (x : Nat) Nat)))
+  :derivation (t-lam-pi (t-vz)))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 4:  (λx.x) z : Nat
+;;             (Pi elimination with type computation)
+;; ════════════════════════════════════════════════════════════
+;;
+;; Applying a Pi-typed function to z.  The type family
+;; (λx.Nat) applied to z gives Nat (trivial computation).
+;; The ty-eq premise witnesses: (λx.Nat)(z) = Nat by WHNF.
+
+(proof pi-app-id
+  :theory DepTypes
+  :goal (has-type nil (app (lam Nat vz) z) Nat)
+  :derivation
+    (t-app-pi
+      (t-lam-pi (t-vz))
+      (t-zero)
+      (teq-refl)))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 5:  (λx.refl) z : Eq Nat z z
+;;             (dependent application — the key theorem)
+;; ════════════════════════════════════════════════════════════
+;;
+;; Applying a dependently typed function to a concrete argument.
+;; The function has type Π(x:Nat). Eq Nat x x.
+;; Applied to z, the result type is (λx. Eq Nat x x)(z),
+;; which beta-reduces to Eq Nat z z.
+;;
+;; This is where type computation truly matters: the kernel
+;; must recognize that (λx. Eq Nat x x)(z) = Eq Nat z z
+;; via WHNF beta-reduction.
+
+(proof dep-app
+  :theory DepTypes
+  :goal (has-type nil (app (lam Nat refl) z) (Eq Nat z z))
+  :derivation
+    (t-app-pi
+      (t-lam-pi (t-refl (t-vz)))
+      (t-zero)
+      (teq-refl)))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 6:  λx.λy.refl : Π(x:Nat). Π(y:Nat). Eq Nat y y
+;;             (nested dependent Pi types)
+;; ════════════════════════════════════════════════════════════
+;;
+;; The outer lambda binds x, the inner binds y.
+;; The return type Eq Nat y y depends only on y (the inner
+;; variable), not on x.  This demonstrates that Pi types
+;; compose correctly even when the outer parameter is unused.
+
+(proof nested-pi
+  :theory DepTypes
+  :goal (has-type nil
+          (lam Nat (lam Nat refl))
+          (Pi Nat (lambda (x : Nat) (Pi Nat (lambda (y : Nat) (Eq Nat #0 #0))))))
+  :derivation
+    (t-lam-pi (t-lam-pi (t-refl (t-vz)))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 7:  (λx.λy.refl) z : Π(y:Nat). Eq Nat y y
+;;             (partial application of nested Pi)
+;; ════════════════════════════════════════════════════════════
+;;
+;; Applying the outer lambda to z.  The outer type family is
+;; (λx. Π(y:Nat). Eq Nat y y), which when applied to z gives
+;; Π(y:Nat). Eq Nat y y (x was unused).
+
+(proof partial-app
+  :theory DepTypes
+  :goal (has-type nil
+          (app (lam Nat (lam Nat refl)) z)
+          (Pi Nat (lambda (y : Nat) (Eq Nat #0 #0))))
+  :derivation
+    (t-app-pi
+      (t-lam-pi (t-lam-pi (t-refl (t-vz))))
+      (t-zero)
+      (teq-refl)))
