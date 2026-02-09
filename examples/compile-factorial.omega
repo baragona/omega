@@ -1,0 +1,211 @@
+;;; compile-factorial.omega — The Grand Unification
+;;;
+;;; One file.  One kernel.  Two capabilities:
+;;;
+;;;   VERIFY:  The kernel normalizes (factorial 3) and S^6(0) to the
+;;;            same Peano numeral, proving 3! = 6 by eq-refl.
+;;;
+;;;   COMPILE: The kernel normalizes (c-func "int" "factorial" ...) by
+;;;            expanding compilation rewrite rules into string ropes,
+;;;            then (emit ...) flattens the rope to actual C source.
+;;;
+;;; Same normalization engine.  Same rewrite infrastructure.
+;;; Verification and compilation are the same operation.
+
+
+;;; ════════════════════════════════════════════════════════════
+;;; ACT I — VERIFIED SEMANTICS
+;;;
+;;; Define factorial via Peano arithmetic rewrite rules.
+;;; The kernel becomes the interpreter: it normalizes both sides
+;;; of an equation to the same value, making the proof automatic.
+;;; ════════════════════════════════════════════════════════════
+
+(theory PeanoFact
+  (sort Nat)
+  (sort Prop)
+
+  ;; ── Peano naturals ──
+  (constructor z : Nat)
+  (constructor s : (-> Nat Nat))
+  (constructor tt : Nat)
+  (constructor ff : Nat)
+
+  ;; ── Arithmetic ──
+  (constructor add : (-> Nat Nat Nat))
+  (constructor mul : (-> Nat Nat Nat))
+  (constructor is-zero : (-> Nat Nat))
+  (constructor if-val : (-> Nat Nat Nat Nat))
+
+  ;; ── The factorial function ──
+  (constructor factorial : (-> Nat Nat))
+
+  ;; ══════════════════════════════════════════════
+  ;; COMPUTATION RULES  (the kernel IS the interpreter)
+  ;; ══════════════════════════════════════════════
+
+  (rewrite add-z    (add z ?n)        ?n)
+  (rewrite add-s    (add (s ?n) ?m)   (s (add ?n ?m)))
+  (rewrite mul-z    (mul z ?n)        z)
+  (rewrite mul-s    (mul (s ?n) ?m)   (add ?m (mul ?n ?m)))
+  (rewrite iz-yes   (is-zero z)       tt)
+  (rewrite iz-no    (is-zero (s ?n))  ff)
+  (rewrite if-true  (if-val tt ?a ?b) ?a)
+  (rewrite if-false (if-val ff ?a ?b) ?b)
+
+  ;; THE FACTORIAL:  fact(0) = 1,  fact(n+1) = (n+1) * fact(n)
+  (rewrite fact-base (factorial z)      (s z))
+  (rewrite fact-step (factorial (s ?n)) (mul (s ?n) (factorial ?n)))
+
+  ;; ── Equality ──
+  (constructor eq : (-> Nat Nat Prop))
+  (judgment (proves ?P) :where P : Prop)
+  (rule eq-refl
+    :premises ()
+    :conclusion (proves (eq ?a ?a))))
+
+(check-theory PeanoFact)
+
+
+;; ── VERIFICATION: the kernel computes factorial automatically ──
+;; Every proof is just (eq-refl) — zero human guidance.
+;; The kernel normalizes both sides to the same Peano numeral.
+
+;; 0! = 1
+(proof fact-0
+  :theory PeanoFact
+  :goal (proves (eq (factorial z) (s z)))
+  :derivation (eq-refl))
+
+;; 1! = 1
+(proof fact-1
+  :theory PeanoFact
+  :goal (proves (eq (factorial (s z)) (s z)))
+  :derivation (eq-refl))
+
+;; 2! = 2
+(proof fact-2
+  :theory PeanoFact
+  :goal (proves (eq (factorial (s (s z))) (s (s z))))
+  :derivation (eq-refl))
+
+;; 3! = 6
+(proof fact-3
+  :theory PeanoFact
+  :goal (proves (eq (factorial (s (s (s z))))
+                    (s (s (s (s (s (s z))))))))
+  :derivation (eq-refl))
+
+;; 4! = 24   (expressed compactly as 4 * 6 — both sides normalize to S^24(0))
+(proof fact-4
+  :theory PeanoFact
+  :goal (proves (eq (factorial (s (s (s (s z)))))
+                    (mul (s (s (s (s z))))
+                         (s (s (s (s (s (s z)))))))))
+  :derivation (eq-refl))
+
+;; 5! = 5 * 4!   (the recursive step itself — both sides normalize to S^120(0))
+(proof fact-5
+  :theory PeanoFact
+  :goal (proves (eq (factorial (s (s (s (s (s z))))))
+                    (mul (s (s (s (s (s z)))))
+                         (factorial (s (s (s (s z))))))))
+  :derivation (eq-refl))
+
+
+;;; ════════════════════════════════════════════════════════════
+;;; ACT II — THE COMPILER BACKEND
+;;;
+;;; A rewrite-rule-based translation from C AST → string ropes.
+;;; The kernel becomes the compiler: normalizing an AST tree
+;;; through compilation rules produces the target source code.
+;;; ════════════════════════════════════════════════════════════
+
+(theory StringLib
+  (sort String)
+  (constructor empty : String)
+  (constructor cat : (-> String String String))
+  (constructor newline : String)
+  (rewrite id-l (cat empty ?s) ?s)
+  (rewrite id-r (cat ?s empty) ?s))
+
+(check-theory StringLib)
+
+
+(theory Compiler
+  (import StringLib)
+
+  ;; ── C AST ──
+  (sort CExpr)
+  (sort CStmt)
+
+  ;; Expressions
+  (constructor c-var   : (-> String CExpr))              ;; variable
+  (constructor c-int   : (-> String CExpr))              ;; integer literal
+  (constructor c-binop : (-> String CExpr CExpr CExpr))  ;; a op b
+  (constructor c-call  : (-> String CExpr CExpr))        ;; f(arg)
+  (constructor c-paren : (-> CExpr CExpr))               ;; (expr)
+
+  ;; Statements
+  (constructor c-return  : (-> CExpr CStmt))                  ;; return e;
+  (constructor c-if-else : (-> CExpr CStmt CStmt CStmt))      ;; if (c) { t } else { e }
+
+  ;; Translation wrappers (AST → String)
+  (constructor expr-str : (-> CExpr String))
+  (constructor stmt-str : (-> CStmt String))
+
+  ;; Top-level function (produces String directly)
+  (constructor c-func : (-> String String String CStmt String))
+
+  ;; ══════════════════════════════════════════════
+  ;; COMPILATION RULES  (the kernel IS the compiler)
+  ;; ══════════════════════════════════════════════
+
+  ;; ── Expressions → String ──
+  (rewrite tr-var   (expr-str (c-var ?x)) ?x)
+  (rewrite tr-int   (expr-str (c-int ?n)) ?n)
+  (rewrite tr-binop (expr-str (c-binop ?op ?a ?b))
+    (cat (expr-str ?a) (cat " " (cat ?op (cat " " (expr-str ?b))))))
+  (rewrite tr-call  (expr-str (c-call ?f ?arg))
+    (cat ?f (cat "(" (cat (expr-str ?arg) ")"))))
+  (rewrite tr-paren (expr-str (c-paren ?e))
+    (cat "(" (cat (expr-str ?e) ")")))
+
+  ;; ── Statements → String ──
+  (rewrite tr-return (stmt-str (c-return ?e))
+    (cat "return " (cat (expr-str ?e) ";")))
+
+  (rewrite tr-if (stmt-str (c-if-else ?cond ?then ?else))
+    (cat "if (" (cat (expr-str ?cond) (cat ") {" (cat newline
+      (cat "        " (cat (stmt-str ?then) (cat newline
+        (cat "    } else {" (cat newline
+          (cat "        " (cat (stmt-str ?else) (cat newline
+            "    }")))))))))))))
+
+  ;; ── Function definition → String ──
+  (rewrite tr-func (c-func ?ret ?name ?params ?body)
+    (cat ?ret (cat " " (cat ?name (cat "(" (cat ?params
+      (cat ") {" (cat newline
+        (cat "    " (cat (stmt-str ?body) (cat newline "}"))))))))))))
+
+(check-theory Compiler)
+
+
+;;; ════════════════════════════════════════════════════════════
+;;; ACT III — EMIT THE COMPILED FACTORIAL
+;;;
+;;; The SAME factorial algorithm from Act I, expressed as a C AST.
+;;; The kernel normalizes the AST through compilation rewrite rules,
+;;; producing a rope tree.  (emit ...) flattens it to C source.
+;;; ════════════════════════════════════════════════════════════
+
+(emit :theory Compiler
+  (c-func "int" "factorial" "int n"
+    (c-if-else
+      (c-binop "==" (c-var "n") (c-int "0"))
+      (c-return (c-int "1"))
+      (c-return
+        (c-binop "*"
+          (c-var "n")
+          (c-call "factorial"
+            (c-paren (c-binop "-" (c-var "n") (c-int "1")))))))))

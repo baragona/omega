@@ -287,3 +287,22 @@ fn codegen_demo_example() {
     assert!(results.iter().any(|r| r.contains("#include <stdio.h>")));
     assert!(results.iter().any(|r| r.contains("no empty")));
 }
+
+#[test]
+fn compile_factorial_example() {
+    let results = check_example("examples/compile-factorial.omega");
+    // Act I: Verified semantics
+    assert!(results.iter().any(|r| r.contains("Theory PeanoFact: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof fact-0: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof fact-1: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof fact-2: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof fact-3: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof fact-4: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof fact-5: VALID")));
+    // Act II: Compiler backend
+    assert!(results.iter().any(|r| r.contains("Theory Compiler: registered OK")));
+    // Act III: Emitted C code
+    assert!(results.iter().any(|r| r.contains("int factorial(int n)")));
+    assert!(results.iter().any(|r| r.contains("return 1;")));
+    assert!(results.iter().any(|r| r.contains("n * factorial((n - 1))")));
+}
