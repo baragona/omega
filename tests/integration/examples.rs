@@ -156,6 +156,31 @@ fn monoid_example() {
 }
 
 #[test]
+fn sequent_calc_example() {
+    let results = check_example("examples/sequent-calc.omega");
+    assert!(results.iter().any(|r| r.contains("Theory SequentCalc: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof identity: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof impl-refl: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof conj-comm: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof disj-comm: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof weakening-thm: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof modus-ponens: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof extract-direct: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof extract-via-cut: VALID")));
+}
+
+#[test]
+fn hoare_logic_example() {
+    let results = check_example("examples/hoare-logic.omega");
+    assert!(results.iter().any(|r| r.contains("Theory HoareLogic: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof skip-rule: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof assign-const: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof increment: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof seq-assign: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof conditional: VALID")));
+}
+
+#[test]
 fn option_lib() {
     let results = check_example("libs/option.omega");
     assert!(results.iter().any(|r| r.contains("Theory Option: registered OK")));

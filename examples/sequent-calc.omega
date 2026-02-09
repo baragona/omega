@@ -1,0 +1,230 @@
+;;; Sequent Calculus — Structural Proof Theory
+;;;
+;;; Unlike natural deduction (which decomposes the goal),
+;;; sequent calculus has BOTH left rules (decompose assumptions)
+;;; and right rules (decompose the goal), plus explicit
+;;; structural rules (weakening, exchange, contraction).
+;;;
+;;; The judgment (seq G A) represents the sequent G ⊢ A
+;;; where G is an explicit context (list of propositions).
+;;;
+;;; Proved here:
+;;;   1. A ⊢ A                             (identity / init)
+;;;   2. ⊢ A → A                           (implication reflexivity)
+;;;   3. A ∧ B ⊢ B ∧ A                     (conjunction commutativity)
+;;;   4. A ∨ B ⊢ B ∨ A                     (disjunction commutativity)
+;;;   5. ⊢ A → (B → A)                     (weakening as theorem)
+;;;   6. A → B, A ⊢ B                      (modus ponens)
+;;;   7. P ∧ Q ⊢ Q ∨ R  (direct)          (left+right interaction)
+;;;   8. P ∧ Q ⊢ Q ∨ R  (via cut on Q)    (cut rule)
+
+(theory SequentCalc
+  (sort Prop)
+  (sort Ctx)
+
+  ;; ── Propositions ──
+  (constructor P    : Prop)
+  (constructor Q    : Prop)
+  (constructor R    : Prop)
+  (constructor conj : (-> Prop Prop Prop))   ;; A ∧ B
+  (constructor disj : (-> Prop Prop Prop))   ;; A ∨ B
+  (constructor impl : (-> Prop Prop Prop))   ;; A → B
+
+  ;; ── Explicit context (list of propositions) ──
+  (constructor emp : Ctx)
+  (constructor ext : (-> Ctx Prop Ctx))
+
+  ;; ── Sequent judgment: G ⊢ A ──
+  (judgment (seq ?G ?A) :where G : Ctx A : Prop)
+
+  ;; ════════════════════════════════════════
+  ;; Structural Rules
+  ;; ════════════════════════════════════════
+
+  ;; Identity: the formula at the head of the context is proved
+  (rule init
+    :premises ()
+    :conclusion (seq (ext ?G ?A) ?A))
+
+  ;; Weakening: add an unused formula to the context
+  (rule weaken
+    :premises ((seq ?G ?A))
+    :conclusion (seq (ext ?G ?B) ?A))
+
+  ;; Exchange: swap the top two context entries
+  (rule exchange
+    :premises ((seq (ext (ext ?G ?B) ?A) ?C))
+    :conclusion (seq (ext (ext ?G ?A) ?B) ?C))
+
+  ;; Contraction: merge a duplicate at the head
+  (rule contraction
+    :premises ((seq (ext (ext ?G ?A) ?A) ?C))
+    :conclusion (seq (ext ?G ?A) ?C))
+
+  ;; Cut: if G ⊢ A and G,A ⊢ B then G ⊢ B
+  (rule cut
+    :premises ((seq ?G ?A) (seq (ext ?G ?A) ?B))
+    :conclusion (seq ?G ?B))
+
+  ;; ════════════════════════════════════════
+  ;; Right Rules (decompose the succedent)
+  ;; ════════════════════════════════════════
+
+  ;; Right ∧: prove both conjuncts
+  (rule right-conj
+    :premises ((seq ?G ?A) (seq ?G ?B))
+    :conclusion (seq ?G (conj ?A ?B)))
+
+  ;; Right ∨ (left): prove the left disjunct
+  (rule right-disj-l
+    :premises ((seq ?G ?A))
+    :conclusion (seq ?G (disj ?A ?B)))
+
+  ;; Right ∨ (right): prove the right disjunct
+  (rule right-disj-r
+    :premises ((seq ?G ?B))
+    :conclusion (seq ?G (disj ?A ?B)))
+
+  ;; Right →: assume antecedent, prove consequent
+  (rule right-impl
+    :premises ((seq (ext ?G ?A) ?B))
+    :conclusion (seq ?G (impl ?A ?B)))
+
+  ;; ════════════════════════════════════════
+  ;; Left Rules (decompose a context formula)
+  ;; ════════════════════════════════════════
+
+  ;; Left ∧ (project left): replace A∧B with A
+  (rule left-conj-1
+    :premises ((seq (ext ?G ?A) ?C))
+    :conclusion (seq (ext ?G (conj ?A ?B)) ?C))
+
+  ;; Left ∧ (project right): replace A∧B with B
+  (rule left-conj-2
+    :premises ((seq (ext ?G ?B) ?C))
+    :conclusion (seq (ext ?G (conj ?A ?B)) ?C))
+
+  ;; Left ∨: case split — prove goal from each disjunct
+  (rule left-disj
+    :premises ((seq (ext ?G ?A) ?C) (seq (ext ?G ?B) ?C))
+    :conclusion (seq (ext ?G (disj ?A ?B)) ?C))
+
+  ;; Left →: to use A→B, produce A from G, then use B
+  (rule left-impl
+    :premises ((seq ?G ?A) (seq (ext ?G ?B) ?C))
+    :conclusion (seq (ext ?G (impl ?A ?B)) ?C)))
+
+(check-theory SequentCalc)
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 1:  A ⊢ A   (identity)
+;; ════════════════════════════════════════════════════════════
+;;
+;; The init rule directly: the head of the context is proved.
+
+(proof identity
+  :theory SequentCalc
+  :goal (seq (ext emp ?A) ?A)
+  :derivation (init))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 2:  ⊢ A → A   (implication reflexivity)
+;; ════════════════════════════════════════════════════════════
+;;
+;; Right-→ moves A into the context, then init proves it.
+
+(proof impl-refl
+  :theory SequentCalc
+  :goal (seq emp (impl ?A ?A))
+  :derivation (right-impl (init)))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 3:  A ∧ B ⊢ B ∧ A   (conjunction commutativity)
+;; ════════════════════════════════════════════════════════════
+;;
+;; Use left rules to extract each conjunct, then right-∧
+;; to reassemble them in swapped order.
+
+(proof conj-comm
+  :theory SequentCalc
+  :goal (seq (ext emp (conj ?A ?B)) (conj ?B ?A))
+  :derivation
+    (right-conj
+      (left-conj-2 (init))
+      (left-conj-1 (init))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 4:  A ∨ B ⊢ B ∨ A   (disjunction commutativity)
+;; ════════════════════════════════════════════════════════════
+;;
+;; Left-∨ case-splits: in each branch, inject into the
+;; opposite side of the disjunction.
+
+(proof disj-comm
+  :theory SequentCalc
+  :goal (seq (ext emp (disj ?A ?B)) (disj ?B ?A))
+  :derivation
+    (left-disj
+      (right-disj-r (init))
+      (right-disj-l (init))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 5:  ⊢ A → (B → A)   (weakening as a theorem)
+;; ════════════════════════════════════════════════════════════
+;;
+;; Two right-→ introductions push A and B into context.
+;; Weakening discards B, then init finds A.
+
+(proof weakening-thm
+  :theory SequentCalc
+  :goal (seq emp (impl ?A (impl ?B ?A)))
+  :derivation (right-impl (right-impl (weaken (init)))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 6:  A → B, A ⊢ B   (modus ponens as sequent)
+;; ════════════════════════════════════════════════════════════
+;;
+;; Exchange brings A→B to the head.  Left-→ decomposes it:
+;;   (1) prove A from context (init),
+;;   (2) use B at the head to prove B (init).
+
+(proof modus-ponens
+  :theory SequentCalc
+  :goal (seq (ext (ext emp (impl ?A ?B)) ?A) ?B)
+  :derivation
+    (exchange (left-impl (init) (init))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 7:  P ∧ Q ⊢ Q ∨ R   (direct proof)
+;; ════════════════════════════════════════════════════════════
+;;
+;; Extract Q from P∧Q (left-∧₂), then inject into Q∨R (right-∨).
+
+(proof extract-direct
+  :theory SequentCalc
+  :goal (seq (ext emp (conj P Q)) (disj Q R))
+  :derivation (right-disj-l (left-conj-2 (init))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 8:  P ∧ Q ⊢ Q ∨ R   (via cut on Q)
+;; ════════════════════════════════════════════════════════════
+;;
+;; First establish Q (cut formula), then use it.
+;; The cut rule composes two sequent proofs through an
+;; intermediate formula — the heart of the Hauptsatz.
+
+(proof extract-via-cut
+  :theory SequentCalc
+  :goal (seq (ext emp (conj P Q)) (disj Q R))
+  :derivation
+    (cut
+      (left-conj-2 (init))
+      (right-disj-l (init))))

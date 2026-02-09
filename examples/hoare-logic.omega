@@ -1,0 +1,244 @@
+;;; Hoare Logic — Program Verification
+;;;
+;;; Hoare triples {P} c {Q} assert that if precondition P holds
+;;; before executing command c, then postcondition Q holds after.
+;;;
+;;; Commands: skip, x := e, y := e, c1; c2, if B then c1 else c2
+;;; Assertions: tt, eq(e1,e2), and(P,Q), or(P,Q), not(P)
+;;;
+;;; The assignment rule {Q[e/x]} x := e {Q} requires substitution
+;;; into assertions.  We encode specific instances as axioms:
+;;;   assign-x:  {e = v} x := e {x = v}
+;;;   frame:     {y = v} x := e {y = v}   (x doesn't affect y)
+;;;
+;;; Proved here:
+;;;   1. {P} skip {P}                           (skip rule, schematic)
+;;;   2. {tt} x := 1 {x = 1}                   (assignment + consequence)
+;;;   3. {x = 1} x := x+1 {x = 2}             (arithmetic reasoning)
+;;;   4. {tt} x:=1; y:=2 {x=1 ∧ y=2}          (sequence + frame + conj)
+;;;   5. {tt} if x=0 then y:=1 else y:=2 {y=1 ∨ y=2}  (conditional)
+
+(theory HoareLogic
+  (sort Assert)
+  (sort Cmd)
+  (sort Aexp)
+
+  ;; ── Arithmetic expressions ──
+  (constructor zero  : Aexp)
+  (constructor one   : Aexp)
+  (constructor two   : Aexp)
+  (constructor var-x : Aexp)
+  (constructor var-y : Aexp)
+  (constructor plus  : (-> Aexp Aexp Aexp))
+
+  ;; ── Assertions ──
+  (constructor tt    : Assert)                       ;; true
+  (constructor eq-a  : (-> Aexp Aexp Assert))        ;; e1 = e2
+  (constructor and-a : (-> Assert Assert Assert))    ;; P ∧ Q
+  (constructor or-a  : (-> Assert Assert Assert))    ;; P ∨ Q
+  (constructor not-a : (-> Assert Assert))           ;; ¬P
+
+  ;; ── Commands ──
+  (constructor skip     : Cmd)
+  (constructor assign-x : (-> Aexp Cmd))              ;; x := e
+  (constructor assign-y : (-> Aexp Cmd))              ;; y := e
+  (constructor seq-c    : (-> Cmd Cmd Cmd))            ;; c1 ; c2
+  (constructor if-c     : (-> Assert Cmd Cmd Cmd))     ;; if B then c1 else c2
+
+  ;; ── Judgments ──
+  (judgment (hoare ?P ?c ?Q) :where P : Assert c : Cmd Q : Assert)
+  (judgment (entails ?P ?Q) :where P : Assert Q : Assert)
+
+  ;; ══════════════════════════════════════
+  ;; Core Hoare Rules
+  ;; ══════════════════════════════════════
+
+  ;; Skip: {P} skip {P}
+  (rule h-skip
+    :premises ()
+    :conclusion (hoare ?P skip ?P))
+
+  ;; Sequence: {P} c1 {R}, {R} c2 {Q}  ⊢  {P} c1;c2 {Q}
+  (rule h-seq
+    :premises ((hoare ?P ?c1 ?R) (hoare ?R ?c2 ?Q))
+    :conclusion (hoare ?P (seq-c ?c1 ?c2) ?Q))
+
+  ;; Conditional: {P∧B} c1 {Q}, {P∧¬B} c2 {Q}  ⊢  {P} if B c1 c2 {Q}
+  (rule h-if
+    :premises ((hoare (and-a ?P ?B) ?c1 ?Q)
+               (hoare (and-a ?P (not-a ?B)) ?c2 ?Q))
+    :conclusion (hoare ?P (if-c ?B ?c1 ?c2) ?Q))
+
+  ;; Consequence: strengthen pre, weaken post
+  (rule h-conseq
+    :premises ((entails ?P ?P2) (hoare ?P2 ?c ?Q2) (entails ?Q2 ?Q))
+    :conclusion (hoare ?P ?c ?Q))
+
+  ;; Conjunction: derive combined postcondition
+  (rule h-conj
+    :premises ((hoare ?P ?c ?Q1) (hoare ?P ?c ?Q2))
+    :conclusion (hoare ?P ?c (and-a ?Q1 ?Q2)))
+
+  ;; ══════════════════════════════════════
+  ;; Assignment Axioms
+  ;; ══════════════════════════════════════
+  ;;
+  ;; Instances of the backward assignment rule {Q[e/x]} x := e {Q}
+  ;; for specific postcondition forms.
+
+  ;; When Q = (eq-a var-x v):  Q[e/x] = (eq-a e v)
+  (rule assign-x
+    :premises ()
+    :conclusion (hoare (eq-a ?e ?v) (assign-x ?e) (eq-a var-x ?v)))
+
+  ;; When Q mentions only y:  x := e doesn't affect it
+  (rule assign-x-frame-y
+    :premises ()
+    :conclusion (hoare (eq-a var-y ?v) (assign-x ?e) (eq-a var-y ?v)))
+
+  ;; Symmetric for y
+  (rule assign-y
+    :premises ()
+    :conclusion (hoare (eq-a ?e ?v) (assign-y ?e) (eq-a var-y ?v)))
+
+  (rule assign-y-frame-x
+    :premises ()
+    :conclusion (hoare (eq-a var-x ?v) (assign-y ?e) (eq-a var-x ?v)))
+
+  ;; ══════════════════════════════════════
+  ;; Entailment Rules
+  ;; ══════════════════════════════════════
+
+  ;; Reflexivity
+  (rule ent-refl
+    :premises ()
+    :conclusion (entails ?P ?P))
+
+  ;; Transitivity
+  (rule ent-trans
+    :premises ((entails ?P ?Q) (entails ?Q ?R))
+    :conclusion (entails ?P ?R))
+
+  ;; True is entailed by anything
+  (rule ent-tt
+    :premises ()
+    :conclusion (entails ?P tt))
+
+  ;; Equality is reflexive: tt ⊢ e = e
+  (rule ent-eq-refl
+    :premises ()
+    :conclusion (entails tt (eq-a ?e ?e)))
+
+  ;; Conjunction
+  (rule ent-and-intro
+    :premises ((entails ?P ?A) (entails ?P ?B))
+    :conclusion (entails ?P (and-a ?A ?B)))
+
+  (rule ent-and-elim-l
+    :premises ()
+    :conclusion (entails (and-a ?A ?B) ?A))
+
+  (rule ent-and-elim-r
+    :premises ()
+    :conclusion (entails (and-a ?A ?B) ?B))
+
+  ;; Disjunction
+  (rule ent-or-intro-l
+    :premises ((entails ?P ?A))
+    :conclusion (entails ?P (or-a ?A ?B)))
+
+  (rule ent-or-intro-r
+    :premises ((entails ?P ?B))
+    :conclusion (entails ?P (or-a ?A ?B)))
+
+  ;; Arithmetic fact: x = 1 entails x+1 = 2
+  ;; (In a real system, an SMT solver would handle this.)
+  (rule arith-incr
+    :premises ()
+    :conclusion (entails (eq-a var-x one) (eq-a (plus var-x one) two))))
+
+(check-theory HoareLogic)
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 1:  {P} skip {P}   (skip rule, schematic)
+;; ════════════════════════════════════════════════════════════
+
+(proof skip-rule
+  :theory HoareLogic
+  :goal (hoare ?P skip ?P)
+  :derivation (h-skip))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 2:  {true} x := 1 {x = 1}   (basic assignment)
+;; ════════════════════════════════════════════════════════════
+;;
+;; By backward assignment: {1 = 1} x := 1 {x = 1}.
+;; Then consequence: true entails 1 = 1 (reflexivity of equality).
+
+(proof assign-const
+  :theory HoareLogic
+  :goal (hoare tt (assign-x one) (eq-a var-x one))
+  :derivation
+    (h-conseq
+      (ent-eq-refl)
+      (assign-x)
+      (ent-refl)))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 3:  {x = 1} x := x+1 {x = 2}   (arithmetic)
+;; ════════════════════════════════════════════════════════════
+;;
+;; By backward assignment: {x+1 = 2} x := x+1 {x = 2}.
+;; Then consequence: x=1 entails x+1=2 (arithmetic fact).
+
+(proof increment
+  :theory HoareLogic
+  :goal (hoare (eq-a var-x one) (assign-x (plus var-x one)) (eq-a var-x two))
+  :derivation
+    (h-conseq
+      (arith-incr)
+      (assign-x)
+      (ent-refl)))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 4:  {true} x:=1; y:=2 {x=1 ∧ y=2}
+;;             (sequential assignment with frame reasoning)
+;; ════════════════════════════════════════════════════════════
+;;
+;; After x:=1, we have {x=1}.  Then y:=2 preserves x=1
+;; (frame rule) and establishes y=2 (assignment).
+;; Conjunction combines both postconditions.
+
+(proof seq-assign
+  :theory HoareLogic
+  :goal (hoare tt (seq-c (assign-x one) (assign-y two)) (and-a (eq-a var-x one) (eq-a var-y two)))
+  :derivation
+    (h-seq
+      (h-conseq (ent-eq-refl) (assign-x) (ent-refl))
+      (h-conj
+        (assign-y-frame-x)
+        (h-conseq (ent-trans (ent-tt) (ent-eq-refl)) (assign-y) (ent-refl)))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 5:  {true} if x=0 then y:=1 else y:=2 {y=1 ∨ y=2}
+;;             (conditional with disjunctive postcondition)
+;; ════════════════════════════════════════════════════════════
+;;
+;; Then-branch: {tt ∧ x=0} y:=1 {y=1 ∨ y=2}
+;;   By assignment {1=1} y:=1 {y=1}, then weaken post to y=1 ∨ y=2.
+;; Else-branch: {tt ∧ ¬(x=0)} y:=2 {y=1 ∨ y=2}
+;;   By assignment {2=2} y:=2 {y=2}, then weaken post to y=1 ∨ y=2.
+
+(proof conditional
+  :theory HoareLogic
+  :goal (hoare tt (if-c (eq-a var-x zero) (assign-y one) (assign-y two))
+                  (or-a (eq-a var-y one) (eq-a var-y two)))
+  :derivation
+    (h-if
+      (h-conseq (ent-trans (ent-tt) (ent-eq-refl)) (assign-y) (ent-or-intro-l (ent-refl)))
+      (h-conseq (ent-trans (ent-tt) (ent-eq-refl)) (assign-y) (ent-or-intro-r (ent-refl)))))
