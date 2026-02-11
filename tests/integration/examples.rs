@@ -384,7 +384,7 @@ fn w_types_example() {
 #[test]
 fn hott_example() {
     let results = check_example("examples/hott.omega");
-    assert!(results.iter().any(|r| r.contains("Theory HoTTBase: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Theory HoTT: registered OK")));
     assert!(results.iter().any(|r| r.contains("Proof refl-z: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof inv-refl-eq: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof concat-refl-refl: VALID")));
@@ -395,6 +395,8 @@ fn hott_example() {
     assert!(results.iter().any(|r| r.contains("Proof left-inverse: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof right-inverse: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof inv-involution: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof tfam-refl-eq: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof transport-concat: VALID")));
 }
 
 #[test]
@@ -486,4 +488,29 @@ fn ac_demo_example() {
     assert!(results.iter().any(|r| r.contains("Proof aci-idem: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof aci-comm-idem: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof aci-absorb: VALID")));
+}
+
+#[test]
+fn calc_example() {
+    let results = check_example("examples/calc.omega");
+    assert!(results.iter().any(|r| r.contains("Theory Calc: registered OK")));
+    // Arithmetic proofs
+    assert!(results.iter().any(|r| r.contains("Proof add-2-3: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof mul-2-3: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof sub-5-3: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof sub-3-5: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof pow-2-3: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof fact-4: VALID")));
+    // Comparison proofs
+    assert!(results.iter().any(|r| r.contains("Proof lt-true: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof lt-false: VALID")));
+    // Expression evaluation proofs
+    assert!(results.iter().any(|r| r.contains("Proof eval-add: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof eval-mul: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof eval-pow: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof eval-fact: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof eval-if-truthy: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof eval-if-falsy: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof eval-min: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof eval-max: VALID")));
 }
