@@ -1,0 +1,287 @@
+;;; Quotient Types: Integers from Nothing
+;;;
+;;; The integers DON'T EXIST as primitives.
+;;; They are CONSTRUCTED as a quotient:
+;;;
+;;;   ℤ = (ℕ × ℕ) / ~
+;;;
+;;; where (a,b) represents the integer a - b, and
+;;;
+;;;   (a,b) ~ (c,d)  iff  a + d = b + c
+;;;
+;;; So (3,1) and (5,3) and (2,0) all represent 2.
+;;; And (0,2) and (1,3) and (3,5) all represent -2.
+;;;
+;;; The QUOTIENT ensures that operations are well-defined:
+;;; if you add two integers using DIFFERENT representatives,
+;;; you must get equivalent results.
+;;;
+;;; Proved here (10 proofs):
+;;;
+;;;   Equivalence:
+;;;    1.  (0,0) ~ (1,1)                         (both are zero)
+;;;    2.  (0,0) ~ (2,2)                         (another zero)
+;;;    3.  (2,0) ~ (3,1)                         (both are +2)
+;;;    4.  (0,2) ~ (1,3)                         (both are -2)
+;;;
+;;;   Arithmetic computes:
+;;;    5.  1 + 1 = 2                              (addition)
+;;;    6.  neg(2) = (0,2)                         (negation)
+;;;    7.  1 + 2 = 2 + 1                          (commutativity)
+;;;
+;;;   Well-definedness (THE FLEX):
+;;;    8.  (2,0)+(1,0) ~ (3,1)+(2,1)             (add is well-defined)
+;;;    9.  neg(2,0) ~ neg(3,1)                    (neg is well-defined)
+;;;   10.  2 + neg(1) ~ 1                         (subtraction works)
+
+(theory QuotientInt
+
+  ;; ══════════════════════════════════════
+  ;; NATURAL NUMBERS
+  ;; ══════════════════════════════════════
+
+  (sort Nat)
+  (constructor z : Nat)
+  (constructor s : (-> Nat Nat))
+  (constructor add : (-> Nat Nat Nat))
+
+  (rewrite add-z (add z ?n) ?n)
+  (rewrite add-s (add (s ?m) ?n) (s (add ?m ?n)))
+
+  ;; ══════════════════════════════════════
+  ;; INTEGER REPRESENTATIVES
+  ;; ══════════════════════════════════════
+  ;; An integer is a pair (pos, neg) representing pos - neg.
+  ;;   (3, 1) = 2,   (0, 2) = -2,   (5, 5) = 0
+
+  (sort IntRep)
+  (constructor mk-int : (-> Nat Nat IntRep))
+
+  ;; ── Integer operations ──
+
+  ;; Addition: (a,b) + (c,d) = (a+c, b+d)
+  (constructor int-add : (-> IntRep IntRep IntRep))
+  (rewrite int-add-def (int-add (mk-int ?a ?b) (mk-int ?c ?d))
+    (mk-int (add ?a ?c) (add ?b ?d)))
+
+  ;; Negation: -(a,b) = (b,a)
+  (constructor int-neg : (-> IntRep IntRep))
+  (rewrite int-neg-def (int-neg (mk-int ?a ?b)) (mk-int ?b ?a))
+
+  ;; ── Named integers for readability ──
+
+  (constructor int-zero : IntRep)
+  (rewrite def-zero int-zero (mk-int z z))
+
+  (constructor int-one : IntRep)
+  (rewrite def-one int-one (mk-int (s z) z))
+
+  (constructor int-two : IntRep)
+  (rewrite def-two int-two (mk-int (s (s z)) z))
+
+  (constructor int-neg-one : IntRep)
+  (rewrite def-neg-one int-neg-one (mk-int z (s z)))
+
+  ;; ══════════════════════════════════════
+  ;; THE QUOTIENT RELATION
+  ;; ══════════════════════════════════════
+  ;; (a,b) ~ (c,d) iff a + d = b + c
+  ;;
+  ;; This is the equivalence relation that makes
+  ;; different representatives of the same integer equal.
+  ;; The proof obligation: show that add(a,d) = add(b,c).
+
+  (sort NatEq)
+  (constructor nat-eq : (-> Nat Nat NatEq))
+  (judgment (is-nat-eq ?e) :where e : NatEq)
+  (rule nat-eq-refl :conclusion (is-nat-eq (nat-eq ?a ?a)))
+
+  (sort IntEquiv)
+  (constructor int-equiv : (-> IntRep IntRep IntEquiv))
+  (judgment (is-equiv ?e) :where e : IntEquiv)
+
+  ;; To prove (a,b) ~ (c,d), show add(a,d) = add(b,c)
+  (rule equiv-proof
+    :premises ((is-nat-eq (nat-eq (add ?a ?d) (add ?b ?c))))
+    :conclusion (is-equiv (int-equiv (mk-int ?a ?b) (mk-int ?c ?d))))
+
+  ;; ── IntRep equality (for computational proofs) ──
+  (sort IntRepEq)
+  (constructor int-rep-eq : (-> IntRep IntRep IntRepEq))
+  (judgment (is-int-eq ?e) :where e : IntRepEq)
+  (rule int-eq-refl :conclusion (is-int-eq (int-rep-eq ?a ?a))))
+
+(check-theory QuotientInt)
+
+
+;; ════════════════════════════════════════════════════════════
+;;  EQUIVALENCE: Many representatives, one integer
+;; ════════════════════════════════════════════════════════════
+
+;; ─── Proof 1: (0,0) ~ (1,1) — both are zero ───
+;; add(0, 1) = add(0, 1)  →  1 = 1  ✓
+;; Two different pairs, same integer.
+
+(proof zero-equiv
+  :theory QuotientInt
+  :goal (is-equiv (int-equiv (mk-int z z) (mk-int (s z) (s z))))
+  :derivation (equiv-proof (nat-eq-refl)))
+
+
+;; ─── Proof 2: (0,0) ~ (2,2) — another zero ───
+;; add(0, 2) = add(0, 2)  →  2 = 2  ✓
+
+(proof zero-equiv-2
+  :theory QuotientInt
+  :goal (is-equiv (int-equiv (mk-int z z) (mk-int (s (s z)) (s (s z)))))
+  :derivation (equiv-proof (nat-eq-refl)))
+
+
+;; ─── Proof 3: (2,0) ~ (3,1) — both are +2 ───
+;; add(2, 1) = add(0, 3)  →  3 = 3  ✓
+;; The "standard" rep (2,0) and the "shifted" rep (3,1).
+
+(proof two-equiv
+  :theory QuotientInt
+  :goal (is-equiv (int-equiv (mk-int (s (s z)) z) (mk-int (s (s (s z))) (s z))))
+  :derivation (equiv-proof (nat-eq-refl)))
+
+
+;; ─── Proof 4: (0,2) ~ (1,3) — both are -2 ───
+;; add(0, 3) = add(2, 1)  →  3 = 3  ✓
+;; Negative integers work the same way.
+
+(proof neg-two-equiv
+  :theory QuotientInt
+  :goal (is-equiv (int-equiv (mk-int z (s (s z))) (mk-int (s z) (s (s (s z))))))
+  :derivation (equiv-proof (nat-eq-refl)))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  ARITHMETIC COMPUTES
+;; ════════════════════════════════════════════════════════════
+
+;; ─── Proof 5: 1 + 1 = 2 ───
+;; int-add(mk-int(1,0), mk-int(1,0))
+;;   → mk-int(add(1,1), add(0,0))
+;;   → mk-int(2, 0)
+;;   = int-two  ✓
+
+(proof add-one-one
+  :theory QuotientInt
+  :goal (is-int-eq (int-rep-eq (int-add int-one int-one) int-two))
+  :derivation (int-eq-refl))
+
+
+;; ─── Proof 6: neg(2,0) = (0,2) ───
+;; int-neg(mk-int(2,0)) → mk-int(0,2)
+;; Negation swaps the components.
+
+(proof neg-two
+  :theory QuotientInt
+  :goal (is-int-eq (int-rep-eq (int-neg int-two) (mk-int z (s (s z)))))
+  :derivation (int-eq-refl))
+
+
+;; ─── Proof 7: 1 + 2 = 2 + 1 (commutativity) ───
+;; int-add(1,2) → mk-int(add(1,2), add(0,0)) → mk-int(3, 0)
+;; int-add(2,1) → mk-int(add(2,1), add(0,0)) → mk-int(3, 0)
+;; Both normalize to the same representative.
+
+(proof add-commutes
+  :theory QuotientInt
+  :goal (is-int-eq (int-rep-eq (int-add int-one int-two) (int-add int-two int-one)))
+  :derivation (int-eq-refl))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  WELL-DEFINEDNESS: The quotient actually works
+;; ════════════════════════════════════════════════════════════
+;;
+;; This is the HARD part of quotient types.
+;; Operations must respect the equivalence relation:
+;;   if x ~ x' and y ~ y', then f(x,y) ~ f(x',y')
+;;
+;; We prove this on CONCRETE representatives.
+;; The rewrite engine normalizes both sides, then
+;; the cross-sum check verifies equivalence.
+
+;; ─── Proof 8: Addition is well-defined ───
+;; Take integer 2 as (2,0) and (3,1).
+;; Take integer 1 as (1,0) and (2,1).
+;; Sum via first reps:  (2,0) + (1,0) = (3,0)
+;; Sum via second reps: (3,1) + (2,1) = (5,2)
+;; Claim: (3,0) ~ (5,2).
+;;   add(3,2) = add(0,5) → 5 = 5  ✓
+;;
+;; Different representatives, same result.
+;; Addition doesn't depend on which pair you pick.
+
+(proof add-well-defined
+  :theory QuotientInt
+  :goal (is-equiv (int-equiv
+    (int-add (mk-int (s (s z)) z) (mk-int (s z) z))
+    (int-add (mk-int (s (s (s z))) (s z)) (mk-int (s (s z)) (s z)))))
+  :derivation (equiv-proof (nat-eq-refl)))
+
+
+;; ─── Proof 9: Negation is well-defined ───
+;; Take integer 2 as (2,0) and (3,1).
+;; neg(2,0) = (0,2)
+;; neg(3,1) = (1,3)
+;; Claim: (0,2) ~ (1,3).
+;;   add(0,3) = add(2,1) → 3 = 3  ✓
+
+(proof neg-well-defined
+  :theory QuotientInt
+  :goal (is-equiv (int-equiv
+    (int-neg (mk-int (s (s z)) z))
+    (int-neg (mk-int (s (s (s z))) (s z)))))
+  :derivation (equiv-proof (nat-eq-refl)))
+
+
+;; ─── Proof 10: Subtraction works: 2 + (-1) ~ 1 ───
+;; 2 + neg(1) = (2,0) + (0,1) = (2,1)
+;; The standard rep of 1 is (1,0).
+;; Claim: (2,1) ~ (1,0).
+;;   add(2,0) = add(1,1) → 2 = 2  ✓
+;;
+;; Subtraction isn't a primitive — it's addition plus negation.
+;; The quotient structure makes it work automatically.
+
+(proof subtract-works
+  :theory QuotientInt
+  :goal (is-equiv (int-equiv
+    (int-add int-two (int-neg int-one))
+    int-one))
+  :derivation (equiv-proof (nat-eq-refl)))
+
+
+;; ════════════════════════════════════════════════════════════
+;; WHAT QUOTIENT TYPES REVEAL
+;; ════════════════════════════════════════════════════════════
+;;
+;; The integers are not given — they are CONSTRUCTED:
+;;
+;;   Representative     Integer     Equivalence class
+;;   ──────────────────────────────────────────────
+;;   (0,0), (1,1), ...     0       { (n,n) | n ∈ ℕ }
+;;   (1,0), (2,1), ...    +1       { (n+1,n) | n ∈ ℕ }
+;;   (0,1), (1,2), ...    -1       { (n,n+1) | n ∈ ℕ }
+;;   (2,0), (3,1), ...    +2       { (n+2,n) | n ∈ ℕ }
+;;
+;; The quotient relation (a,b) ~ (c,d) iff a+d = b+c
+;; collapses each infinite equivalence class to one integer.
+;;
+;; Well-definedness (proofs 8-10) is the CONTRACT:
+;;   "No matter which representative you pick,
+;;    the operation gives the same equivalence class."
+;;
+;; This pattern generalizes:
+;;   ℚ = (ℤ × ℤ) / ~   where (a,b) ~ (c,d) iff ad = bc
+;;   ℝ = Cauchy sequences / ~   where ~ is co-convergence
+;;   Modular arithmetic = ℤ / nℤ
+;;
+;; Every quotient is a universe where distinctions that
+;; don't matter are forgotten.
+;; ════════════════════════════════════════════════════════════

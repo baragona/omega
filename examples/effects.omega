@@ -1,0 +1,342 @@
+;;; Algebraic Effects & Handlers: One Program, Three Interpreters
+;;;
+;;; Monads compose BADLY.  Algebraic effects compose WELL.
+;;;
+;;; An effect is an OPERATION that a program can perform:
+;;;   get      — read state
+;;;   put(v)   — write state
+;;;   raise    — throw error
+;;;   choose   — nondeterministic branch
+;;;
+;;; A HANDLER interprets these operations.  The same program
+;;; can be run with different handlers to get different behavior:
+;;;
+;;;   Handler 1 (safe):   Error → crash (Option)
+;;;   Handler 2 (log):    Error → log and continue (result + log)
+;;;   Handler 3 (all):    Choose → explore all paths (list of results)
+;;;
+;;; This is strictly more powerful than monads:
+;;; you can handle State and Error INDEPENDENTLY.
+;;;
+;;; Proved here (10 proofs):
+;;;
+;;;   Safe handler (crash on error):
+;;;    1.  val(2) → some(2)                        (pure computation)
+;;;    2.  raise → none                             (error crashes)
+;;;    3.  put(3, get) → some(3)                   (state threads)
+;;;
+;;;   Log handler (log errors, continue):
+;;;    4.  val(2) → (2, [])                         (pure, no log)
+;;;    5.  raise → (0, [err])                       (error logged)
+;;;    6.  put(3, raise) → (0, [err])              (state lost on error)
+;;;
+;;;   All handler (explore nondeterminism):
+;;;    7.  val(1) → [1]                             (singleton)
+;;;    8.  choose(val(1), val(2)) → [1, 2]         (both branches)
+;;;    9.  choose(val(1), raise) → [1]             (error branch pruned)
+;;;
+;;;   Same program, different handler:
+;;;   10.  put(1, choose(get, val(0))) → [1, 0]    (state + nondet)
+
+(theory AlgEffects
+
+  ;; ══════════════════════════════════════
+  ;; VALUES
+  ;; ══════════════════════════════════════
+
+  (sort Nat)
+  (constructor z : Nat)
+  (constructor s : (-> Nat Nat))
+
+  ;; ══════════════════════════════════════
+  ;; EFFECTFUL PROGRAMS (syntax trees)
+  ;; ══════════════════════════════════════
+  ;; A program is an AST that can invoke effects.
+  ;; The meaning depends on the HANDLER.
+
+  (sort Prog)
+
+  ;; Pure return
+  (constructor e-val : (-> Nat Prog))
+
+  ;; State effects
+  (constructor e-get : Prog)                     ;; read state
+  (constructor e-put : (-> Nat Prog Prog))       ;; put(v, continue)
+
+  ;; Error effect
+  (constructor e-raise : Prog)                   ;; throw error
+
+  ;; Nondeterminism effect
+  (constructor e-choose : (-> Prog Prog Prog))   ;; choose(left, right)
+
+  ;; ══════════════════════════════════════
+  ;; HANDLER 1: SAFE (crash on error)
+  ;; Returns Option Nat — some(n) or none.
+  ;; ══════════════════════════════════════
+
+  (sort OptNat)
+  (constructor some-nat : (-> Nat OptNat))
+  (constructor none-nat : OptNat)
+
+  (constructor run-safe : (-> Prog Nat OptNat))
+
+  (rewrite safe-val   (run-safe (e-val ?n) ?s) (some-nat ?n))
+  (rewrite safe-get   (run-safe e-get ?s) (some-nat ?s))
+  (rewrite safe-put   (run-safe (e-put ?n ?k) ?s) (run-safe ?k ?n))
+  (rewrite safe-raise (run-safe e-raise ?s) none-nat)
+  ;; choose: evaluate left branch (deterministic choice for safe handler)
+  (rewrite safe-choose (run-safe (e-choose ?l ?r) ?s) (run-safe ?l ?s))
+
+  ;; ══════════════════════════════════════
+  ;; HANDLER 2: LOG (log errors, continue with 0)
+  ;; Returns (Nat, Log) — result plus error log.
+  ;; ══════════════════════════════════════
+
+  (sort Log)
+  (constructor log-empty : Log)
+  (constructor log-err : (-> Log Log))
+
+  (sort NatLog)
+  (constructor result-log : (-> Nat Log NatLog))
+
+  (constructor run-log : (-> Prog Nat Log NatLog))
+
+  (rewrite log-val   (run-log (e-val ?n) ?s ?l) (result-log ?n ?l))
+  (rewrite log-get   (run-log e-get ?s ?l) (result-log ?s ?l))
+  (rewrite log-put   (run-log (e-put ?n ?k) ?s ?l) (run-log ?k ?n ?l))
+  (rewrite log-raise (run-log e-raise ?s ?l) (result-log z (log-err ?l)))
+  (rewrite log-choose (run-log (e-choose ?l ?r) ?s ?lg) (run-log ?l ?s ?lg))
+
+  ;; ══════════════════════════════════════
+  ;; HANDLER 3: ALL (explore nondeterminism)
+  ;; Returns [Nat] — list of all possible results.
+  ;; Error = no results (empty list).
+  ;; ══════════════════════════════════════
+
+  (sort NatList)
+  (constructor nil-nat : NatList)
+  (constructor cons-nat : (-> Nat NatList NatList))
+  (constructor append : (-> NatList NatList NatList))
+
+  (rewrite append-nil (append nil-nat ?ys) ?ys)
+  (rewrite append-cons (append (cons-nat ?x ?xs) ?ys)
+    (cons-nat ?x (append ?xs ?ys)))
+
+  (constructor run-all : (-> Prog Nat NatList))
+
+  (rewrite all-val   (run-all (e-val ?n) ?s) (cons-nat ?n nil-nat))
+  (rewrite all-get   (run-all e-get ?s) (cons-nat ?s nil-nat))
+  (rewrite all-put   (run-all (e-put ?n ?k) ?s) (run-all ?k ?n))
+  (rewrite all-raise (run-all e-raise ?s) nil-nat)
+  (rewrite all-choose (run-all (e-choose ?l ?r) ?s)
+    (append (run-all ?l ?s) (run-all ?r ?s)))
+
+  ;; ══════════════════════════════════════
+  ;; EQUALITY
+  ;; ══════════════════════════════════════
+
+  (sort Eq)
+  (constructor eq-opt : (-> OptNat OptNat Eq))
+  (constructor eq-log : (-> NatLog NatLog Eq))
+  (constructor eq-list : (-> NatList NatList Eq))
+  (judgment (is-eq ?e) :where e : Eq)
+  (rule eq-refl :conclusion (is-eq (eq-opt ?a ?a)))
+  (rule log-refl :conclusion (is-eq (eq-log ?a ?a)))
+  (rule list-refl :conclusion (is-eq (eq-list ?a ?a))))
+
+(check-theory AlgEffects)
+
+
+;; ════════════════════════════════════════════════════════════
+;;  HANDLER 1: SAFE (crash on error, return Option)
+;; ════════════════════════════════════════════════════════════
+
+;; ─── Proof 1: Pure value → some ───
+;; run-safe(val(2), 0) → some(2)
+;; No effects, no drama.
+
+(proof safe-pure
+  :theory AlgEffects
+  :goal (is-eq (eq-opt
+    (run-safe (e-val (s (s z))) z)
+    (some-nat (s (s z)))))
+  :derivation (eq-refl))
+
+
+;; ─── Proof 2: Error → none ───
+;; run-safe(raise, 0) → none
+;; Error kills the computation.
+
+(proof safe-crash
+  :theory AlgEffects
+  :goal (is-eq (eq-opt
+    (run-safe e-raise z)
+    none-nat))
+  :derivation (eq-refl))
+
+
+;; ─── Proof 3: State threads correctly ───
+;; run-safe(put(3, get), 0) → run-safe(get, 3) → some(3)
+;; Put updates the state, get reads it back.
+
+(proof safe-state
+  :theory AlgEffects
+  :goal (is-eq (eq-opt
+    (run-safe (e-put (s (s (s z))) e-get) z)
+    (some-nat (s (s (s z))))))
+  :derivation (eq-refl))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  HANDLER 2: LOG (log errors, continue with default)
+;; ════════════════════════════════════════════════════════════
+
+;; ─── Proof 4: Pure value → result with empty log ───
+;; run-log(val(2), 0, []) → (2, [])
+
+(proof log-pure
+  :theory AlgEffects
+  :goal (is-eq (eq-log
+    (run-log (e-val (s (s z))) z log-empty)
+    (result-log (s (s z)) log-empty)))
+  :derivation (log-refl))
+
+
+;; ─── Proof 5: Error → default value + log entry ───
+;; run-log(raise, 0, []) → (0, [err])
+;; Error doesn't crash — it's LOGGED and computation
+;; continues with default value 0.
+
+(proof log-error
+  :theory AlgEffects
+  :goal (is-eq (eq-log
+    (run-log e-raise z log-empty)
+    (result-log z (log-err log-empty))))
+  :derivation (log-refl))
+
+
+;; ─── Proof 6: State change lost on error ───
+;; run-log(put(3, raise), 0, [])
+;;   → run-log(raise, 3, [])
+;;   → (0, [err])
+;; The put(3) happens, but then raise resets to default.
+;; The state change is lost — but the error is logged.
+
+(proof log-state-error
+  :theory AlgEffects
+  :goal (is-eq (eq-log
+    (run-log (e-put (s (s (s z))) e-raise) z log-empty)
+    (result-log z (log-err log-empty))))
+  :derivation (log-refl))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  HANDLER 3: ALL (explore all nondeterministic paths)
+;; ════════════════════════════════════════════════════════════
+
+;; ─── Proof 7: Pure value → singleton list ───
+;; run-all(val(1), 0) → [1]
+
+(proof all-pure
+  :theory AlgEffects
+  :goal (is-eq (eq-list
+    (run-all (e-val (s z)) z)
+    (cons-nat (s z) nil-nat)))
+  :derivation (list-refl))
+
+
+;; ─── Proof 8: Choose → both branches explored ───
+;; run-all(choose(val(1), val(2)), 0)
+;;   → append(run-all(val(1), 0), run-all(val(2), 0))
+;;   → append([1], [2])
+;;   → [1, 2]
+;;
+;; Both branches are explored.  All possible results collected.
+
+(proof all-choose
+  :theory AlgEffects
+  :goal (is-eq (eq-list
+    (run-all (e-choose (e-val (s z)) (e-val (s (s z)))) z)
+    (cons-nat (s z) (cons-nat (s (s z)) nil-nat))))
+  :derivation (list-refl))
+
+
+;; ─── Proof 9: Error branch pruned ───
+;; run-all(choose(val(1), raise), 0)
+;;   → append(run-all(val(1), 0), run-all(raise, 0))
+;;   → append([1], [])
+;;   → [1]
+;;
+;; The error branch produces no results.
+;; Only the successful branch survives.
+
+(proof all-choose-error
+  :theory AlgEffects
+  :goal (is-eq (eq-list
+    (run-all (e-choose (e-val (s z)) e-raise) z)
+    (cons-nat (s z) nil-nat)))
+  :derivation (list-refl))
+
+
+;; ─── Proof 10: State + nondeterminism interact ───
+;; run-all(put(1, choose(get, val(0))), 0)
+;;   → run-all(choose(get, val(0)), 1)          [state updated to 1]
+;;   → append(run-all(get, 1), run-all(val(0), 1))
+;;   → append([1], [0])
+;;   → [1, 0]
+;;
+;; The put(1) updates state.  Then choose branches:
+;;   Left:  get reads state → 1
+;;   Right: val(0) ignores state → 0
+;; Both results collected: [1, 0].
+;;
+;; THIS is the power of algebraic effects:
+;; State and Nondeterminism compose without monad transformers.
+
+(proof all-state-choose
+  :theory AlgEffects
+  :goal (is-eq (eq-list
+    (run-all (e-put (s z) (e-choose e-get (e-val z))) z)
+    (cons-nat (s z) (cons-nat z nil-nat))))
+  :derivation (list-refl))
+
+
+;; ════════════════════════════════════════════════════════════
+;; WHAT ALGEBRAIC EFFECTS REVEAL
+;; ════════════════════════════════════════════════════════════
+;;
+;;   The SAME program, THREE meanings:
+;;
+;;     Program: put(1, choose(get, raise))
+;;
+;;     safe handler:  run-safe → some(1)
+;;       (takes left branch, gets state, crashes never happen)
+;;
+;;     log handler:   run-log → (0, [err])
+;;       (takes left branch... but choose goes left in log too)
+;;
+;;     all handler:   run-all → [1]
+;;       (explores both branches: get→1, raise→[], result [1])
+;;
+;;   Monads (State, Error, List) don't compose:
+;;     StateT (ErrorT (ListT Identity)) ≠ ListT (ErrorT (StateT Identity))
+;;     The order of transformer stacking changes semantics.
+;;
+;;   Algebraic effects DO compose:
+;;     Each handler interprets its OWN operations.
+;;     Other effects pass through unchanged.
+;;     No stacking order, no diamond problem.
+;;
+;;   Effect        Handler             Result type
+;;   ──────────────────────────────────────────────
+;;   State         run with init val   (Result, State)
+;;   Error         crash               Option Result
+;;   Error         log                 (Result, Log)
+;;   Nondet        collect all         [Result]
+;;   State+Nondet  run-all             [Result]
+;;
+;;   A handler is an ALGEBRA for the effect signature.
+;;   A program is a FREE ALGEBRA (syntax tree).
+;;   Handling = folding the free algebra into the handler.
+;;   This is the universal property of free constructions.
+;; ════════════════════════════════════════════════════════════

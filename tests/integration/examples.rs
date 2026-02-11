@@ -815,3 +815,70 @@ fn pi_calculus_example() {
     assert!(results.iter().any(|r| r.contains("Proof auth-accept-terminates: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof auth-reject-terminates: VALID")));
 }
+
+#[test]
+fn cubical_example() {
+    let results = check_example("examples/cubical.omega");
+    assert!(results.iter().any(|r| r.contains("Theory CubicalTT: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof refl-left: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof refl-right: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof sym-computes: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof transport-refl-computes: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof funext-left: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof neg-involution: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof ua-computes: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof ua-roundtrip: VALID")));
+}
+
+#[test]
+fn quotients_example() {
+    let results = check_example("examples/quotients.omega");
+    assert!(results.iter().any(|r| r.contains("Theory QuotientInt: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof zero-equiv: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof zero-equiv-2: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof two-equiv: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof neg-two-equiv: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof add-one-one: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof neg-two: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof add-commutes: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof add-well-defined: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof neg-well-defined: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof subtract-works: VALID")));
+}
+
+#[test]
+fn effects_example() {
+    let results = check_example("examples/effects.omega");
+    assert!(results.iter().any(|r| r.contains("Theory AlgEffects: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof safe-pure: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof safe-crash: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof safe-state: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof log-pure: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof log-error: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof log-state-error: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof all-pure: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof all-choose: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof all-choose-error: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof all-state-choose: VALID")));
+}
+
+#[test]
+fn inference_example() {
+    let results = check_example("examples/inference.omega");
+    assert!(results.iter().any(|r| r.contains("Theory TypeInference: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof type-literal: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof type-var: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof type-identity: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof type-apply: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof type-compose: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof subst-partial: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof subst-full: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof subst-compound: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof unify-same: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof unify-clash: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof unify-var: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof unify-arrow: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof sound-same: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof sound-var: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof sound-arrow: VALID")));
+}
