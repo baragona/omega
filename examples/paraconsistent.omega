@@ -1,0 +1,227 @@
+;;; Paraconsistent Logic & Naive Set Theory
+;;;
+;;; Inconsistent mathematics: contradictions exist without explosion.
+;;;
+;;; In classical logic, A ∧ ¬A ⊢ B (from falsehood, anything follows).
+;;; Here we deliberately OMIT that rule, making contradictions "local."
+;;; Russell's paradox produces a true contradiction (dialetheia),
+;;; but it does not infect the rest of the system.
+;;;
+;;; Proved here:
+;;;   1.  R ∈ R                           (Russell set is self-member)
+;;;   2.  R ∉ R                           (Russell set is not self-member)
+;;;   3.  R ∈ R ∧ R ∉ R                  (the paradox, as conjunction)
+;;;   4.  ⊤                               (truth still works)
+;;;   5.  ⊤ → ⊤                           (identity / modus ponens)
+;;;   6.  ⊤ → (⊤ → ⊤)                    (weakening still works)
+;;;   7.  (R ∈ R) → (R ∉ R)              (Russell biconditional, forward)
+;;;   8.  (R ∉ R) → (R ∈ R)              (Russell biconditional, backward)
+;;;   9.  R ∈ R ∨ R ∉ R                  (excluded middle, trivially)
+;;;  10.  R ∈ R                           (paradox loop: in → out → in)
+
+;; ================================================================
+;; Paraconsistent propositional logic
+;; ================================================================
+
+(theory ParaconsistentLogic
+  (sort Prop)
+
+  (constructor and  : (-> Prop Prop Prop))
+  (constructor or   : (-> Prop Prop Prop))
+  (constructor not  : (-> Prop Prop))
+  (constructor imp  : (-> Prop Prop Prop))
+  (constructor top  : Prop)
+  (constructor bot  : Prop)
+
+  (judgment (proves ?P) :where P : Prop)
+
+  ;; ── Truth ──
+  (rule top-intro
+    :conclusion (proves top))
+
+  ;; ── Conjunction ──
+  (rule and-intro
+    :premises ((proves ?A) (proves ?B))
+    :conclusion (proves (and ?A ?B)))
+
+  (rule and-elim-l
+    :premises ((proves (and ?A ?B)))
+    :conclusion (proves ?A))
+
+  (rule and-elim-r
+    :premises ((proves (and ?A ?B)))
+    :conclusion (proves ?B))
+
+  ;; ── Disjunction ──
+  (rule or-intro-l
+    :premises ((proves ?A))
+    :conclusion (proves (or ?A ?B)))
+
+  (rule or-intro-r
+    :premises ((proves ?B))
+    :conclusion (proves (or ?A ?B)))
+
+  (rule or-elim
+    :premises ((proves (or ?A ?B)) (proves ?C) (proves ?C))
+    :context ((1 (proves ?A)) (2 (proves ?B)))
+    :conclusion (proves ?C))
+
+  ;; ── Implication (natural deduction) ──
+  (rule imp-intro
+    :premises ((proves ?B))
+    :context ((0 (proves ?A)))
+    :conclusion (proves (imp ?A ?B)))
+
+  (rule imp-elim
+    :premises ((proves (imp ?A ?B)) (proves ?A))
+    :conclusion (proves ?B))
+
+  ;; ── Negation ──
+  (rule double-neg-intro
+    :premises ((proves ?A))
+    :conclusion (proves (not (not ?A))))
+
+  (rule double-neg-elim
+    :premises ((proves (not (not ?A))))
+    :conclusion (proves ?A))
+
+  ;; ══════════════════════════════════════════════════════════
+  ;; WHAT WE DELIBERATELY OMIT (this is what makes it
+  ;; paraconsistent):
+  ;;
+  ;;   NO ex-falso:       (proves bot) ⊬ (proves ?A)
+  ;;   NO explosion:      (proves ?A), (proves (not ?A)) ⊬ (proves ?B)
+  ;;   NO disj. syllog.:  (proves (or ?A ?B)), (proves (not ?A)) ⊬ (proves ?B)
+  ;;
+  ;; Without these rules, contradictions cannot spread.
+  ;; ══════════════════════════════════════════════════════════
+)
+
+(check-theory ParaconsistentLogic)
+
+;; ================================================================
+;; Naive Set Theory — built on paraconsistent logic
+;;
+;; ZFC was invented specifically to ban Russell's set.
+;; Here we let it exist. The contradiction is real but contained.
+;; ================================================================
+
+(theory NaiveSets
+  (import ParaconsistentLogic)
+
+  (sort Set)
+
+  ;; Membership predicate
+  (constructor elem : (-> Set Set Prop))
+
+  ;; The Russell set: R = { x | x ∉ x }
+  ;; By definition:  R ∈ R  ↔  R ∉ R
+  (constructor russell : Set)
+
+  ;; Both directions of the Russell biconditional
+  (rule russell-in
+    :premises ((proves (not (elem russell russell))))
+    :conclusion (proves (elem russell russell)))
+
+  (rule russell-not-in
+    :premises ((proves (elem russell russell)))
+    :conclusion (proves (not (elem russell russell))))
+
+  ;; The dialetheia: both hold unconditionally
+  (rule russell-is-in
+    :conclusion (proves (elem russell russell)))
+
+  (rule russell-is-not-in
+    :conclusion (proves (not (elem russell russell))))
+
+  ;; A normal, well-behaved set (nothing is in the empty set)
+  (constructor empty-set : Set)
+)
+
+(check-theory NaiveSets)
+
+
+;; ================================================================
+;; PART 1: The contradiction exists
+;; ================================================================
+
+;; 1. Russell's set IS a member of itself
+(proof russell-member
+  :theory NaiveSets
+  :goal (proves (elem russell russell))
+  :derivation (russell-is-in))
+
+;; 2. Russell's set is NOT a member of itself
+(proof russell-non-member
+  :theory NaiveSets
+  :goal (proves (not (elem russell russell)))
+  :derivation (russell-is-not-in))
+
+;; 3. The paradox as a conjunction: R ∈ R ∧ R ∉ R
+(proof russell-paradox
+  :theory NaiveSets
+  :goal (proves (and (elem russell russell) (not (elem russell russell))))
+  :derivation (and-intro (russell-is-in) (russell-is-not-in)))
+
+
+;; ================================================================
+;; PART 2: Normal reasoning still works
+;; ================================================================
+
+;; 4. Truth is provable — the system is not "dead"
+(proof truth-holds
+  :theory NaiveSets
+  :goal (proves top)
+  :derivation (top-intro))
+
+;; 5. Modus ponens / identity: ⊤ → ⊤
+(proof identity
+  :theory NaiveSets
+  :goal (proves (imp top top))
+  :derivation (imp-intro (assumption)))
+
+;; 6. Weakening: ⊤ → (⊤ → ⊤)
+(proof weakening
+  :theory NaiveSets
+  :goal (proves (imp top (imp top top)))
+  :derivation (imp-intro (imp-intro (assumption))))
+
+
+;; ================================================================
+;; PART 3: Reasoning ABOUT the paradox (without explosion)
+;; ================================================================
+
+;; 7. R ∈ R → R ∉ R  (forward direction of biconditional)
+(proof russell-fwd
+  :theory NaiveSets
+  :goal (proves (imp (elem russell russell) (not (elem russell russell))))
+  :derivation (imp-intro (russell-not-in (assumption))))
+
+;; 8. R ∉ R → R ∈ R  (backward direction of biconditional)
+(proof russell-bwd
+  :theory NaiveSets
+  :goal (proves (imp (not (elem russell russell)) (elem russell russell)))
+  :derivation (imp-intro (russell-in (assumption))))
+
+;; 9. R ∈ R ∨ R ∉ R  (excluded middle — trivial from the dialetheia)
+(proof russell-lem
+  :theory NaiveSets
+  :goal (proves (or (elem russell russell) (not (elem russell russell))))
+  :derivation (or-intro-l (russell-is-in)))
+
+;; 10. The paradox loop:  R ∈ R  →  R ∉ R  →  R ∈ R
+;;     Starting from russell-is-in, derive ¬(R ∈ R), then derive R ∈ R again.
+;;     The contradiction goes in circles — but never escapes.
+(proof paradox-loop
+  :theory NaiveSets
+  :goal (proves (elem russell russell))
+  :derivation (russell-in (russell-not-in (russell-is-in))))
+
+;; ================================================================
+;; KEY INSIGHT: There is NO derivation of (proves (elem russell empty-set)).
+;;
+;; No rule concludes membership in empty-set, and there is no
+;; explosion rule to bridge the gap from the Russell contradiction
+;; to arbitrary conclusions. The contradiction is CONTAINED.
+;; This is the essence of paraconsistent logic.
+;; ================================================================
