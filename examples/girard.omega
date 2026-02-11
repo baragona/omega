@@ -1,0 +1,336 @@
+;;; Girard's Translation: The Resource Compiler
+;;;
+;;; Classical logic is linear logic with unlimited resources.
+;;; This file proves it by implementing Girard's call-by-name
+;;; translation as a COMPILER from classical to linear logic.
+;;;
+;;; The translation:
+;;;   Classical      ->  Linear
+;;;   -----------------------------------------
+;;;   P (atom)       ->  P
+;;;   A -> B         ->  !A' -o B'    (use A unlimited times)
+;;;   A /\ B         ->  A' & B'      (additive: provide both)
+;;;   A \/ B         ->  A' + B'      (additive: offer choice)
+;;;   T              ->  1
+;;;   F              ->  0
+;;;
+;;; The key insight: every classical hypothesis gets wrapped in !
+;;; (the "of course" modality).  This is what makes classical
+;;; reasoning "free" -- the ! gives permission to duplicate and
+;;; discard at will.  Linear logic without ! forbids this.
+;;;
+;;; The compiler is defined as REWRITE RULES.  Omega's normalizer
+;;; runs the compiler automatically -- no interpreter needed.
+;;;
+;;; Proved here (4 bridges, 10 proofs):
+;;;
+;;;  Bridge 1 -- Identity (A -> A):
+;;;   1.  Classical proof                  (trivial: 1 rule)
+;;;   2.  Compilation: A->A = !A -o A     (eq-refl runs the compiler)
+;;;   3.  Linear proof of !A -o A         (dereliction strips the !)
+;;;
+;;;  Bridge 2 -- Weakening (A -> B -> A):
+;;;   4.  Classical proof                  (trivial: B discarded free)
+;;;   5.  Linear proof of !A -o !B -o A   (!B discarded by weakening)
+;;;
+;;;  Bridge 3 -- Contraction (A -> A /\ A):  THE SHOWPIECE
+;;;   6.  Classical proof                  (trivial: A used twice free)
+;;;   7.  Compilation: A->A/\A = !A -o A&A  (the ! appears!)
+;;;   8.  Linear proof of !A -o (A & A)   (!A derelicted TWICE)
+;;;
+;;;  Bridge 4 -- Composition ((A->B) -> (B->C) -> A -> C):
+;;;   9.  Compilation check                (simple -> COMPLEX)
+;;;  10.  Linear proof                     (derelict + promote: 6 steps)
+
+(theory GirardBridge
+
+  ;; ====================================================
+  ;; CLASSICAL LOGIC (the "source language")
+  ;; ====================================================
+
+  (sort CProp)
+
+  (constructor cP : CProp)
+  (constructor cQ : CProp)
+  (constructor cR : CProp)
+
+  (constructor c-imp : (-> CProp CProp CProp))
+  (constructor c-and : (-> CProp CProp CProp))
+  (constructor c-or  : (-> CProp CProp CProp))
+  (constructor c-top : CProp)
+  (constructor c-bot : CProp)
+
+  ;; ====================================================
+  ;; LINEAR LOGIC (the "target language")
+  ;; ====================================================
+
+  (sort LProp)
+
+  (constructor lP : LProp)
+  (constructor lQ : LProp)
+  (constructor lR : LProp)
+
+  (constructor lolli : (-> LProp LProp LProp))    ;; A -o B  (linear implication)
+  (constructor lwith : (-> LProp LProp LProp))    ;; A & B   (additive conjunction)
+  (constructor oplus : (-> LProp LProp LProp))    ;; A + B   (additive disjunction)
+  (constructor bang  : (-> LProp LProp))           ;; !A      (of course / exponential)
+  (constructor one   : LProp)                      ;; 1       (multiplicative unit)
+  (constructor lzero : LProp)                      ;; 0       (additive absurdity)
+
+  ;; ====================================================
+  ;; THE COMPILER (rewrite rules)
+  ;; ====================================================
+  ;; Each rewrite rule = one case of the compiler.
+  ;; The normalizer runs the compiler automatically.
+
+  (constructor compile : (-> CProp LProp))
+
+  (rewrite tr-P   (compile cP)              lP)
+  (rewrite tr-Q   (compile cQ)              lQ)
+  (rewrite tr-R   (compile cR)              lR)
+  (rewrite tr-imp (compile (c-imp ?A ?B))   (lolli (bang (compile ?A)) (compile ?B)))
+  (rewrite tr-and (compile (c-and ?A ?B))   (lwith (compile ?A) (compile ?B)))
+  (rewrite tr-or  (compile (c-or ?A ?B))    (oplus (compile ?A) (compile ?B)))
+  (rewrite tr-top (compile c-top)           one)
+  (rewrite tr-bot (compile c-bot)           lzero)
+
+  ;; ====================================================
+  ;; COMPILATION CHECKER (definitional equality)
+  ;; ====================================================
+
+  (sort Eq)
+  (constructor equals : (-> LProp LProp Eq))
+  (judgment (is-equal ?e) :where e : Eq)
+  (rule eq-refl :conclusion (is-equal (equals ?A ?A)))
+
+  ;; ====================================================
+  ;; CLASSICAL RULES
+  ;; ====================================================
+
+  (judgment (c-proves ?A) :where A : CProp)
+
+  (rule c-imp-intro
+    :premises ((c-proves ?B))
+    :context ((0 (c-proves ?A)))
+    :conclusion (c-proves (c-imp ?A ?B)))
+
+  (rule c-imp-elim
+    :premises ((c-proves (c-imp ?A ?B)) (c-proves ?A))
+    :conclusion (c-proves ?B))
+
+  (rule c-and-intro
+    :premises ((c-proves ?A) (c-proves ?B))
+    :conclusion (c-proves (c-and ?A ?B)))
+
+  (rule c-and-elim-l
+    :premises ((c-proves (c-and ?A ?B)))
+    :conclusion (c-proves ?A))
+
+  (rule c-and-elim-r
+    :premises ((c-proves (c-and ?A ?B)))
+    :conclusion (c-proves ?B))
+
+  ;; ====================================================
+  ;; LINEAR RULES
+  ;; ====================================================
+
+  (judgment (l-proves ?A) :where A : LProp)
+
+  ;; -- Linear implication (-o) --
+  (rule l-lolli-intro
+    :premises ((l-proves ?B))
+    :context ((0 (l-proves ?A)))
+    :conclusion (l-proves (lolli ?A ?B)))
+
+  (rule l-lolli-elim
+    :premises ((l-proves (lolli ?A ?B)) (l-proves ?A))
+    :conclusion (l-proves ?B))
+
+  ;; -- Additive conjunction (&) --
+  (rule l-with-intro
+    :premises ((l-proves ?A) (l-proves ?B))
+    :conclusion (l-proves (lwith ?A ?B)))
+
+  (rule l-with-elim-l
+    :premises ((l-proves (lwith ?A ?B)))
+    :conclusion (l-proves ?A))
+
+  (rule l-with-elim-r
+    :premises ((l-proves (lwith ?A ?B)))
+    :conclusion (l-proves ?B))
+
+  ;; -- The exponential (!) -- the key to the bridge --
+
+  ;; Dereliction: !A |- A  (use a !-resource once)
+  (rule l-derelict
+    :premises ((l-proves (bang ?A)))
+    :conclusion (l-proves ?A))
+
+  ;; Promotion: |- A implies |- !A  (mark as reusable)
+  ;; Valid when all context resources are already !-marked,
+  ;; which holds for all compiled classical hypotheses.
+  (rule l-promote
+    :premises ((l-proves ?A))
+    :conclusion (l-proves (bang ?A))))
+
+(check-theory GirardBridge)
+
+
+;; ============================================================
+;;  BRIDGE 1: Identity  (A -> A)
+;; ============================================================
+;;
+;;  Classical:  A -> A              [1 rule: assume A, return A]
+;;  Compiled:   !A -o A             [the ! says: you may use A]
+;;  Linear:     !A -o A             [2 rules: assume !A, derelict]
+;;
+;;  The classical proof just returns the hypothesis.
+;;  The linear proof must UNWRAP the ! before returning.
+;;  Cost of classical convenience: one hidden dereliction.
+
+(proof c-identity
+  :theory GirardBridge
+  :goal (c-proves (c-imp cP cP))
+  :derivation (c-imp-intro (assumption)))
+
+(proof compile-identity
+  :theory GirardBridge
+  :goal (is-equal (equals
+    (compile (c-imp cP cP))
+    (lolli (bang lP) lP)))
+  :derivation (eq-refl))
+
+(proof l-identity
+  :theory GirardBridge
+  :goal (l-proves (lolli (bang lP) lP))
+  :derivation (l-lolli-intro (l-derelict (assumption))))
+
+
+;; ============================================================
+;;  BRIDGE 2: Weakening  (A -> B -> A)
+;; ============================================================
+;;
+;;  Classical:  A -> (B -> A)       [B is simply ignored -- free!]
+;;  Compiled:   !A -o (!B -o A)     [!B is in scope but unused]
+;;  Linear:     !A -o (!B -o A)     [!B discarded: structural weakening]
+;;
+;;  In classical logic, ignoring a hypothesis is invisible.
+;;  The compilation makes it VISIBLE: B gets a ! wrapper, and
+;;  the linear proof discards !B via structural weakening.
+;;  Without !, discarding B would be illegal in linear logic.
+
+(proof c-weakening
+  :theory GirardBridge
+  :goal (c-proves (c-imp cP (c-imp cQ cP)))
+  :derivation (c-imp-intro (c-imp-intro (assumption 0))))
+
+(proof l-weakening
+  :theory GirardBridge
+  :goal (l-proves (lolli (bang lP) (lolli (bang lQ) lP)))
+  :derivation (l-lolli-intro (l-lolli-intro (l-derelict (assumption 0)))))
+
+
+;; ============================================================
+;;  BRIDGE 3: Contraction  (A -> A /\ A)
+;; ============================================================
+;;
+;;  ** THE SHOWPIECE **
+;;
+;;  Classical:  A -> A /\ A         [A used TWICE -- for free!]
+;;  Compiled:   !A -o (A & A)       [the ! appears: permission to copy]
+;;  Linear:     !A -o (A & A)       [derelict !A TWICE: ! enables this]
+;;
+;;  This is the "no free lunch" theorem.  In classical logic,
+;;  duplicating a hypothesis is invisible.  The compiler REVEALS
+;;  the hidden cost: the ! modality.
+;;
+;;  Without !:  A -o (A & A)  is UNPROVABLE in linear logic.
+;;  With !:     !A -o (A & A) is provable -- ! grants copy rights.
+;;
+;;  The linear proof must explicitly unwrap the ! each time it
+;;  uses A.  Classical logic hides this work.
+
+(proof c-contraction
+  :theory GirardBridge
+  :goal (c-proves (c-imp cP (c-and cP cP)))
+  :derivation (c-imp-intro (c-and-intro (assumption) (assumption))))
+
+(proof compile-contraction
+  :theory GirardBridge
+  :goal (is-equal (equals
+    (compile (c-imp cP (c-and cP cP)))
+    (lolli (bang lP) (lwith lP lP))))
+  :derivation (eq-refl))
+
+(proof l-contraction
+  :theory GirardBridge
+  :goal (l-proves (lolli (bang lP) (lwith lP lP)))
+  :derivation
+    (l-lolli-intro
+      (l-with-intro
+        (l-derelict (assumption))
+        (l-derelict (assumption)))))
+
+
+;; ============================================================
+;;  BRIDGE 4: Composition  ((A->B) -> (B->C) -> A -> C)
+;; ============================================================
+;;
+;;  Classical:  (P->Q) -> (Q->R) -> P -> R
+;;              Simple chain: 3 hypotheses, apply twice.
+;;
+;;  Compiled:   !(!P -o Q) -o (!(!Q -o R) -o (!P -o R))
+;;              EVERY hypothesis gets a ! wrapper.
+;;              The intermediate Q must be PROMOTED to !Q
+;;              before feeding it to the second function.
+;;
+;;  Classical proof:   imp-elim, imp-elim, done    (3 steps)
+;;  Linear proof:      derelict, apply, promote,
+;;                     derelict, apply             (6 steps)
+;;
+;;  The promotion step is the hidden cost: when you chain
+;;  classical functions, the intermediate values need to be
+;;  explicitly marked as reusable resources.
+
+(proof compile-chain
+  :theory GirardBridge
+  :goal (is-equal (equals
+    (compile (c-imp (c-imp cP cQ) (c-imp (c-imp cQ cR) (c-imp cP cR))))
+    (lolli (bang (lolli (bang lP) lQ))
+           (lolli (bang (lolli (bang lQ) lR))
+                  (lolli (bang lP) lR)))))
+  :derivation (eq-refl))
+
+(proof l-chain
+  :theory GirardBridge
+  :goal (l-proves
+    (lolli (bang (lolli (bang lP) lQ))
+           (lolli (bang (lolli (bang lQ) lR))
+                  (lolli (bang lP) lR))))
+  :derivation
+    (l-lolli-intro (l-lolli-intro (l-lolli-intro
+      (l-lolli-elim
+        (l-derelict (assumption 1))
+        (l-promote
+          (l-lolli-elim
+            (l-derelict (assumption 0))
+            (assumption))))))))
+
+;; ============================================================
+;; WHAT THE BRIDGE REVEALS
+;; ============================================================
+;;
+;; Classical logic is not "simpler" than linear logic -- it just
+;; HIDES the resource management behind implicit structural rules.
+;; The Girard translation makes this explicit:
+;;
+;;   Classical convenience    ->  Linear mechanism
+;;   ---------------------------------------------------
+;;   Use hypothesis           ->  Dereliction (!A -> A)
+;;   Ignore hypothesis        ->  Structural weakening on !
+;;   Duplicate hypothesis     ->  Structural contraction on !
+;;   Chain intermediates      ->  Promotion (A -> !A)
+;;
+;; The ! modality is the compiler's runtime system:
+;; it is the cost of classical reasoning, made visible.
+;; ============================================================

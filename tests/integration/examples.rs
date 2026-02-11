@@ -655,3 +655,20 @@ fn relevant_logic_example() {
     assert!(results.iter().any(|r| r.contains("Proof currying: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof fusion-symmetric: VALID")));
 }
+
+#[test]
+fn girard_bridge_example() {
+    let results = check_example("examples/girard.omega");
+    assert!(results.iter().any(|r| r.contains("Theory GirardBridge: registered OK")));
+    // Compilation checks (rewrite rules compute the translation)
+    assert!(results.iter().any(|r| r.contains("Proof compile-identity: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof compile-contraction: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof compile-chain: VALID")));
+    // Classical proofs
+    assert!(results.iter().any(|r| r.contains("Proof c-identity: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof c-contraction: VALID")));
+    // Linear proofs of compiled forms
+    assert!(results.iter().any(|r| r.contains("Proof l-identity: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof l-contraction: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof l-chain: VALID")));
+}
