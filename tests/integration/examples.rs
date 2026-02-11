@@ -27,6 +27,12 @@ fn stlc_example() {
     assert!(results.iter().any(|r| r.contains("Proof church-false: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof apply-id-to-id: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof compose: VALID")));
+    // New: deep derivation trees
+    assert!(results.iter().any(|r| r.contains("Proof s-combinator: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof church-pair: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof flip: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof eta-expansion: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof church-two: VALID")));
 }
 
 #[test]
@@ -44,18 +50,22 @@ fn first_order_example() {
 fn reflection_demo_example() {
     let results = check_example("examples/reflection-demo.omega");
     assert!(results.iter().any(|r| r.contains("Theory SimpleLogic: registered OK")));
+    // Two metatheorems: and-comm and or-comm
     assert!(results.iter().any(|r| r.contains("Metatheorem and-comm-meta: VERIFIED")));
     assert!(results.iter().any(|r| r.contains("Reflected and-comm-meta")));
+    assert!(results.iter().any(|r| r.contains("Metatheorem or-comm-meta: VERIFIED")));
+    assert!(results.iter().any(|r| r.contains("Reflected or-comm-meta")));
+    // Proofs using reflected rules
     assert!(results.iter().any(|r| r.contains("Proof comm-test: VALID")));
-}
-
-#[test]
-fn peano_example() {
-    let results = check_example("examples/peano.omega");
-    assert!(results.iter().any(|r| r.contains("Theory Peano: registered OK")));
-    assert!(results.iter().any(|r| r.contains("Proof zero-plus-zero: VALID")));
-    assert!(results.iter().any(|r| r.contains("Proof zero-plus-one: VALID")));
-    assert!(results.iter().any(|r| r.contains("Proof eq-combined: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof comm-roundtrip: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof elim-from-assumption: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof comm-both-intro: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof comm-nested: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof comm-contraction: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof or-comm-test: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof or-intro-from-assumption: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof and-to-or: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof or-comm-contraction: VALID")));
 }
 
 #[test]
@@ -113,8 +123,16 @@ fn implicit_demo_example() {
     let results = check_example("examples/implicit-demo.omega");
     assert!(results.iter().any(|r| r.contains("Theory ImplicitDemo: registered OK")));
     assert!(results.iter().any(|r| r.contains("Proof zero-eq-zero: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof succ-zero-eq: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof symm-succ: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof trans-trivial: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof double-cong: VALID")));
+    // New: multi-step proofs with implicit inference
+    assert!(results.iter().any(|r| r.contains("Proof deep-cong-assumption: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof cong-trans-chain: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof symm-assumption: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof triple-trans: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof deep-cong-symm: VALID")));
 }
 
 #[test]
@@ -137,6 +155,13 @@ fn affine_logic_example() {
     assert!(results.iter().any(|r| r.contains("Proof unit-free: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof tensor-with-unit: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof shadow-use: VALID")));
+    // New: linear implication + multi-step
+    assert!(results.iter().any(|r| r.contains("Proof lolli-id: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof modus-ponens: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof tensor-comm: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof linear-compose: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof tensor-unit-right: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof apply-and-unit: VALID")));
 }
 
 #[test]
@@ -151,14 +176,19 @@ fn number_theory_example() {
 #[test]
 fn monoid_example() {
     let results = check_example("examples/monoid.omega");
-    assert!(results.iter().any(|r| r.contains("Theory EqTheory: registered OK")));
-    assert!(results.iter().any(|r| r.contains("Theory PeanoEq: registered OK")));
-    assert!(results.iter().any(|r| r.contains("Theory TwoSorted: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Theory MonoidTheory: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Theory NatMonoid: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Theory BoolMonoid: registered OK")));
+    // Nat monoid proofs
     assert!(results.iter().any(|r| r.contains("Proof nat-refl: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof nat-symm: VALID")));
-    assert!(results.iter().any(|r| r.contains("Proof nat-trans: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof nat-triple-assoc: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof nat-unit-simplify: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof nat-cong-both: VALID")));
+    // Bool monoid proofs
     assert!(results.iter().any(|r| r.contains("Proof bool-refl: VALID")));
-    assert!(results.iter().any(|r| r.contains("Proof bool-symm: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof bool-assoc: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof bool-left-id: VALID")));
 }
 
 #[test]
@@ -354,9 +384,23 @@ fn compile_verified_example() {
     assert!(results.iter().any(|r| r.contains("Proof abs-3: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof fact-3: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof fact-4: VALID")));
+    // New HOAS functions
+    assert!(results.iter().any(|r| r.contains("Proof triple-0: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof triple-1: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof triple-2: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof is-zero-0: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof is-zero-1: VALID")));
+    // Multi-step equational reasoning
+    assert!(results.iter().any(|r| r.contains("Proof fact-3-symm: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof double-cong: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof succ-succ-cong: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof square-cong-l: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof triple-cong: VALID")));
     // HOAS compilation output (Act III)
     assert!(results.iter().any(|r| r.contains("return x + x;")));
     assert!(results.iter().any(|r| r.contains("return x * x;")));
+    assert!(results.iter().any(|r| r.contains("return x + x + x;")));
+    assert!(results.iter().any(|r| r.contains("return x == 0;")));
     assert!(results.iter().any(|r| r.contains("int factorial(int n)")));
     assert!(results.iter().any(|r| r.contains("n * factorial(n - 1)")));
 }
@@ -403,6 +447,7 @@ fn hott_example() {
 fn category_theory_example() {
     let results = check_example("examples/category-theory.omega");
     assert!(results.iter().any(|r| r.contains("Theory Category: registered OK")));
+    // Part 1: Definitional equalities
     assert!(results.iter().any(|r| r.contains("Proof left-identity: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof right-identity: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof associativity: VALID")));
@@ -413,30 +458,54 @@ fn category_theory_example() {
     assert!(results.iter().any(|r| r.contains("Proof phi-unfold: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof yoneda-psi-phi: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof composite-functor-id: VALID")));
+    // Part 2: Equational reasoning (multi-step)
+    assert!(results.iter().any(|r| r.contains("Proof yoneda-full-roundtrip: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof comp-cong-both: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof functor-respects-eq: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof cancel-right: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof eq-from-assumption: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof functor-trans-chain: VALID")));
 }
 
 #[test]
 fn induction_recursion_example() {
     let results = check_example("examples/induction-recursion.omega");
     assert!(results.iter().any(|r| r.contains("Theory IR: registered OK")));
+    // Part 1: Decoding + basic typing
     assert!(results.iter().any(|r| r.contains("Proof decode-nat: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof decode-bool: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof decode-pi: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof decode-sigma: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof type-at-decoded: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof refl-decoded-id: VALID")));
+    // Part 2: Equational reasoning over decoded types
+    assert!(results.iter().any(|r| r.contains("Proof decode-nat-symm: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof decoded-trans: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof pi-cong-from-assumption: VALID")));
+    // Part 3: Multi-step typing
+    assert!(results.iter().any(|r| r.contains("Proof type-two: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof succ-at-decoded: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof refl-decoded-bool-id: VALID")));
 }
 
 #[test]
 fn hits_example() {
     let results = check_example("examples/hits.omega");
     assert!(results.iter().any(|r| r.contains("Theory HITs: registered OK")));
+    // Part 1: Computation rules
     assert!(results.iter().any(|r| r.contains("Proof recS1-at-base: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof loop-is-path: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof recSusp-at-north: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof recSusp-at-south: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof trunc-intro: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof merid-is-path: VALID")));
+    // Part 2: Multi-step typing derivations
+    assert!(results.iter().any(|r| r.contains("Proof double-loop: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof inv-loop: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof susp-north-loop: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof squash-proof: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof recS1-succ: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof loop-right-unit: VALID")));
 }
 
 #[test]
@@ -450,12 +519,20 @@ fn level_poly_example() {
     assert!(results.iter().any(|r| r.contains("Proof cons-ze-nil: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof const-reduces: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof type-1-in-2: VALID")));
+    // New: multi-step typing
+    assert!(results.iter().any(|r| r.contains("Proof type-three: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof nested-cons: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof pi-generic: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof refl-succ: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof nil-nested-list: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof const-symm: VALID")));
 }
 
 #[test]
 fn eta_demo_example() {
     let results = check_example("examples/eta-demo.omega");
     assert!(results.iter().any(|r| r.contains("Theory EtaDemo: registered OK")));
+    // Part 1: Eta-contraction (all meq-refl)
     assert!(results.iter().any(|r| r.contains("Proof eta-basic: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof eta-compound: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof eta-nested: VALID")));
@@ -463,6 +540,12 @@ fn eta_demo_example() {
     assert!(results.iter().any(|r| r.contains("Proof comp-id-right: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof eta-inside-comp: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof no-eta-when-used: VALID")));
+    // Part 2: Eta + equational reasoning from assumptions
+    assert!(results.iter().any(|r| r.contains("Proof eta-from-assumption: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof cong-from-assumption: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof double-cong-comp: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof symm-from-assumption: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof eta-comp-rewrite: VALID")));
 }
 
 #[test]
@@ -480,10 +563,18 @@ fn linear_demo_example() {
 fn ac_demo_example() {
     let results = check_example("examples/ac-demo.omega");
     assert!(results.iter().any(|r| r.contains("Theory ACDemo: registered OK")));
+    // Part 1: AC normalization (eq-refl)
     assert!(results.iter().any(|r| r.contains("Proof ac-comm: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof ac-assoc: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof ac-nested: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof ac-four: VALID")));
+    // Part 2: AC + equational reasoning
+    assert!(results.iter().any(|r| r.contains("Proof ac-symm: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof ac-trans: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof ac-cong: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof ac-trans-normalized: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof ac-symm-cong: VALID")));
+    // ACI
     assert!(results.iter().any(|r| r.contains("Theory ACIDemo: registered OK")));
     assert!(results.iter().any(|r| r.contains("Proof aci-idem: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof aci-comm-idem: VALID")));

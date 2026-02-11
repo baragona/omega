@@ -20,8 +20,12 @@
 ;;;   4. recSusp computation at south              (recSusp(south) = s)
 ;;;   5. Truncation introduction                   (trunc-in(x) : ||A||)
 ;;;   6. Suspension merid is a path                (merid(a) : Id(Susp, north, south))
-
-;; ── Import HoTT base theory for identity types and path algebra ──
+;;;   7. concat(loop, loop) is a path              (double loop in S1)
+;;;   8. inv(loop) is a path                       (reversed loop)
+;;;   9. Double suspension merid path              (merid(a)·inv(merid(b)) : Id(Susp,n,n))
+;;;  10. Squash: any two truncated are equal       (squash proof)
+;;;  11. recS1 double application                  (recS1 on base twice)
+;;;  12. concat(loop, refl) = loop                 (right unit, definitional)
 
 (theory HITs
   (sort Ty)
@@ -43,6 +47,20 @@
 
   (rule path-refl :premises () :conclusion (path-eq ?A ?p ?p))
 
+  ;; ── Typing rules for paths ──
+  (rule t-refl
+    :premises ((has-type ?a ?A))
+    :conclusion (has-type refl (Id ?A ?a ?a)))
+
+  (rule t-inv
+    :premises ((has-type ?p (Id ?A ?a ?b)))
+    :conclusion (has-type (inv ?p) (Id ?A ?b ?a)))
+
+  (rule t-concat
+    :premises ((has-type ?p (Id ?A ?a ?b))
+               (has-type ?q (Id ?A ?b ?c)))
+    :conclusion (has-type (concat ?p ?q) (Id ?A ?a ?c)))
+
   ;; ── Base types ──
   (constructor Unit : Ty)
   (constructor tt   : Tm)
@@ -56,46 +74,26 @@
   ;; ════════════════════════════════════════════════════════
   ;; HIT 1: Circle (S1)
   ;; ════════════════════════════════════════════════════════
-  ;; S1 has:
-  ;;   - base : S1                    (point constructor)
-  ;;   - loop : Id(S1, base, base)    (path constructor)
-  ;;
-  ;; Recursor: recS1(C, b, l, x) eliminates from S1 into C
-  ;;   - recS1(C, b, l, base) → b
-  ;;   (path case: recS1 applied to loop gives l, but we model
-  ;;    this as a rewrite rule at the point level)
-
   (mutual
     (constructor S1    : Ty)
     (constructor base  : Tm)
-    (constructor loop  : Tm)               ;; loop : Id(S1, base, base)
-    (constructor recS1 : (-> Ty Tm Tm Tm Tm)))  ;; recS1(C, b, l, x)
+    (constructor loop  : Tm)
+    (constructor recS1 : (-> Ty Tm Tm Tm Tm)))
 
-  ;; Computation rule: recS1 at base
   (rewrite recS1-base (recS1 ?C ?b ?l base) ?b)
 
-  ;; loop typing
   (rule t-base :premises () :conclusion (has-type base S1))
   (rule t-loop :premises () :conclusion (has-type loop (Id S1 base base)))
 
   ;; ════════════════════════════════════════════════════════
   ;; HIT 2: Suspension
   ;; ════════════════════════════════════════════════════════
-  ;; Susp(A) has:
-  ;;   - north : Susp(A)
-  ;;   - south : Susp(A)
-  ;;   - merid : A → Id(Susp(A), north, south)
-  ;;
-  ;; Recursor: recSusp(C, n, s, m, x)
-  ;;   - recSusp(C, n, s, m, north) → n
-  ;;   - recSusp(C, n, s, m, south) → s
-
   (mutual
     (constructor Susp    : (-> Ty Ty))
     (constructor north   : Tm)
     (constructor south   : Tm)
-    (constructor merid   : (-> Tm Tm))         ;; merid(a) : path
-    (constructor recSusp : (-> Ty Tm Tm Tm Tm Tm)))  ;; recSusp(C, n, s, m, x)
+    (constructor merid   : (-> Tm Tm))
+    (constructor recSusp : (-> Ty Tm Tm Tm Tm Tm)))
 
   (rewrite recSusp-north (recSusp ?C ?n ?s ?m north) ?n)
   (rewrite recSusp-south (recSusp ?C ?n ?s ?m south) ?s)
@@ -109,12 +107,6 @@
   ;; ════════════════════════════════════════════════════════
   ;; HIT 3: Propositional Truncation
   ;; ════════════════════════════════════════════════════════
-  ;; ||A|| has:
-  ;;   - trunc-in : A → ||A||                  (introduction)
-  ;;   - squash : ∀ x y : ||A||, Id(||A||, x, y)  (all elements equal)
-  ;;
-  ;; This makes ||A|| a proposition (at most one element up to path).
-
   (constructor Trunc    : (-> Ty Ty))
   (constructor trunc-in : (-> Tm Tm))
 
@@ -122,84 +114,124 @@
     :premises ((has-type ?a ?A))
     :conclusion (has-type (trunc-in ?a) (Trunc ?A)))
 
-  ;; Squash: any two elements of ||A|| are path-equal
-  (constructor squash : (-> Tm Tm Tm))    ;; squash(x, y) : Id(||A||, x, y)
+  (constructor squash : (-> Tm Tm Tm))
   (rule t-squash
     :premises ((has-type ?x (Trunc ?A))
                (has-type ?y (Trunc ?A)))
     :conclusion (has-type (squash ?x ?y) (Id (Trunc ?A) ?x ?y)))
 
   ;; ── General typing ──
-  (rule t-refl
-    :premises ((has-type ?a ?A))
-    :conclusion (has-type refl (Id ?A ?a ?a)))
-
   (rule t-tt :premises () :conclusion (has-type tt Unit))
   (rule t-ze :premises () :conclusion (has-type ze Nat))
   (rule t-su :premises ((has-type ?n Nat)) :conclusion (has-type (su ?n) Nat)))
 
 (check-theory HITs)
 
-;;; ═══════════════════════════════════════════════════════════
-;;; Proof 1: recS1 computation at base
-;;; ═══════════════════════════════════════════════════════════
-;;; recS1(Nat, ze, loop, base) → ze by recS1-base rewrite.
 
+;;; ═══════════════════════════════════════════════════════════
+;;; Part 1: Computation rules (definitional equality)
+;;; ═══════════════════════════════════════════════════════════
+
+;;; Proof 1: recS1(Nat, ze, loop, base) → ze
 (proof recS1-at-base
   :theory HITs
   :goal (path-eq Nat (recS1 Nat ze loop base) ze)
   :derivation (path-refl))
 
-
-;;; ═══════════════════════════════════════════════════════════
 ;;; Proof 2: loop is a path from base to base
-;;; ═══════════════════════════════════════════════════════════
-
 (proof loop-is-path
   :theory HITs
   :goal (has-type loop (Id S1 base base))
   :derivation (t-loop))
 
-
-;;; ═══════════════════════════════════════════════════════════
-;;; Proof 3: recSusp computation at north
-;;; ═══════════════════════════════════════════════════════════
-;;; recSusp(Bool, true, false, m, north) → true
-
+;;; Proof 3: recSusp(Bool, true, false, m, north) → true
 (proof recSusp-at-north
   :theory HITs
   :goal (path-eq Bool (recSusp Bool true false ?m north) true)
   :derivation (path-refl))
 
-
-;;; ═══════════════════════════════════════════════════════════
-;;; Proof 4: recSusp computation at south
-;;; ═══════════════════════════════════════════════════════════
-;;; recSusp(Bool, true, false, m, south) → false
-
+;;; Proof 4: recSusp(Bool, true, false, m, south) → false
 (proof recSusp-at-south
   :theory HITs
   :goal (path-eq Bool (recSusp Bool true false ?m south) false)
   :derivation (path-refl))
 
-
-;;; ═══════════════════════════════════════════════════════════
-;;; Proof 5: Truncation introduction
-;;; ═══════════════════════════════════════════════════════════
-;;; trunc-in(ze) : ||Nat||
-
+;;; Proof 5: trunc-in(ze) : ||Nat||
 (proof trunc-intro
   :theory HITs
   :goal (has-type (trunc-in ze) (Trunc Nat))
   :derivation (t-trunc-in (t-ze)))
 
-
-;;; ═══════════════════════════════════════════════════════════
-;;; Proof 6: merid is a path in the suspension
-;;; ═══════════════════════════════════════════════════════════
-;;; merid(ze) : Id(Susp(Nat), north, south)
-
+;;; Proof 6: merid(ze) : Id(Susp(Nat), north, south)
 (proof merid-is-path
   :theory HITs
   :goal (has-type (merid ze) (Id (Susp Nat) north south))
   :derivation (t-merid (t-ze)))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Part 2: Multi-step typing derivations
+;;; ═══════════════════════════════════════════════════════════
+
+;;; Proof 7: concat(loop, loop) : Id(S1, base, base)
+;;; The double loop — compose the loop with itself.
+;;; Derivation: t-concat requires both paths to have matching endpoints.
+
+(proof double-loop
+  :theory HITs
+  :goal (has-type (concat loop loop) (Id S1 base base))
+  :derivation (t-concat (t-loop) (t-loop)))
+
+
+;;; Proof 8: inv(loop) : Id(S1, base, base)
+;;; The reversed loop.
+
+(proof inv-loop
+  :theory HITs
+  :goal (has-type (inv loop) (Id S1 base base))
+  :derivation (t-inv (t-loop)))
+
+
+;;; Proof 9: concat(merid(ze), inv(merid(su(ze)))) : Id(Susp(Nat), north, north)
+;;;
+;;; A non-trivial path in the suspension: go from north to south via merid(0),
+;;; then back from south to north via inv(merid(1)).
+;;; This requires chaining t-concat with t-merid and t-inv.
+
+(proof susp-north-loop
+  :theory HITs
+  :goal (has-type
+    (concat (merid ze) (inv (merid (su ze))))
+    (Id (Susp Nat) north north))
+  :derivation (t-concat (t-merid (t-ze)) (t-inv (t-merid (t-su (t-ze))))))
+
+
+;;; Proof 10: squash(trunc-in(ze), trunc-in(su(ze))) : Id(||Nat||, trunc-in(ze), trunc-in(su(ze)))
+;;;
+;;; Any two elements of a truncated type are equal.
+;;; This is a multi-step derivation chaining trunc-in with squash.
+
+(proof squash-proof
+  :theory HITs
+  :goal (has-type
+    (squash (trunc-in ze) (trunc-in (su ze)))
+    (Id (Trunc Nat) (trunc-in ze) (trunc-in (su ze))))
+  :derivation (t-squash (t-trunc-in (t-ze)) (t-trunc-in (t-su (t-ze)))))
+
+
+;;; Proof 11: recS1 applied twice — recS1(Nat, su(ze), loop, base) = su(ze)
+;;; A different base value shows the recursor is parametric.
+
+(proof recS1-succ
+  :theory HITs
+  :goal (path-eq Nat (recS1 Nat (su ze) loop base) (su ze))
+  :derivation (path-refl))
+
+
+;;; Proof 12: concat(loop, refl) = loop  (right unit, definitional)
+;;; Shows path algebra works with HIT path constructors.
+
+(proof loop-right-unit
+  :theory HITs
+  :goal (path-eq (Id S1 base base) (concat loop refl) loop)
+  :derivation (path-refl))

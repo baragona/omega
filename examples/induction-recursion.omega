@@ -15,8 +15,14 @@
 ;;;   2. El(bool-code) = Bool                  (decode booleans)
 ;;;   3. Pi-code decodes to function space     (decode Pi)
 ;;;   4. Sigma-code decodes to pair space      (decode Sigma)
-;;;   5. Nested decode: Pi(nat, λx.Bool)       (higher-order decode)
-;;;   6. Id type over decoded types             (identity at decoded type)
+;;;   5. Typing at decoded type                (ze : El(nat-code))
+;;;   6. refl at decoded identity type         (refl : Id(El(nat-code), ze, ze))
+;;;   7. Nat = El(nat-code) by symmetry        (reverse of decode)
+;;;   8. El(nat-code) = El(bool-code) by trans (from assumptions)
+;;;   9. Pi congruence                         (equal domains → equal Pi)
+;;;  10. Multi-step typing: su(su(ze)) : Nat   (chain of typing rules)
+;;;  11. su(ze) at decoded type                (su(ze) : El(nat-code))
+;;;  12. refl at decoded Bool identity         (refl : Id(El(bool-code), true, true))
 
 (theory IR
   (sort Ty)
@@ -41,6 +47,24 @@
   (judgment (ty-eq ?A ?B) :where A : Ty B : Ty)
 
   (rule teq-refl :premises () :conclusion (ty-eq ?A ?A))
+
+  (rule teq-symm
+    :premises ((ty-eq ?A ?B))
+    :conclusion (ty-eq ?B ?A))
+
+  (rule teq-trans
+    :premises ((ty-eq ?A ?B) (ty-eq ?B ?C))
+    :conclusion (ty-eq ?A ?C)
+    :implicit (?B))
+
+  ;; Congruence: equal domains → equal Pi/Sigma types
+  (rule cong-pi
+    :premises ((ty-eq ?A1 ?A2))
+    :conclusion (ty-eq (Pi ?A1 ?B) (Pi ?A2 ?B)))
+
+  (rule cong-sigma
+    :premises ((ty-eq ?A1 ?A2))
+    :conclusion (ty-eq (Sigma ?A1 ?B) (Sigma ?A2 ?B)))
 
   ;; ── The mutual block: Universe of codes + decoding function ──
   ;; U is the type of codes, El decodes a code into a type.
@@ -138,3 +162,72 @@
   :theory IR
   :goal (has-type refl (Id (El nat-code) ze ze))
   :derivation (t-refl (t-ze)))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Part 2: Equational reasoning over decoded types
+;;; ═══════════════════════════════════════════════════════════
+
+;;; Proof 7: Symmetry — Nat = El(nat-code)
+;;; El(nat-code) normalizes to Nat, so teq-refl gives El(nat-code) = Nat.
+;;; Then teq-symm reverses it to Nat = El(nat-code).
+
+(proof decode-nat-symm
+  :theory IR
+  :goal (ty-eq Nat (El nat-code))
+  :derivation (teq-symm (teq-refl)))
+
+
+;;; Proof 8: Transitivity from assumptions
+;;; Given Nat = Bool (hypothetically), derive El(nat-code) = El(bool-code)
+;;; by chaining:
+;;;   El(nat-code) = Nat       [by teq-refl, el-nat normalizes]
+;;;   Nat = Bool               [by assumption]
+;;;   Bool = El(bool-code)     [by teq-symm(teq-refl), el-bool normalizes]
+;;; Chain: teq-trans(teq-refl, teq-trans(assumption, teq-symm(teq-refl)))
+
+(proof decoded-trans
+  :theory IR
+  :assumptions ((ty-eq Nat Bool))
+  :goal (ty-eq (El nat-code) (El bool-code))
+  :derivation (teq-trans (teq-refl) (teq-trans (assumption) (teq-symm (teq-refl)))))
+
+
+;;; Proof 9: Pi congruence — equal domains → equal Pi types
+;;; Given El(nat-code) = El(bool-code) (hypothetically):
+;;;   Pi(El(nat-code), B) = Pi(El(bool-code), B) by cong-pi
+;;; But with normalization:
+;;;   From Nat = Bool (assumption), derive Pi(Nat, B) = Pi(Bool, B) by cong-pi.
+
+(proof pi-cong-from-assumption
+  :theory IR
+  :assumptions ((ty-eq Nat Bool))
+  :goal (ty-eq (Pi Nat ?B) (Pi Bool ?B))
+  :derivation (cong-pi (assumption)))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Part 3: Multi-step typing derivations
+;;; ═══════════════════════════════════════════════════════════
+
+;;; Proof 10: su(su(ze)) : Nat — 3-level typing chain
+(proof type-two
+  :theory IR
+  :goal (has-type (su (su ze)) Nat)
+  :derivation (t-su (t-su (t-ze))))
+
+
+;;; Proof 11: su(ze) at decoded type El(nat-code)
+;;; El(nat-code) → Nat, so this is su(ze) : Nat. Two-step typing.
+(proof succ-at-decoded
+  :theory IR
+  :goal (has-type (su ze) (El nat-code))
+  :derivation (t-su (t-ze)))
+
+
+;;; Proof 12: refl at decoded Bool identity type
+;;; refl : Id(El(bool-code), true, true) normalizes to Id(Bool, true, true).
+(proof refl-decoded-bool-id
+  :theory IR
+  :goal (has-type refl (Id (El bool-code) true true))
+  :derivation (t-refl (t-true)))

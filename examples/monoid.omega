@@ -1,99 +1,164 @@
-;;; Parameterized Theories (Modules)
+;;; Parameterized Theories — Monoid Laws
 ;;;
-;;; Demonstrates parameterized theories: write a theory once, instantiate
-;;; it many times with different types and operations.
+;;; Demonstrates parameterized theories with genuine algebraic content.
+;;; MonoidTheory is parameterized over a carrier type, binary operation,
+;;; and identity element. It provides:
+;;;   - Equational reasoning (refl, symm, trans)
+;;;   - Congruence rules for the operation
+;;;   - Monoid axioms (left/right identity, associativity)
 ;;;
-;;; EqTheory is parameterized over a type T and an equality predicate.
-;;; We instantiate it twice:
-;;;   - For Nat with nat-eq  (alias NE)
-;;;   - For Bool with bool-eq (alias BE)
-;;; Both coexist in the same theory without name collisions.
+;;; Instantiated twice:
+;;;   - For Nat with add and z  (alias NA)
+;;;   - For Bool with and and tt (alias BA)
+;;;
+;;; Proved here:
+;;;   1. NA.refl: z + z = z + z                     (reflexivity)
+;;;   2. NA.symm: from a=b, derive b=a              (symmetry with assumption)
+;;;   3. NA.triple-assoc: ((a+b)+c)+d = a+(b+(c+d)) (double associativity via trans)
+;;;   4. NA.unit-simplify: (a+e)+b = a+b            (right-id + congruence)
+;;;   5. NA.cong-both: a=b, c=d ⊢ a+c = b+d        (double congruence via trans)
+;;;   6. BA.refl: and(tt,tt) = and(tt,tt)            (Bool instance)
+;;;   7. BA.assoc: and(and(a,b),c) = and(a,and(b,c)) (Bool associativity)
+;;;   8. BA.left-id: and(tt,a) = a                   (Bool left identity)
 
-;; ── Parameterized Equational Theory ──
-;; Parameters: T (the carrier type), eq-rel (the equality predicate)
-;; The theory body uses T and eq-rel as plain symbols.
-
-(theory EqTheory
-  :params ((T Type) (eq-rel (-> T T Prop)))
+(theory MonoidTheory
+  :params ((T Type) (op (-> T T T)) (e T))
   (sort Prop)
+  (constructor eq : (-> T T Prop))
   (judgment (proves ?P) :where P : Prop)
 
+  ;; Equational reasoning
   (rule refl
     :premises ()
-    :conclusion (proves (eq-rel ?a ?a)))
+    :conclusion (proves (eq ?a ?a)))
 
   (rule symm
-    :premises ((proves (eq-rel ?a ?b)))
-    :conclusion (proves (eq-rel ?b ?a)))
+    :premises ((proves (eq ?a ?b)))
+    :conclusion (proves (eq ?b ?a)))
 
   (rule trans
-    :premises ((proves (eq-rel ?a ?b)) (proves (eq-rel ?b ?c)))
-    :conclusion (proves (eq-rel ?a ?c))))
+    :premises ((proves (eq ?a ?b)) (proves (eq ?b ?c)))
+    :conclusion (proves (eq ?a ?c))
+    :implicit (?b))
 
-(check-theory EqTheory)
+  ;; Congruence rules
+  (rule cong-l
+    :premises ((proves (eq ?a ?b)))
+    :conclusion (proves (eq (op ?a ?c) (op ?b ?c))))
+
+  (rule cong-r
+    :premises ((proves (eq ?a ?b)))
+    :conclusion (proves (eq (op ?c ?a) (op ?c ?b))))
+
+  ;; Monoid axioms
+  (rule left-id
+    :premises ()
+    :conclusion (proves (eq (op e ?a) ?a)))
+
+  (rule right-id
+    :premises ()
+    :conclusion (proves (eq (op ?a e) ?a)))
+
+  (rule assoc
+    :premises ()
+    :conclusion (proves (eq (op (op ?a ?b) ?c) (op ?a (op ?b ?c))))))
+
+(check-theory MonoidTheory)
 
 
-;; ── Instantiate for Nat ──
+;; ── Instantiate for Nat with addition ──
 
-(theory PeanoEq
+(theory NatMonoid
   (sort Nat)
   (constructor z : Nat)
   (constructor s : (-> Nat Nat))
-  (constructor nat-eq : (-> Nat Nat NE.Prop))
-  (import EqTheory Nat nat-eq :as NE))
+  (constructor add : (-> Nat Nat Nat))
 
-(check-theory PeanoEq)
+  (import MonoidTheory Nat add z :as NA))
+
+(check-theory NatMonoid)
 
 
-;; ── Instantiate for Bool (in same theory as Nat!) ──
+;; ── Instantiate for Bool with conjunction ──
 
-(theory TwoSorted
-  (sort Nat)
+(theory BoolMonoid
   (sort Bool)
-  (constructor z : Nat)
-  (constructor s : (-> Nat Nat))
   (constructor tt : Bool)
   (constructor ff : Bool)
-  (constructor nat-eq : (-> Nat Nat NE.Prop))
-  (constructor bool-eq : (-> Bool Bool BE.Prop))
+  (constructor band : (-> Bool Bool Bool))
 
-  ;; Two instances of EqTheory coexist: NE.* for Nat, BE.* for Bool
-  (import EqTheory Nat nat-eq :as NE)
-  (import EqTheory Bool bool-eq :as BE))
+  (import MonoidTheory Bool band tt :as BA))
 
-(check-theory TwoSorted)
+(check-theory BoolMonoid)
 
 
-;; ── Proofs using Nat equality ──
+;;; ═══════════════════════════════════════════════════════════
+;;; Nat monoid proofs
+;;; ═══════════════════════════════════════════════════════════
 
+;; Proof 1: Reflexivity
 (proof nat-refl
-  :theory PeanoEq
-  :goal (NE.proves (nat-eq z z))
-  :derivation (NE.refl))
+  :theory NatMonoid
+  :goal (NA.proves (NA.eq z z))
+  :derivation (NA.refl))
 
+;; Proof 2: Symmetry from assumption
 (proof nat-symm
-  :theory PeanoEq
-  :goal (NE.proves (nat-eq z (s z)))
-  :assumptions ((NE.proves (nat-eq (s z) z)))
-  :derivation (NE.symm (assumption)))
+  :theory NatMonoid
+  :goal (NA.proves (NA.eq z (s z)))
+  :assumptions ((NA.proves (NA.eq (s z) z)))
+  :derivation (NA.symm (assumption)))
 
-(proof nat-trans
-  :theory PeanoEq
-  :goal (NE.proves (nat-eq z (s (s z))))
-  :assumptions ((NE.proves (nat-eq z (s z)))
-                (NE.proves (nat-eq (s z) (s (s z)))))
-  :derivation (NE.trans (assumption) (assumption)))
+;; Proof 3: Triple associativity — ((a+b)+c)+d = a+(b+(c+d))
+;; Two-step chain:
+;;   ((a+b)+c)+d = (a+b)+(c+d)    [by assoc]
+;;   (a+b)+(c+d) = a+(b+(c+d))    [by assoc]
+(proof nat-triple-assoc
+  :theory NatMonoid
+  :goal (NA.proves (NA.eq (add (add (add a0 b0) c0) d0) (add a0 (add b0 (add c0 d0)))))
+  :derivation (NA.trans (NA.assoc) (NA.assoc)))
+
+;; Proof 4: Unit simplification — (a+e)+b = a+b
+;; Step: cong-l from right-id gives (a+e)+b = a+b
+;; because right-id proves (a+e) = a, and cong-l lifts it.
+;; Wait — cong-l gives eq(op(a+e, b), op(a, b)), i.e., (add (add a e) b) = (add a b).
+;; But the pattern is cong-l: from eq(a,b) derive eq(op(a,c), op(b,c)).
+;; right-id gives eq(op(a0, e), a0) = eq(add(a0, z), a0).
+;; cong-l lifts to eq(op(add(a0,z), b0), op(a0, b0)) = eq(add(add(a0,z),b0), add(a0,b0)).
+(proof nat-unit-simplify
+  :theory NatMonoid
+  :goal (NA.proves (NA.eq (add (add a0 z) b0) (add a0 b0)))
+  :derivation (NA.cong-l (NA.right-id)))
+
+;; Proof 5: Double congruence — a=b, c=d ⊢ a+c = b+d
+;; Two-step chain:
+;;   a+c = b+c    [cong-l from a=b]
+;;   b+c = b+d    [cong-r from c=d]
+(proof nat-cong-both
+  :theory NatMonoid
+  :assumptions ((NA.proves (NA.eq a0 b0)) (NA.proves (NA.eq c0 d0)))
+  :goal (NA.proves (NA.eq (add a0 c0) (add b0 d0)))
+  :derivation (NA.trans (NA.cong-l (assumption 0)) (NA.cong-r (assumption 1))))
 
 
-;; ── Proofs using Bool equality ──
+;;; ═══════════════════════════════════════════════════════════
+;;; Bool monoid proofs
+;;; ═══════════════════════════════════════════════════════════
 
+;; Proof 6: Reflexivity
 (proof bool-refl
-  :theory TwoSorted
-  :goal (BE.proves (bool-eq tt tt))
-  :derivation (BE.refl))
+  :theory BoolMonoid
+  :goal (BA.proves (BA.eq tt tt))
+  :derivation (BA.refl))
 
-(proof bool-symm
-  :theory TwoSorted
-  :goal (BE.proves (bool-eq ff tt))
-  :assumptions ((BE.proves (bool-eq tt ff)))
-  :derivation (BE.symm (assumption)))
+;; Proof 7: Associativity
+(proof bool-assoc
+  :theory BoolMonoid
+  :goal (BA.proves (BA.eq (band (band a0 b0) c0) (band a0 (band b0 c0))))
+  :derivation (BA.assoc))
+
+;; Proof 8: Left identity — and(tt, a) = a
+(proof bool-left-id
+  :theory BoolMonoid
+  :goal (BA.proves (BA.eq (band tt a0) a0))
+  :derivation (BA.left-id))

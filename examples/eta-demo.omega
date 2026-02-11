@@ -22,6 +22,24 @@
     :premises ()
     :conclusion (mor-eq ?f ?f))
 
+  (rule meq-symm
+    :premises ((mor-eq ?f ?g))
+    :conclusion (mor-eq ?g ?f))
+
+  (rule meq-trans
+    :premises ((mor-eq ?f ?g) (mor-eq ?g ?h))
+    :conclusion (mor-eq ?f ?h)
+    :implicit (?g))
+
+  ;; Congruence for composition
+  (rule cong-comp-l
+    :premises ((mor-eq ?f ?g))
+    :conclusion (mor-eq (comp ?f ?h) (comp ?g ?h)))
+
+  (rule cong-comp-r
+    :premises ((mor-eq ?f ?g))
+    :conclusion (mor-eq (comp ?h ?f) (comp ?h ?g)))
+
   ;; Composition identity rewrites
   (rewrite comp-id-l (comp (id ?A) ?f) ?f)
   (rewrite comp-id-r (comp ?f (id ?A)) ?f))
@@ -89,3 +107,46 @@
 (proof no-eta-when-used :theory EtaDemo
   :goal (mor-eq (lambda (x : Mor) (comp #0 #0)) (lambda (x : Mor) (comp #0 #0)))
   :derivation (meq-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Part 2: Eta + equational reasoning from assumptions
+;;; ═══════════════════════════════════════════════════════════
+
+;; Test 8: f = g ⊢ (lambda (x:Mor) (f #0)) = g
+;; LHS eta-contracts to f, then assumption gives f = g.
+(proof eta-from-assumption :theory EtaDemo
+  :assumptions ((mor-eq f g))
+  :goal (mor-eq (lambda (x : Mor) (f #0)) g)
+  :derivation (assumption))
+
+;; Test 9: f = g ⊢ comp(f, h) = comp(g, h)
+;; Uses cong-comp-l with assumption.
+(proof cong-from-assumption :theory EtaDemo
+  :assumptions ((mor-eq f g))
+  :goal (mor-eq (comp f h) (comp g h))
+  :derivation (cong-comp-l (assumption)))
+
+;; Test 10: f = g, h = k ⊢ comp(f, h) = comp(g, k)
+;; Two-step chain:
+;;   comp(f,h) = comp(g,h) by cong-comp-l(f=g)
+;;   comp(g,h) = comp(g,k) by cong-comp-r(h=k)
+(proof double-cong-comp :theory EtaDemo
+  :assumptions ((mor-eq f g) (mor-eq h k))
+  :goal (mor-eq (comp f h) (comp g k))
+  :derivation (meq-trans (cong-comp-l (assumption 0)) (cong-comp-r (assumption 1))))
+
+;; Test 11: f = g ⊢ g = f (symmetry from assumption)
+(proof symm-from-assumption :theory EtaDemo
+  :assumptions ((mor-eq f g))
+  :goal (mor-eq g f)
+  :derivation (meq-symm (assumption)))
+
+;; Test 12: Eta + composition rewrite + congruence
+;; f = g ⊢ comp(id(A), f) = g
+;; comp(id(A), f) normalizes to f by comp-id-l rewrite.
+;; Then f = g by assumption.
+(proof eta-comp-rewrite :theory EtaDemo
+  :assumptions ((mor-eq f g))
+  :goal (mor-eq (comp (id A) f) g)
+  :derivation (assumption))

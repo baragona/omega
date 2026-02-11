@@ -12,6 +12,12 @@
 ;;;   5. cons(ze, nil) : List(Nat)                (level preserved)
 ;;;   6. const reduces correctly                  (rewrite rule)
 ;;;   7. Type 1 : Type 2                          (level hierarchy)
+;;;   8. su(su(su(ze))) : Nat                     (3-step typing chain)
+;;;   9. cons(ze, cons(ze, nil)) : List(Nat)      (nested cons, deep derivation)
+;;;  10. Pi(Nat, Nat) : Type(lmax 0 0)            (Pi with level computation)
+;;;  11. refl : Id(Nat, su(ze), su(ze))           (refl at successor type)
+;;;  12. nil : List(List(Nat))                    (nested list typing)
+;;;  13. Type 0 = Type 0 by symm                  (type equality reasoning)
 
 (theory LevelPoly
   (sort Type) (sort Tm)
@@ -78,6 +84,16 @@
   (rule t-pi
     :premises ((has-type ?A (Type ?lv1)) (has-type ?B (Type ?lv2)))
     :conclusion (has-type (Pi ?A ?B) (Type (lmax ?lv1 ?lv2))))
+
+  ;; ── List type former ──
+  (rule t-list
+    :premises ((has-type ?A (Type ?lv)))
+    :conclusion (has-type (List ?A) (Type ?lv)))
+
+  ;; ── Type equality ──
+  (rule teq-symm
+    :premises ((ty-eq ?A ?B))
+    :conclusion (ty-eq ?B ?A))
 
   ;; ── Const function type (level-polymorphic) ──
   ;; const : A → B → A
@@ -160,3 +176,58 @@
   :theory LevelPoly
   :goal (has-type (Type 1) (Type 2))
   :derivation (type-in-type))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Part 2: Multi-step typing derivations
+;;; ═══════════════════════════════════════════════════════════
+
+;;; Proof 8: su(su(su(ze))) : Nat — 4-level typing chain
+(proof type-three
+  :theory LevelPoly
+  :goal (has-type (su (su (su ze))) Nat)
+  :derivation (t-su (t-su (t-su (t-ze)))))
+
+
+;;; Proof 9: cons(ze, cons(ze, nil)) : List(Nat) — deep derivation
+;;; Requires proving ze : Nat and the inner cons, each needing Nat : Type 0.
+(proof nested-cons
+  :theory LevelPoly
+  :goal (has-type (cons ze (cons ze nil)) (List Nat))
+  :derivation (t-cons (t-ze) (t-cons (t-ze) (t-nil (t-nat)) (t-nat)) (t-nat)))
+
+
+;;; Proof 10: Pi(?A, ?B) : Type(lmax ?lv1 ?lv2)
+;;; The level of a Pi type is the max of its domain and codomain levels.
+;;; Here the meta-variables ?A, ?B, ?lv1, ?lv2 remain unresolved — this
+;;; demonstrates the t-pi rule schema itself.
+(proof pi-generic
+  :theory LevelPoly
+  :goal (has-type (Pi ?A ?B) (Type (lmax ?lv1 ?lv2)))
+  :derivation (t-pi (assumption) (assumption))
+  :assumptions ((has-type ?A (Type ?lv1)) (has-type ?B (Type ?lv2))))
+
+
+;;; Proof 11: refl : Id(Nat, su(ze), su(ze)) — identity at successor
+;;; Requires proving su(ze) : Nat (2-step) and Nat : Type 0.
+(proof refl-succ
+  :theory LevelPoly
+  :goal (has-type refl (Id Nat (su ze) (su ze)))
+  :derivation (t-refl (t-su (t-ze)) (t-nat)))
+
+
+;;; Proof 12: nil : List(List(Nat)) — nested list typing
+;;; Requires: Nat : Type 0, then List(Nat) : Type 0 via t-list, then t-nil.
+(proof nil-nested-list
+  :theory LevelPoly
+  :goal (has-type nil (List (List Nat)))
+  :derivation (t-nil (t-list (t-nat))))
+
+
+;;; Proof 13: Type equality — teq-symm applied
+;;; const-fn(ze, su(ze)) normalizes to ze by const-beta.
+;;; So ty-eq(const-fn(ze, su(ze)), ze) by teq-refl, reversed by teq-symm.
+(proof const-symm
+  :theory LevelPoly
+  :goal (ty-eq ze (const-fn ze (su ze)))
+  :derivation (teq-symm (teq-refl)))

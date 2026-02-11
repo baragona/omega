@@ -62,7 +62,17 @@
   ;; abs(x) = if x == 0 then 0 else x  (simplified)
   (constructor abs-body : Expr)
   (rewrite def-abs abs-body
-    (lambda (x : Expr) (if-expr (eq-expr #0 z) z #0))))
+    (lambda (x : Expr) (if-expr (eq-expr #0 z) z #0)))
+
+  ;; triple(x) = x + x + x
+  (constructor triple-body : Expr)
+  (rewrite def-triple triple-body
+    (lambda (x : Expr) (add-expr #0 (add-expr #0 #0))))
+
+  ;; is-zero(x) = x == 0
+  (constructor is-zero-body : Expr)
+  (rewrite def-is-zero is-zero-body
+    (lambda (x : Expr) (eq-expr #0 z))))
 
 (check-theory RustAST)
 
@@ -99,7 +109,33 @@
   ;; ── Equality judgment ──
   (constructor eq : (-> Expr Expr Prop))
   (judgment (proves ?P) :where P : Prop)
-  (rule eq-refl :premises () :conclusion (proves (eq ?a ?a))))
+  (rule eq-refl :premises () :conclusion (proves (eq ?a ?a)))
+
+  (rule eq-symm
+    :premises ((proves (eq ?a ?b)))
+    :conclusion (proves (eq ?b ?a)))
+
+  (rule eq-trans
+    :premises ((proves (eq ?a ?b)) (proves (eq ?b ?c)))
+    :conclusion (proves (eq ?a ?c))
+    :implicit (?b))
+
+  ;; Congruence rules for operations
+  (rule cong-add-l
+    :premises ((proves (eq ?a ?b)))
+    :conclusion (proves (eq (add-expr ?a ?c) (add-expr ?b ?c))))
+
+  (rule cong-add-r
+    :premises ((proves (eq ?a ?b)))
+    :conclusion (proves (eq (add-expr ?c ?a) (add-expr ?c ?b))))
+
+  (rule cong-mul-l
+    :premises ((proves (eq ?a ?b)))
+    :conclusion (proves (eq (mul-expr ?a ?c) (mul-expr ?b ?c))))
+
+  (rule cong-s
+    :premises ((proves (eq ?a ?b)))
+    :conclusion (proves (eq (s ?a) (s ?b)))))
 
 (check-theory Eval)
 
@@ -166,6 +202,95 @@
                     (mul-expr (s (s (s (s z))))
                               (s (s (s (s (s (s z)))))))))
   :derivation (eq-refl))
+
+
+;; ── NEW HOAS FUNCTIONS ──
+
+;; triple(0) = 0
+(proof triple-0
+  :theory Eval
+  :goal (proves (eq (triple-body z) z))
+  :derivation (eq-refl))
+
+;; triple(1) = 3
+(proof triple-1
+  :theory Eval
+  :goal (proves (eq (triple-body (s z)) (s (s (s z)))))
+  :derivation (eq-refl))
+
+;; triple(2) = 6
+(proof triple-2
+  :theory Eval
+  :goal (proves (eq (triple-body (s (s z)))
+                    (s (s (s (s (s (s z))))))))
+  :derivation (eq-refl))
+
+;; is-zero(0) = tt
+(proof is-zero-0
+  :theory Eval
+  :goal (proves (eq (is-zero-body z) tt))
+  :derivation (eq-refl))
+
+;; is-zero(1) = ff
+(proof is-zero-1
+  :theory Eval
+  :goal (proves (eq (is-zero-body (s z)) ff))
+  :derivation (eq-refl))
+
+
+;; ── MULTI-STEP EQUATIONAL REASONING ──
+
+;; Symmetry: 6 = factorial(3)
+;; factorial(3) normalizes to s(s(s(s(s(s(z)))))).
+;; eq-symm reverses the eq-refl identity.
+(proof fact-3-symm
+  :theory Eval
+  :goal (proves (eq (s (s (s (s (s (s z)))))) (factorial (s (s (s z))))))
+  :derivation (eq-symm (eq-refl)))
+
+;; From n=m, prove double(n) = double(m).
+;; double-body(n) normalizes to add-expr(n,n) via beta reduction.
+;; Two-step chain:
+;;   add(n,n) = add(m,n)  [cong-add-l from n=m]
+;;   add(m,n) = add(m,m)  [cong-add-r from n=m]
+(proof double-cong
+  :theory Eval
+  :assumptions ((proves (eq n0 m0)))
+  :goal (proves (eq (double-body n0) (double-body m0)))
+  :derivation (eq-trans (cong-add-l (assumption)) (cong-add-r (assumption))))
+
+;; From n=m, prove s(s(n)) = s(s(m)).
+;; Two congruence steps.
+(proof succ-succ-cong
+  :theory Eval
+  :assumptions ((proves (eq n0 m0)))
+  :goal (proves (eq (s (s n0)) (s (s m0))))
+  :derivation (cong-s (cong-s (assumption))))
+
+;; From n=m, prove square(n) = square(m).
+;; square-body(n) normalizes to mul-expr(n,n) via beta reduction.
+;; Chain: mul(n,n) = mul(m,n) [cong-mul-l] then mul(m,n) = mul(m,m)...
+;; But we only have cong-mul-l. Use: cong-mul-l(assumption) gives mul(n,n) = mul(m,n).
+;; For a simpler version: just show the left congruence.
+(proof square-cong-l
+  :theory Eval
+  :assumptions ((proves (eq n0 m0)))
+  :goal (proves (eq (mul-expr n0 k0) (mul-expr m0 k0)))
+  :derivation (cong-mul-l (assumption)))
+
+;; From n=m, prove triple(n) = triple(m).
+;; triple-body(n) normalizes to add-expr(n, add-expr(n, n)) via beta.
+;; Three-step chain:
+;;   add(n, add(n,n)) = add(m, add(n,n))  [cong-add-l from n=m]
+;;   add(m, add(n,n)) = add(m, add(m,n))  [cong-add-r(cong-add-l(n=m))]
+;;   add(m, add(m,n)) = add(m, add(m,m))  [cong-add-r(cong-add-r(n=m))]
+(proof triple-cong
+  :theory Eval
+  :assumptions ((proves (eq n0 m0)))
+  :goal (proves (eq (triple-body n0) (triple-body m0)))
+  :derivation (eq-trans (cong-add-l (assumption))
+                (eq-trans (cong-add-r (cong-add-l (assumption)))
+                          (cong-add-r (cong-add-r (assumption))))))
 
 
 ;;; ════════════════════════════════════════════════════════════
@@ -266,6 +391,16 @@
 (emit :theory Compiler
   (c-func "int" "abs_val" "int x"
     (abs-body (var "x"))))
+
+;; int triple(int x) { return x + x + x; }
+(emit :theory Compiler
+  (c-func "int" "triple" "int x"
+    (triple-body (var "x"))))
+
+;; int is_zero(int x) { return x == 0; }
+(emit :theory Compiler
+  (c-func "int" "is_zero" "int x"
+    (is-zero-body (var "x"))))
 
 ;; int factorial(int n) {
 ;;     return (n == 0 ? 1 : n * factorial(n - 1));

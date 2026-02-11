@@ -5,8 +5,17 @@
 ;;; - Weakening is free: unused assumptions are silently dropped
 ;;; - This models "move semantics" — using a resource consumes it
 ;;;
-;;; Multiplicative splitting: premises share one consumed set sequentially.
-;;; Premise 1's consumption is visible to premise 2.
+;;; Proved here:
+;;;   1. tensor-pair: x, y ⊢ x ⊗ y                      (tensor from two resources)
+;;;   2. unit-free: ⊢ 1                                  (unit needs no resources)
+;;;   3. tensor-with-unit: a ⊢ a ⊗ 1                     (tensor with unit)
+;;;   4. shadow-use: a, a ⊢ a ⊗ a                        (distinct resources)
+;;;   5. lolli-id: ⊢ A ⊸ A                               (linear identity function)
+;;;   6. modus-ponens: A ⊸ B, A ⊢ B                      (linear function application)
+;;;   7. tensor-comm: A ⊗ B ⊢ B ⊗ A                      (tensor commutativity)
+;;;   8. linear-compose: A⊸B, B⊸C ⊢ A⊸C                  (linear composition)
+;;;   9. tensor-unit-right: A ⊢ A ⊗ 1                    (tensor with unit, right)
+;;;  10. distribute-lolli: A⊸B, A ⊢ B ⊗ 1                (apply + tensor unit)
 
 (theory AffineLogic
   (context-mode affine)
@@ -30,37 +39,111 @@
   ;; are consumed before B's premises are checked.
   (rule tensor-intro
     :premises ((holds ?A) (holds ?B))
-    :conclusion (holds (tensor ?A ?B))))
+    :conclusion (holds (tensor ?A ?B)))
 
-;;; --- Valid proofs: each assumption used exactly once ---
+  ;; Tensor elimination: given A ⊗ B, use A and B separately in continuation.
+  ;; Context extensions add the components to premise 1's context.
+  (rule tensor-elim
+    :premises ((holds (tensor ?A ?B)) (holds ?C))
+    :conclusion (holds ?C)
+    :context ((1 (holds ?A)) (1 (holds ?B))))
 
-;; From (holds x), (holds y) ⊢ (holds (tensor x y))
-;; Each assumption consumed once via `assumption`.
+  ;; Linear implication introduction: prove B from A (A added to context)
+  (rule lolli-intro
+    :premises ((holds ?B))
+    :conclusion (holds (lolli ?A ?B))
+    :context ((0 (holds ?A))))
+
+  ;; Linear implication elimination: given A ⊸ B and A, derive B
+  (rule lolli-elim
+    :premises ((holds (lolli ?A ?B)) (holds ?A))
+    :conclusion (holds ?B)))
+
+(check-theory AffineLogic)
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Part 1: Basic resource management
+;;; ═══════════════════════════════════════════════════════════
+
+;; Proof 1: From (holds x), (holds y) ⊢ (holds (tensor x y))
 (proof tensor-pair
   :theory AffineLogic
   :goal (holds (tensor x y))
   :assumptions ((holds x) (holds y))
   :derivation (tensor-intro assumption assumption))
 
-;; Unit is always provable (no assumptions needed)
+;; Proof 2: Unit is always provable
 (proof unit-free
   :theory AffineLogic
   :goal (holds one)
   :derivation (one-intro))
 
-;; From (holds a) ⊢ (holds (tensor a one))
-;; a is used once; one-intro needs nothing.
+;; Proof 3: From (holds a) ⊢ (holds (tensor a one))
 (proof tensor-with-unit
   :theory AffineLogic
   :goal (holds (tensor a one))
   :assumptions ((holds a))
   :derivation (tensor-intro assumption (one-intro)))
 
-;; Shadowing test: two assumptions of the same type.
-;; (holds a), (holds a) ⊢ (holds (tensor a a))
-;; First assumption takes the most recent (index 1), second takes index 0.
+;; Proof 4: Two assumptions of the same type
 (proof shadow-use
   :theory AffineLogic
   :goal (holds (tensor a a))
   :assumptions ((holds a) (holds a))
   :derivation (tensor-intro assumption assumption))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Part 2: Linear implication
+;;; ═══════════════════════════════════════════════════════════
+
+;; Proof 5: ⊢ A ⊸ A  (linear identity function)
+;; lolli-intro adds (holds A) to premise context; assumption consumes it.
+(proof lolli-id
+  :theory AffineLogic
+  :goal (holds (lolli a a))
+  :derivation (lolli-intro (assumption)))
+
+;; Proof 6: A ⊸ B, A ⊢ B  (linear modus ponens)
+(proof modus-ponens
+  :theory AffineLogic
+  :assumptions ((holds (lolli a b)) (holds a))
+  :goal (holds b)
+  :derivation (lolli-elim (assumption 0) (assumption 1)))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Part 3: Multi-step proofs with elimination
+;;; ═══════════════════════════════════════════════════════════
+
+;; Proof 7: A ⊗ B ⊢ B ⊗ A  (tensor commutativity)
+;; tensor-elim decomposes the tensor, adding A and B to context.
+;; tensor-intro rebuilds with swapped order.
+(proof tensor-comm
+  :theory AffineLogic
+  :assumptions ((holds (tensor a b)))
+  :goal (holds (tensor b a))
+  :derivation (tensor-elim (assumption) (tensor-intro assumption assumption)))
+
+;; Proof 8: A⊸B, B⊸C ⊢ A⊸C  (linear composition)
+;; lolli-intro adds A to context, then chain: apply A⊸B to get B, apply B⊸C to get C.
+(proof linear-compose
+  :theory AffineLogic
+  :assumptions ((holds (lolli a b)) (holds (lolli b c)))
+  :goal (holds (lolli a c))
+  :derivation (lolli-intro (lolli-elim assumption (lolli-elim assumption assumption))))
+
+;; Proof 9: A ⊢ A ⊗ 1  (right tensoring with unit)
+(proof tensor-unit-right
+  :theory AffineLogic
+  :assumptions ((holds a))
+  :goal (holds (tensor a one))
+  :derivation (tensor-intro (assumption) (one-intro)))
+
+;; Proof 10: A⊸B, A ⊢ B ⊗ 1  (apply function + tensor with unit)
+(proof apply-and-unit
+  :theory AffineLogic
+  :assumptions ((holds (lolli a b)) (holds a))
+  :goal (holds (tensor b one))
+  :derivation (tensor-intro (lolli-elim (assumption 0) (assumption 1)) (one-intro)))

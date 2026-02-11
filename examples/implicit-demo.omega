@@ -2,6 +2,21 @@
 ;;
 ;; Demonstrates how Omega handles rules with implicit arguments
 ;; that are inferred from context rather than stated explicitly.
+;;
+;; The key feature: eq-trans has ?b as implicit — the middle term
+;; of a transitivity chain is inferred from the sub-derivations.
+;;
+;; Proved here:
+;;   1. zero = zero                              (reflexivity)
+;;   2. succ(zero) = succ(zero)                  (congruence)
+;;   3. succ(zero) = succ(succ(zero)) assumed    (symmetry from assumption)
+;;   4. zero = zero via trans                    (trivial transitivity)
+;;   5. succ(succ(zero)) = succ(succ(zero))      (double congruence)
+;;   6. a=b ⊢ succ(succ(a)) = succ(succ(b))     (deep congruence from assumption)
+;;   7. a=b, b=c ⊢ succ(a) = succ(c)            (congruence + trans chain)
+;;   8. a=b ⊢ b=a                               (symmetry from assumption)
+;;   9. a=b, b=c, c=d ⊢ a=d                     (triple transitivity, 2 implicit)
+;;  10. a=b ⊢ succ(succ(a)) = succ(succ(b))     (deep cong + symm roundtrip)
 
 (theory ImplicitDemo
   (sort Tm)
@@ -99,3 +114,53 @@
   :theory ImplicitDemo
   :goal (eq (succ (succ zero)) (succ (succ zero)))
   :derivation (cong-succ (cong-succ (eq-refl))))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Part 2: Multi-step proofs with implicit inference
+;;; ═══════════════════════════════════════════════════════════
+
+;; Prove: from a = b, derive succ(succ(a)) = succ(succ(b))
+;; Deep congruence chain from an assumption.
+(proof deep-cong-assumption
+  :theory ImplicitDemo
+  :assumptions ((eq a0 b0))
+  :goal (eq (succ (succ a0)) (succ (succ b0)))
+  :derivation (cong-succ (cong-succ (assumption))))
+
+;; Prove: from a = b and b = c, derive succ(a) = succ(c)
+;; Requires: eq-trans infers ?b from sub-derivations,
+;; then cong-succ wraps the result.
+;; Actually: cong-succ(eq-trans(assumption 0, assumption 1))
+;; eq-trans gets (eq a0 b0) and (eq b0 c0), infers ?b = b0.
+(proof cong-trans-chain
+  :theory ImplicitDemo
+  :assumptions ((eq a0 b0) (eq b0 c0))
+  :goal (eq (succ a0) (succ c0))
+  :derivation (cong-succ (eq-trans (assumption 0) (assumption 1))))
+
+;; Prove: from a = b, derive b = a
+;; Simple symmetry from assumption.
+(proof symm-assumption
+  :theory ImplicitDemo
+  :assumptions ((eq a0 b0))
+  :goal (eq b0 a0)
+  :derivation (eq-symm (assumption)))
+
+;; Prove: from a=b, b=c, c=d, derive a=d
+;; Triple transitivity — two implicit middle terms must be inferred.
+;; eq-trans(eq-trans(a=b, b=c), c=d) — inner trans infers ?b=b0, outer infers ?b=c0.
+(proof triple-trans
+  :theory ImplicitDemo
+  :assumptions ((eq a0 b0) (eq b0 c0) (eq c0 d0))
+  :goal (eq a0 d0)
+  :derivation (eq-trans (eq-trans (assumption 0) (assumption 1)) (assumption 2)))
+
+;; Prove: from a=b, derive succ(succ(b)) = succ(succ(a))
+;; Compose symmetry with deep congruence.
+;; eq-symm(cong-succ(cong-succ(assumption)))
+(proof deep-cong-symm
+  :theory ImplicitDemo
+  :assumptions ((eq a0 b0))
+  :goal (eq (succ (succ b0)) (succ (succ a0)))
+  :derivation (eq-symm (cong-succ (cong-succ (assumption)))))

@@ -4,6 +4,9 @@
 ;;; Symbols declared :ac or :aci are automatically canonicalized at intern time:
 ;;;   flatten nested applications → sort by structural hash → rebuild right-associative
 ;;; Result: AC-equivalent terms are definitionally equal (eq-refl proves them).
+;;;
+;;; Part 1: Pure AC/ACI normalization (all eq-refl — normalization does the work)
+;;; Part 2: AC + equational reasoning from assumptions (multi-step inference chains)
 
 (theory ACDemo
   (sort Ty) (sort Tm)
@@ -14,7 +17,22 @@
 
   ;; Equality judgment
   (judgment (eq ?a ?b) :where a : Tm b : Tm)
-  (rule eq-refl :premises () :conclusion (eq ?a ?a)))
+  (rule eq-refl :premises () :conclusion (eq ?a ?a))
+
+  (rule eq-symm
+    :premises ((eq ?a ?b))
+    :conclusion (eq ?b ?a))
+
+  (rule eq-trans
+    :premises ((eq ?a ?b) (eq ?b ?c))
+    :conclusion (eq ?a ?c)
+    :implicit (?b))
+
+  ;; A non-AC function for congruence reasoning
+  (constructor f : (-> Tm Tm))
+  (rule cong-f
+    :premises ((eq ?a ?b))
+    :conclusion (eq (f ?a) (f ?b))))
 
 (check-theory ACDemo)
 
@@ -37,6 +55,43 @@
 (proof ac-four :theory ACDemo
   :goal (eq (op (op d c) (op a b)) (op (op a d) (op b c)))
   :derivation (eq-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Part 2: AC + equational reasoning from assumptions
+;;; ═══════════════════════════════════════════════════════════
+
+;; From a=b, prove b=a (symmetry from assumption)
+(proof ac-symm :theory ACDemo
+  :assumptions ((eq a0 b0))
+  :goal (eq b0 a0)
+  :derivation (eq-symm (assumption)))
+
+;; From a=b, b=c, prove a=c (transitivity, implicit middle inferred)
+(proof ac-trans :theory ACDemo
+  :assumptions ((eq a0 b0) (eq b0 c0))
+  :goal (eq a0 c0)
+  :derivation (eq-trans (assumption 0) (assumption 1)))
+
+;; From a=b, prove f(a) = f(b) (congruence from assumption)
+(proof ac-cong :theory ACDemo
+  :assumptions ((eq a0 b0))
+  :goal (eq (f a0) (f b0))
+  :derivation (cong-f (assumption)))
+
+;; AC normalization + transitivity: op(a,b) = op(c,d) via 2-step chain
+;; Given op(a,b) = x and x = op(d,c), prove op(a,b) = op(c,d).
+;; AC normalizes op(d,c) to same canonical form as op(c,d).
+(proof ac-trans-normalized :theory ACDemo
+  :assumptions ((eq (op a0 b0) x0) (eq x0 (op d0 c0)))
+  :goal (eq (op b0 a0) (op c0 d0))
+  :derivation (eq-trans (assumption 0) (assumption 1)))
+
+;; Symmetry + congruence chain: a=b ⊢ f(b) = f(a)
+(proof ac-symm-cong :theory ACDemo
+  :assumptions ((eq a0 b0))
+  :goal (eq (f b0) (f a0))
+  :derivation (eq-symm (cong-f (assumption))))
 
 
 ;;; --- ACI (AC + Idempotent) ---

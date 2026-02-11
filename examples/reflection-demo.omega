@@ -1,12 +1,29 @@
 ;; Reflection Demo
 ;;
-;; Demonstrates how to prove a metatheorem about a theory,
-;; then reflect it as a new inference rule.
+;; Demonstrates how to prove metatheorems about a theory,
+;; then reflect them as new inference rules.
+;;
+;; Key feature: metatheorems are PROVEN transformations on derivations,
+;; verified by exhaustive case analysis. Reflection turns verified
+;; metatheorems into trusted inference rules.
+;;
+;; Proved here:
+;;   1. and-comm via reflected rule             (A∧B ⊢ B∧A)
+;;   2. and-comm twice: A∧B ⊢ A∧B roundtrip    (comm∘comm = id)
+;;   3. A∧B ⊢ B                                (elim-r from assumption)
+;;   4. A∧B, C∧D ⊢ (B∧A) ∧ (D∧C)              (comm applied to both, then intro)
+;;   5. A∧(B∧C) ⊢ (B∧C)∧A                      (comm on nested conjunction)
+;;   6. A∧B ⊢ (B∧A) ∧ (B∧A)                    (comm + contraction via intro)
+;;   7. or-comm via reflected rule              (A∨B ⊢ B∨A)
+;;   8. A ⊢ A∨B                                (or-intro from assumption)
+;;   9. A∧B ⊢ A∨B                              (elim + intro across connectives)
+;;  10. A∨B ⊢ (B∨A) ∧ (B∨A)                    (comm + contraction)
 
 (theory SimpleLogic
   (sort Prop)
 
   (constructor and : (-> Prop Prop Prop))
+  (constructor or  : (-> Prop Prop Prop))
 
   (judgment (proves ?P) :where P : Prop)
 
@@ -20,11 +37,23 @@
 
   (rule and-elim-r
     :premises ((proves (and ?A ?B)))
-    :conclusion (proves ?B)))
+    :conclusion (proves ?B))
+
+  (rule or-intro-l
+    :premises ((proves ?A))
+    :conclusion (proves (or ?A ?B)))
+
+  (rule or-intro-r
+    :premises ((proves ?B))
+    :conclusion (proves (or ?A ?B))))
 
 (check-theory SimpleLogic)
 
-;; Prove commutativity of 'and' as a metatheorem:
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Metatheorem 1: Commutativity of conjunction
+;;; ═══════════════════════════════════════════════════════════
+;;
 ;; For any derivation D of (proves (and A B)),
 ;; there exists a derivation D' of (proves (and B A)).
 (meta-theorem and-comm-meta
@@ -35,12 +64,113 @@
     (case and-intro (D1 D2)
       (by-rule and-intro D2 D1))))
 
-;; Reflect the metatheorem as a new rule
 (reflect and-comm-meta :as proves/and-comm :theory SimpleLogic)
 
-;; Now use the reflected rule in a proof!
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Metatheorem 2: Commutativity of disjunction
+;;; ═══════════════════════════════════════════════════════════
+;;
+;; For any derivation D of (proves (or A B)),
+;; there exists a derivation D' of (proves (or B A)).
+;; Two cases: or-intro-l sends A to or-intro-r, or-intro-r sends B to or-intro-l.
+(meta-theorem or-comm-meta
+  :theory SimpleLogic
+  :forall ((D (proves (or ?A ?B))))
+  :exists ((D' (proves (or ?B ?A))))
+  :proof (case-analysis D
+    (case or-intro-l (D1)
+      (by-rule or-intro-r D1))
+    (case or-intro-r (D1)
+      (by-rule or-intro-l D1))))
+
+(reflect or-comm-meta :as proves/or-comm :theory SimpleLogic)
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Part 1: Proofs using reflected and-comm
+;;; ═══════════════════════════════════════════════════════════
+
+;; Proof 1: Basic and-comm
 (proof comm-test
   :theory SimpleLogic
   :assumptions ((proves (and p q)))
   :goal (proves (and q p))
   :derivation (proves/and-comm (assumption)))
+
+;; Proof 2: Double comm = identity (roundtrip)
+;; and-comm(and-comm(A∧B)) = A∧B
+(proof comm-roundtrip
+  :theory SimpleLogic
+  :assumptions ((proves (and p q)))
+  :goal (proves (and p q))
+  :derivation (proves/and-comm (proves/and-comm (assumption))))
+
+;; Proof 3: Elimination from assumption
+(proof elim-from-assumption
+  :theory SimpleLogic
+  :assumptions ((proves (and p q)))
+  :goal (proves q)
+  :derivation (and-elim-r (assumption)))
+
+;; Proof 4: Comm on both conjuncts, then introduce
+;; A∧B, C∧D ⊢ (B∧A) ∧ (D∧C)
+(proof comm-both-intro
+  :theory SimpleLogic
+  :assumptions ((proves (and a b)) (proves (and c d)))
+  :goal (proves (and (and b a) (and d c)))
+  :derivation (and-intro (proves/and-comm (assumption 0))
+                          (proves/and-comm (assumption 1))))
+
+;; Proof 5: Comm on nested conjunction
+;; A∧(B∧C) ⊢ (B∧C)∧A
+(proof comm-nested
+  :theory SimpleLogic
+  :assumptions ((proves (and a (and b c))))
+  :goal (proves (and (and b c) a))
+  :derivation (proves/and-comm (assumption)))
+
+;; Proof 6: Comm + contraction via and-intro
+;; A∧B ⊢ (B∧A) ∧ (B∧A) — uses the same comm'd derivation twice
+(proof comm-contraction
+  :theory SimpleLogic
+  :assumptions ((proves (and a b)))
+  :goal (proves (and (and b a) (and b a)))
+  :derivation (and-intro (proves/and-comm (assumption))
+                          (proves/and-comm (assumption))))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Part 2: Proofs using reflected or-comm
+;;; ═══════════════════════════════════════════════════════════
+
+;; Proof 7: Basic or-comm
+(proof or-comm-test
+  :theory SimpleLogic
+  :assumptions ((proves (or a b)))
+  :goal (proves (or b a))
+  :derivation (proves/or-comm (assumption)))
+
+;; Proof 8: or-intro from assumption
+(proof or-intro-from-assumption
+  :theory SimpleLogic
+  :assumptions ((proves a))
+  :goal (proves (or a b))
+  :derivation (or-intro-l (assumption)))
+
+;; Proof 9: Cross-connective: A∧B ⊢ A∨B
+;; Eliminate left conjunct, then introduce as left disjunct.
+(proof and-to-or
+  :theory SimpleLogic
+  :assumptions ((proves (and a b)))
+  :goal (proves (or a b))
+  :derivation (or-intro-l (and-elim-l (assumption))))
+
+;; Proof 10: Or-comm + contraction
+;; A∨B ⊢ (B∨A) ∧ (B∨A) — uses comm'd disjunction twice in conjunction
+(proof or-comm-contraction
+  :theory SimpleLogic
+  :assumptions ((proves (or a b)))
+  :goal (proves (and (or b a) (or b a)))
+  :derivation (and-intro (proves/or-comm (assumption))
+                          (proves/or-comm (assumption))))

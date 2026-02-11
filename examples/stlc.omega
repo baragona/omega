@@ -11,11 +11,16 @@
 ;;;   (app e1 e2) application
 ;;;
 ;;; Proved here:
-;;;   1. \x.x            : A -> A                (identity / I combinator)
-;;;   2. \x.\y.x         : A -> B -> A           (const / K combinator)
-;;;   3. \x.\y.y         : A -> A -> A           (flip / Church false)
-;;;   4. (\x.x)(\x.x)   : (A->A) -> (A->A)     (self-application of id)
-;;;   5. \b.\x.\y.b y x  : (A->A->A) -> A -> A -> A   (Church NOT)
+;;;   1. λx.x                : A → A                          (I combinator)
+;;;   2. λx.λy.x             : A → B → A                      (K combinator)
+;;;   3. λx.λy.y             : A → A → A                      (Church false)
+;;;   4. (λx.x)(λx.x)        : (A→A) → (A→A)                 (self-application)
+;;;   5. λf.λg.λx.f(g(x))    : (Nat→Bool)→(Base→Nat)→Base→Bool  (B combinator)
+;;;   6. λf.λg.λx.f(x)(g(x)) : (A→B→C)→(A→B)→A→C            (S combinator)
+;;;   7. λx.λy.λf.f(x)(y)    : A→B→(A→B→C)→C                 (Church pair)
+;;;   8. λf.λx.λy.f(y)(x)    : (A→B→C)→B→A→C                 (flip)
+;;;   9. Γ,f:A→B ⊢ λx.f(x)   : A→B                            (eta-expansion)
+;;;  10. Church numeral 2     : (A→A)→A→A                      (Church encoding)
 
 (theory STLC
   (sort Ty)
@@ -65,10 +70,8 @@
 
 
 ;; ════════════════════════════════════════════════════════════
-;; Theorem 1:  \x.x : A -> A   (identity / I combinator)
+;; Theorem 1:  λx.x : A → A   (identity / I combinator)
 ;; ════════════════════════════════════════════════════════════
-;;
-;; In context [A], vz has type A.
 
 (proof identity
   :theory STLC
@@ -77,7 +80,7 @@
 
 
 ;; ════════════════════════════════════════════════════════════
-;; Theorem 2:  \x.\y.x : A -> B -> A   (K combinator / const)
+;; Theorem 2:  λx.λy.x : A → B → A   (K combinator / const)
 ;; ════════════════════════════════════════════════════════════
 ;;
 ;; In context [B, A], vs(vz) looks past B to find A.
@@ -89,10 +92,8 @@
 
 
 ;; ════════════════════════════════════════════════════════════
-;; Theorem 3:  \x.\y.y : A -> A -> A   (Church false / second)
+;; Theorem 3:  λx.λy.y : A → A → A   (Church false / second)
 ;; ════════════════════════════════════════════════════════════
-;;
-;; In context [A, A], vz picks the most recent binding.
 
 (proof church-false
   :theory STLC
@@ -101,11 +102,8 @@
 
 
 ;; ════════════════════════════════════════════════════════════
-;; Theorem 4:  (\x.x)(\x.x) : (A -> A) -> (A -> A)
+;; Theorem 4:  (λx.x)(λx.x) : (A → A) → (A → A)
 ;; ════════════════════════════════════════════════════════════
-;;
-;; Apply the identity function to itself.
-;; The outer id is instantiated at type (A -> A).
 
 (proof apply-id-to-id
   :theory STLC
@@ -116,19 +114,14 @@
 
 
 ;; ════════════════════════════════════════════════════════════
-;; Theorem 5:  \f.\g.\x. f(g(x)) : (Nat->Bool) -> (Base->Nat) -> Base -> Bool
+;; Theorem 5:  λf.λg.λx. f(g(x)) : (Nat→Bool) → (Base→Nat) → Base → Bool
 ;;             (function composition / B combinator)
 ;; ════════════════════════════════════════════════════════════
 ;;
-;; Compose two functions with concrete types:
-;;   f : Nat -> Bool,   g : Base -> Nat,   x : Base
-;;
-;; Context at body [Base, Base->Nat, Nat->Bool]:
+;; Context at body [Base, Base→Nat, Nat→Bool]:
 ;;   vz         = x : Base        (index 0)
-;;   vs(vz)     = g : Base -> Nat (index 1)
-;;   vs(vs(vz)) = f : Nat -> Bool (index 2)
-;;
-;; Body: app f (app g x) = f(g(x)) : Bool
+;;   vs(vz)     = g : Base → Nat (index 1)
+;;   vs(vs(vz)) = f : Nat → Bool (index 2)
 
 (proof compose
   :theory STLC
@@ -139,3 +132,120 @@
   :derivation
     (t-lam (t-lam (t-lam
       (t-app (t-vs (t-vs (t-vz))) (t-app (t-vs (t-vz)) (t-vz)))))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 6:  λf.λg.λx. f(x)(g(x)) : (A→B→C) → (A→B) → A → C
+;;             (S combinator — the most complex STLC combinator)
+;; ════════════════════════════════════════════════════════════
+;;
+;; Context at body [A, A→B, A→B→C]:
+;;   vz         = x : A           (index 0)
+;;   vs(vz)     = g : A → B      (index 1)
+;;   vs(vs(vz)) = f : A → B → C  (index 2)
+;;
+;; Body: app(app(f, x), app(g, x))
+;;   - app(f, x) : B → C        [t-app on A→B→C and A]
+;;   - app(g, x) : B             [t-app on A→B and A]
+;;   - app(app(f,x), app(g,x)) : C  [t-app on B→C and B]
+;;
+;; Derivation tree depth: 7 levels
+
+(proof s-combinator
+  :theory STLC
+  :goal (has-type nil
+    (lam (Arrow ?A (Arrow ?B ?C)) (lam (Arrow ?A ?B) (lam ?A
+      (app (app (vs (vs vz)) vz) (app (vs vz) vz)))))
+    (Arrow (Arrow ?A (Arrow ?B ?C)) (Arrow (Arrow ?A ?B) (Arrow ?A ?C))))
+  :derivation
+    (t-lam (t-lam (t-lam
+      (t-app
+        (t-app (t-vs (t-vs (t-vz))) (t-vz))
+        (t-app (t-vs (t-vz)) (t-vz)))))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 7:  λx.λy.λf. f(x)(y) : A → B → (A → B → C) → C
+;;             (Church pair constructor)
+;; ════════════════════════════════════════════════════════════
+;;
+;; Context at body [(A→B→C), B, A]:
+;;   vz         = f : A → B → C  (index 0)
+;;   vs(vz)     = y : B          (index 1)
+;;   vs(vs(vz)) = x : A          (index 2)
+;;
+;; Body: app(app(vz, vs(vs(vz))), vs(vz)) = f(x)(y)
+
+(proof church-pair
+  :theory STLC
+  :goal (has-type nil
+    (lam ?A (lam ?B (lam (Arrow ?A (Arrow ?B ?C))
+      (app (app vz (vs (vs vz))) (vs vz)))))
+    (Arrow ?A (Arrow ?B (Arrow (Arrow ?A (Arrow ?B ?C)) ?C))))
+  :derivation
+    (t-lam (t-lam (t-lam
+      (t-app (t-app (t-vz) (t-vs (t-vs (t-vz)))) (t-vs (t-vz)))))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 8:  λf.λx.λy. f(y)(x) : (A → B → C) → B → A → C
+;;             (flip — reorders arguments)
+;; ════════════════════════════════════════════════════════════
+;;
+;; Context at body [A, B, A→B→C]:
+;;   vz         = y : A          (index 0)
+;;   vs(vz)     = x : B          (index 1)
+;;   vs(vs(vz)) = f : A → B → C (index 2)
+;;
+;; Body: app(app(vs(vs(vz)), vz), vs(vz)) = f(y)(x)
+
+(proof flip
+  :theory STLC
+  :goal (has-type nil
+    (lam (Arrow ?A (Arrow ?B ?C)) (lam ?B (lam ?A
+      (app (app (vs (vs vz)) vz) (vs vz)))))
+    (Arrow (Arrow ?A (Arrow ?B ?C)) (Arrow ?B (Arrow ?A ?C))))
+  :derivation
+    (t-lam (t-lam (t-lam
+      (t-app (t-app (t-vs (t-vs (t-vz))) (t-vz)) (t-vs (t-vz)))))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 9:  [f:A→B] ⊢ λx.f(x) : A → B  (eta-expansion in context)
+;; ════════════════════════════════════════════════════════════
+;;
+;; With f : A → B already in the STLC context, prove that
+;; λx.f(x) has the same type. Demonstrates deep derivation
+;; with non-empty context.
+;;
+;; STLC context [Arrow A B]:
+;;   Inside lambda body, context is [A, Arrow A B]:
+;;     vz     = x : A          (index 0)
+;;     vs(vz) = f : A → B      (index 1)
+
+(proof eta-expansion
+  :theory STLC
+  :goal (has-type (cons (Arrow ?A ?B) nil) (lam ?A (app (vs vz) vz)) (Arrow ?A ?B))
+  :derivation (t-lam (t-app (t-vs (t-vz)) (t-vz))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Theorem 10:  λf.λx. f(f(x)) : (A→A) → A → A
+;;              (Church numeral 2 — applies f twice)
+;; ════════════════════════════════════════════════════════════
+;;
+;; Context at body [A, A→A]:
+;;   vz     = x : A      (index 0)
+;;   vs(vz) = f : A → A  (index 1)
+;;
+;; Body: app(vs(vz), app(vs(vz), vz)) = f(f(x))
+
+(proof church-two
+  :theory STLC
+  :goal (has-type nil
+    (lam (Arrow ?A ?A) (lam ?A
+      (app (vs vz) (app (vs vz) vz))))
+    (Arrow (Arrow ?A ?A) (Arrow ?A ?A)))
+  :derivation
+    (t-lam (t-lam
+      (t-app (t-vs (t-vz)) (t-app (t-vs (t-vz)) (t-vz))))))

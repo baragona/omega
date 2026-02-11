@@ -8,21 +8,40 @@
 ;;; composed, inverted, and transformed. This gives every type the
 ;;; structure of an infinity-groupoid.
 ;;;
+;;; Part 1 — Computation rules (proofs 1-6):
+;;;   Definitional equalities that hold by normalization (path-refl).
+;;;   Only base-case rewrites: inv(refl)→refl, concat(refl,q)→q, etc.
+;;;
+;;; Part 2 — Path induction (proofs 7-10):
+;;;   Groupoid laws derived from the J eliminator — NOT assumed as
+;;;   rewrite rules. Each proof constructs a J-term with an explicit
+;;;   motive lambda. The base case is discharged by beta-normalization
+;;;   of the motive application, plus rewrite rules at refl.
+;;;
 ;;; Proved here:
 ;;;   1. refl : Id(Nat, z, z)                     (reflexivity)
-;;;   2. inv(refl) = refl                          (path inversion at refl)
-;;;   3. concat(refl, refl) = refl                 (path composition at refl)
-;;;   4. transport(refl, x) = x                    (transport along refl)
+;;;   2. inv(refl) = refl                          (inversion at refl)
+;;;   3. concat(refl, refl) = refl                 (composition at refl)
+;;;   4. transport(refl, x) = x                    (transport at refl)
 ;;;   5. ap(f, refl) = refl                        (congruence at refl)
-;;;   6. concat(refl, p) = p                       (left unit of composition)
-;;;   7. concat(p, refl) = p                       (right unit of composition)
-;;;   8. concat(inv(p), p) = refl                  (left inverse)
-;;;   9. concat(p, inv(p)) = refl                  (right inverse)
-;;;  10. inv(inv(p)) = p                           (involution)
+;;;   6. concat(refl, p) = p                       (left unit — by rewrite)
+;;;   7. concat(p, refl) = p                       (right unit — by J)
+;;;   8. concat(inv(p), p) = refl                  (left inverse — by J)
+;;;   9. concat(p, inv(p)) = refl                  (right inverse — by J)
+;;;  10. inv(inv(p)) = p                           (involution — by J)
+;;;  11. tfam(P, refl, x) = x                       (family transport at refl)
+;;;  12. tfam(P, p·q, x) = tfam(P, q, tfam(P, p, x))  (transport functoriality — by J)
 
-;; ── Base Theory: Identity Types with Path Algebra ──
 
-(theory HoTTBase
+;; ═══════════════════════════════════════════════════════════════
+;; Theory: Identity types with J eliminator
+;; ═══════════════════════════════════════════════════════════════
+;;
+;; Computation rules are base-case ONLY: inv(refl)→refl, concat(refl,q)→q.
+;; The groupoid laws (right-unit, inverses, involution) are NOT rewrites —
+;; they are theorems derived via path induction (J).
+
+(theory HoTT
   (sort Ty)
   (sort Tm)
 
@@ -40,30 +59,32 @@
   (constructor concat : (-> Tm Tm Tm))        ;; path composition: p · q
 
   ;; ── Path operations ──
-  (constructor transport : (-> Tm Tm Tm))     ;; transport(p, x): carry x along path p
+  (constructor transport : (-> Tm Tm Tm))     ;; transport(p, x): carry along path p
   (constructor ap : (-> Tm Tm Tm))            ;; ap(f, p): apply f to path p
+  (constructor tfam : (-> Tm Tm Tm Tm))       ;; tfam(P, p, x): transport x along p in family P
 
-  ;; ── Computation rules (all reduce at refl) ──
-  ;; These are the key HoTT reductions: everything computes when
-  ;; the path argument is refl.
+  ;; ── J eliminator (path induction) ──
+  ;; J(A, a, C, d, b, p) : C(b, p)
+  ;;   A : type,  a : A,  C : motive (lambda of endpoint and path),
+  ;;   d : C(a, refl) (base case),  b : A,  p : Id(A, a, b)
+  (constructor J : (-> Ty Tm Tm Tm Tm Tm Tm))
+
+  ;; ── Computation rules (base cases ONLY) ──
+  ;; These fire when the path argument is refl.
+  ;; The groupoid laws (concat-refl-r, concat-inv-l/r, inv-inv)
+  ;; are NOT here — they are proved via J below.
   (rewrite inv-refl (inv refl) refl)
   (rewrite concat-refl-l (concat refl ?q) ?q)
-  (rewrite concat-refl-r (concat ?p refl) ?p)
   (rewrite transport-refl (transport refl ?x) ?x)
   (rewrite ap-refl (ap ?f refl) refl)
-
-  ;; ── Inverse laws (reduce at refl) ──
-  (rewrite concat-inv-l (concat (inv ?p) ?p) refl)
-  (rewrite concat-inv-r (concat ?p (inv ?p)) refl)
-
-  ;; ── Involution ──
-  (rewrite inv-inv (inv (inv ?p)) ?p)
+  (rewrite tfam-refl (tfam ?P refl ?x) ?x)
+  (rewrite J-refl (J ?A ?a ?C ?d ?a refl) ?d)
 
   ;; ── Judgments ──
   (judgment (has-type ?e ?T) :where e : Tm T : Ty)
   (judgment (path-eq ?A ?p ?q) :where A : Ty p : Tm q : Tm)
 
-  ;; path-eq witnesses: two paths are equal (2-paths / homotopies)
+  ;; path-eq from definitional equality (both sides normalize to same term)
   (rule path-refl
     :premises ()
     :conclusion (path-eq ?A ?p ?p))
@@ -97,120 +118,256 @@
 
   (rule t-ap
     :premises ((has-type ?p (Id ?A ?a ?b)))
-    :conclusion (has-type (ap ?f ?p) (Id ?B (?f ?a) (?f ?b)))))
+    :conclusion (has-type (ap ?f ?p) (Id ?B (?f ?a) (?f ?b))))
 
-(check-theory HoTTBase)
+  (rule t-tfam
+    :premises ((has-type ?x ?A))
+    :conclusion (has-type (tfam ?P ?p ?x) ?B))
+
+  ;; ── Typing rule for J (path induction) ──
+  ;; The motive C is a lambda: (lambda (x : Tm) (lambda (q : Tm) ...))
+  ;; where #1 = endpoint x, #0 = path q in the body.
+  ;; The base case d must have type C(a, refl).
+  ;; The result type ?T is free; the base case constrains the motive.
+  (rule t-J
+    :premises ((has-type ?a ?A)
+               (has-type ?p (Id ?A ?a ?b))
+               (has-type ?d (?C ?a refl)))
+    :conclusion (has-type (J ?A ?a ?C ?d ?b ?p) ?T)))
+
+(check-theory HoTT)
 
 
-;;; ═══════════════════════════════════════════════════════════
-;;; Proof 1: refl : Id(Nat, z, z)
-;;; ═══════════════════════════════════════════════════════════
+;;; ═══════════════════════════════════════════════════════════════
+;;; Part 1: Computation Rules (definitional equality)
+;;; ═══════════════════════════════════════════════════════════════
+;;; These proofs use path-refl: both sides normalize to the same
+;;; term via the base-case rewrite rules.
+
+
+;;; ─── Proof 1: refl : Id(Nat, z, z) ───
 ;;; The trivial path: z = z.
 
 (proof refl-z
-  :theory HoTTBase
+  :theory HoTT
   :goal (has-type refl (Id Nat z z))
   :derivation (t-refl (t-z)))
 
 
-;;; ═══════════════════════════════════════════════════════════
-;;; Proof 2: inv(refl) = refl  (path inversion at refl)
-;;; ═══════════════════════════════════════════════════════════
-;;; By the rewrite rule inv-refl, inv(refl) normalizes to refl.
-;;; path-refl witnesses equality of normalized forms.
+;;; ─── Proof 2: inv(refl) = refl ───
+;;; inv(refl) → refl by inv-refl.
 
 (proof inv-refl-eq
-  :theory HoTTBase
+  :theory HoTT
   :goal (path-eq (Id Nat z z) (inv refl) refl)
   :derivation (path-refl))
 
 
-;;; ═══════════════════════════════════════════════════════════
-;;; Proof 3: concat(refl, refl) = refl  (composition at refl)
-;;; ═══════════════════════════════════════════════════════════
+;;; ─── Proof 3: concat(refl, refl) = refl ───
 ;;; concat(refl, refl) → refl by concat-refl-l.
 
 (proof concat-refl-refl
-  :theory HoTTBase
+  :theory HoTT
   :goal (path-eq (Id Nat z z) (concat refl refl) refl)
   :derivation (path-refl))
 
 
-;;; ═══════════════════════════════════════════════════════════
-;;; Proof 4: transport(refl, x) = x  (transport along refl)
-;;; ═══════════════════════════════════════════════════════════
-;;; transport-refl fires: transporting along reflexivity is identity.
-;;; This is the computation rule for the J eliminator at refl.
+;;; ─── Proof 4: transport(refl, x) = x ───
+;;; transport(refl, z) → z by transport-refl.
 
 (proof transport-refl-id
-  :theory HoTTBase
+  :theory HoTT
   :goal (path-eq Nat (transport refl z) z)
   :derivation (path-refl))
 
 
-;;; ═══════════════════════════════════════════════════════════
-;;; Proof 5: ap(f, refl) = refl  (congruence at refl)
-;;; ═══════════════════════════════════════════════════════════
-;;; Applying a function to a reflexivity path gives reflexivity.
+;;; ─── Proof 5: ap(f, refl) = refl ───
+;;; ap(s, refl) → refl by ap-refl.
 
 (proof ap-refl-eq
-  :theory HoTTBase
+  :theory HoTT
   :goal (path-eq (Id Nat (s z) (s z)) (ap s refl) refl)
   :derivation (path-refl))
 
 
-;;; ═══════════════════════════════════════════════════════════
-;;; Proof 6: concat(refl, p) = p  (left unit law)
-;;; ═══════════════════════════════════════════════════════════
-;;; By concat-refl-l rewrite: concat(refl, ?q) → ?q.
-;;; With ?p as a meta-variable, this proves the law for ALL paths.
+;;; ─── Proof 6: concat(refl, p) = p  (left unit) ───
+;;; concat(refl, ?p) → ?p by concat-refl-l. Universal over all paths.
 
 (proof left-unit
-  :theory HoTTBase
+  :theory HoTT
   :goal (path-eq ?T (concat refl ?p) ?p)
   :derivation (path-refl))
 
 
-;;; ═══════════════════════════════════════════════════════════
-;;; Proof 7: concat(p, refl) = p  (right unit law)
-;;; ═══════════════════════════════════════════════════════════
-;;; By concat-refl-r rewrite: concat(?p, refl) → ?p.
+;;; ═══════════════════════════════════════════════════════════════
+;;; Part 2: Path Induction (groupoid laws derived from J)
+;;; ═══════════════════════════════════════════════════════════════
+;;;
+;;; These laws are NOT rewrite rules — they are theorems.
+;;; Each proof works by path induction (the J eliminator):
+;;;
+;;;   Given: a0 : A0 and p0 : Id(A0, a0, b0)
+;;;
+;;;   1. State a motive C(x, q) as a lambda over endpoint x (#1) and
+;;;      path q (#0), describing what to prove.
+;;;   2. Prove the base case C(a0, refl) — the premise handler
+;;;      beta-normalizes the motive application, and rewrite rules
+;;;      finish (e.g., concat(refl, refl) → refl, inv(refl) → refl).
+;;;   3. J generalizes from refl to any path p0 : Id(A0, a0, b0).
+;;;
+;;; All four proofs share the same derivation structure:
+;;;   (t-J (assumption 0) (assumption 1) (t-refl (t-refl (assumption 0))))
+;;; Only the motive lambda differs.
+
+
+;;; ─── Proof 7: concat(p, refl) = p  (right unit — by J) ─────
+;;;
+;;; This is the first law that does NOT hold definitionally.
+;;; concat(p, refl) does not reduce when p is not refl.
+;;;
+;;; Motive: C(x, q) = Id(Id(A0, a0, x), concat(q, refl), q)
+;;;   where #1 = x (endpoint), #0 = q (path)
+;;;
+;;; Base case: C(a0, refl) = Id(Id(A0,a0,a0), concat(refl,refl), refl)
+;;;          → Id(Id(A0,a0,a0), refl, refl) by concat-refl-l
+;;;          → witnessed by refl (via nested t-refl)
 
 (proof right-unit
-  :theory HoTTBase
-  :goal (path-eq ?T (concat ?p refl) ?p)
-  :derivation (path-refl))
+  :theory HoTT
+  :assumptions (
+    (has-type a0 A0)
+    (has-type p0 (Id A0 a0 b0))
+  )
+  :goal (has-type
+    (J A0 a0
+       (lambda (x : Tm) (lambda (q : Tm) (Id (Id A0 a0 #1) (concat #0 refl) #0)))
+       refl b0 p0)
+    ?T)
+  :derivation (t-J (assumption 0) (assumption 1)
+                    (t-refl (t-refl (assumption 0)))))
 
 
-;;; ═══════════════════════════════════════════════════════════
-;;; Proof 8: concat(inv(p), p) = refl  (left inverse)
-;;; ═══════════════════════════════════════════════════════════
-;;; By concat-inv-l rewrite.
+;;; ─── Proof 8: concat(inv(p), p) = refl  (left inverse — by J) ───
+;;;
+;;; Motive: C(x, q) = Id(Id(A0, a0, a0), concat(inv(q), q), refl)
+;;;   where #0 = q (path); x (#1) does not appear (motive is constant in x)
+;;;
+;;; Base case: C(a0, refl)
+;;;   = Id(Id(A0,a0,a0), concat(inv(refl), refl), refl)
+;;;   → concat(refl, refl) by inv-refl on the inner inv
+;;;   → refl by concat-refl-l
+;;;   → Id(Id(A0,a0,a0), refl, refl) — witnessed by refl
 
 (proof left-inverse
-  :theory HoTTBase
-  :goal (path-eq ?T (concat (inv ?p) ?p) refl)
-  :derivation (path-refl))
+  :theory HoTT
+  :assumptions (
+    (has-type a0 A0)
+    (has-type p0 (Id A0 a0 b0))
+  )
+  :goal (has-type
+    (J A0 a0
+       (lambda (x : Tm) (lambda (q : Tm) (Id (Id A0 a0 a0) (concat (inv #0) #0) refl)))
+       refl b0 p0)
+    ?T)
+  :derivation (t-J (assumption 0) (assumption 1)
+                    (t-refl (t-refl (assumption 0)))))
 
 
-;;; ═══════════════════════════════════════════════════════════
-;;; Proof 9: concat(p, inv(p)) = refl  (right inverse)
-;;; ═══════════════════════════════════════════════════════════
-;;; By concat-inv-r rewrite.
+;;; ─── Proof 9: concat(p, inv(p)) = refl  (right inverse — by J) ───
+;;;
+;;; Motive: C(x, q) = Id(Id(A0, a0, a0), concat(q, inv(q)), refl)
+;;;
+;;; Base case: C(a0, refl)
+;;;   = Id(Id(A0,a0,a0), concat(refl, inv(refl)), refl)
+;;;   → concat(refl, refl) by inv-refl
+;;;   → refl by concat-refl-l
+;;;   → Id(Id(A0,a0,a0), refl, refl) — witnessed by refl
 
 (proof right-inverse
-  :theory HoTTBase
-  :goal (path-eq ?T (concat ?p (inv ?p)) refl)
-  :derivation (path-refl))
+  :theory HoTT
+  :assumptions (
+    (has-type a0 A0)
+    (has-type p0 (Id A0 a0 b0))
+  )
+  :goal (has-type
+    (J A0 a0
+       (lambda (x : Tm) (lambda (q : Tm) (Id (Id A0 a0 a0) (concat #0 (inv #0)) refl)))
+       refl b0 p0)
+    ?T)
+  :derivation (t-J (assumption 0) (assumption 1)
+                    (t-refl (t-refl (assumption 0)))))
 
 
-;;; ═══════════════════════════════════════════════════════════
-;;; Proof 10: inv(inv(p)) = p  (involution of path inversion)
-;;; ═══════════════════════════════════════════════════════════
-;;; Double inversion is identity — a key groupoid law.
-;;; By inv-inv rewrite.
+;;; ─── Proof 10: inv(inv(p)) = p  (involution — by J) ─────
+;;;
+;;; Motive: C(x, q) = Id(Id(A0, a0, x), inv(inv(q)), q)
+;;;   where #1 = x (endpoint), #0 = q (path)
+;;;
+;;; Base case: C(a0, refl)
+;;;   = Id(Id(A0,a0,a0), inv(inv(refl)), refl)
+;;;   → inv(refl) by inv-refl (inner)
+;;;   → refl by inv-refl (outer)
+;;;   → Id(Id(A0,a0,a0), refl, refl) — witnessed by refl
 
 (proof inv-involution
-  :theory HoTTBase
-  :goal (path-eq ?T (inv (inv ?p)) ?p)
+  :theory HoTT
+  :assumptions (
+    (has-type a0 A0)
+    (has-type p0 (Id A0 a0 b0))
+  )
+  :goal (has-type
+    (J A0 a0
+       (lambda (x : Tm) (lambda (q : Tm) (Id (Id A0 a0 #1) (inv (inv #0)) #0)))
+       refl b0 p0)
+    ?T)
+  :derivation (t-J (assumption 0) (assumption 1)
+                    (t-refl (t-refl (assumption 0)))))
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;; Part 3: Transport Lemmas
+;;; ═══════════════════════════════════════════════════════════════
+
+
+;;; ─── Proof 11: tfam(P, refl, x) = x  (family transport at refl) ───
+;;; tfam(P, refl, x) → x by tfam-refl. Definitional.
+
+(proof tfam-refl-eq
+  :theory HoTT
+  :goal (path-eq ?S (tfam ?P refl ?x) ?x)
   :derivation (path-refl))
+
+
+;;; ─── Proof 12: tfam(P, p·q, x) = tfam(P, q, tfam(P, p, x)) ───
+;;;              (transport functoriality — by J)
+;;;
+;;; Transporting along a composed path p·q is the same as
+;;; transporting along p, then along q.
+;;;
+;;; Proof by J on p : Id(A0, a0, b0).
+;;;
+;;; Motive: C(y, r) = Id(?S, tfam(P0, concat(r, q0), x0),
+;;;                            tfam(P0, q0, tfam(P0, r, x0)))
+;;;   where #0 = r (path)
+;;;
+;;; Base case: C(a0, refl):
+;;;   LHS: tfam(P0, concat(refl, q0), x0) → tfam(P0, q0, x0) by concat-refl-l
+;;;   RHS: tfam(P0, q0, tfam(P0, refl, x0)) → tfam(P0, q0, x0) by tfam-refl
+;;;   Both sides equal → witnessed by refl
+
+(proof transport-concat
+  :theory HoTT
+  :assumptions (
+    (has-type a0 A0)
+    (has-type p0 (Id A0 a0 b0))
+    (has-type q0 (Id A0 b0 c0))
+    (has-type x0 S0)
+  )
+  :goal (has-type
+    (J A0 a0
+       (lambda (y : Tm) (lambda (r : Tm)
+         (Id ?S (tfam P0 (concat #0 q0) x0) (tfam P0 q0 (tfam P0 #0 x0)))))
+       refl b0 p0)
+    ?T)
+  :derivation (t-J (assumption 0) (assumption 1)
+                    (t-refl (t-tfam (assumption 3)))))
