@@ -1,0 +1,309 @@
+;;; Cartesian Closed Categories — The Third Pillar
+;;;
+;;; Curry-Howard-LAMBEK: Logic = Types = Categories.
+;;;
+;;; This file reifies the categorical structure that makes
+;;; propositional logic work.  Instead of defining rules and
+;;; hoping they behave well, we define the SHAPE of truth:
+;;;   - Objects = Propositions
+;;;   - Morphisms = Proofs
+;;;   - Composition = Cut
+;;;   - Products = Conjunction
+;;;   - Exponentials = Implication
+;;;   - Terminal = Truth
+;;;
+;;; Every morphism IS a proof.  Every proof IS a morphism.
+;;; The type system enforces that proofs compose correctly —
+;;; this isn't a simulation, it's the real thing.
+;;;
+;;; Proved here (10 morphisms = 10 proofs):
+;;;
+;;;   1.  id : P → P                           (identity = axiom)
+;;;   2.  snd∘fst : (P×Q)×R → Q               (composition = cut)
+;;;   3.  ! : P → ⊤                            (terminal = truth)
+;;;   4.  ⟨id,id⟩ : P → P×P                    (diagonal = contraction)
+;;;   5.  ⟨snd,fst⟩ : P×Q → Q×P               (swap = ∧-commutativity)
+;;;   6.  π₁∘⟨id,!⟩ = id                       (product β₁ law)
+;;;   7.  π₂∘⟨!,id⟩ = id                       (product β₂ law)
+;;;   8.  eval : (Q^P)×P → Q                   (modus ponens)
+;;;   9.  curry(π₁) : P → Q^(Q×P)              (weakening = K combinator)
+;;;  10.  syllogism : (P→Q)×(Q→R) → (P→R)     (hypothetical syllogism)
+
+(theory CCC
+
+  ;; ══════════════════════════════════════
+  ;; OBJECTS (propositions)
+  ;; ══════════════════════════════════════
+
+  (sort Obj)
+
+  (constructor P : Obj)
+  (constructor Q : Obj)
+  (constructor R : Obj)
+
+  ;; Type formers
+  (constructor top  : Obj)                  ;; terminal = True
+  (constructor prod : (-> Obj Obj Obj))     ;; product  = And
+  (constructor exp  : (-> Obj Obj Obj))     ;; exponential = Implies  (B^A = A→B)
+
+  ;; ══════════════════════════════════════
+  ;; MORPHISMS (proofs)
+  ;; ══════════════════════════════════════
+
+  (sort Mor)
+
+  ;; Category structure
+  (constructor id   : Mor)                  ;; identity
+  (constructor comp : (-> Mor Mor Mor))     ;; composition: g ∘ f
+
+  ;; Terminal object
+  (constructor bang : Mor)                  ;; ! : A → ⊤ (unique)
+
+  ;; Product (conjunction)
+  (constructor fst  : Mor)                  ;; π₁ : A×B → A
+  (constructor snd  : Mor)                  ;; π₂ : A×B → B
+  (constructor fork : (-> Mor Mor Mor))     ;; ⟨f,g⟩ : C → A×B
+
+  ;; Exponential (implication)
+  (constructor ev    : Mor)                 ;; eval : B^A × A → B
+  (constructor curry : (-> Mor Mor))        ;; curry(f) : C → B^A
+
+  ;; ══════════════════════════════════════
+  ;; TYPING JUDGMENT
+  ;; f : A → B  (f is a morphism from A to B)
+  ;; ══════════════════════════════════════
+
+  (judgment (hom ?f ?A ?B) :where f : Mor A : Obj B : Obj)
+
+  ;; -- Category axioms --
+  (rule hom-id
+    :conclusion (hom id ?A ?A))
+
+  (rule hom-comp
+    :premises ((hom ?g ?B ?C) (hom ?f ?A ?B))
+    :conclusion (hom (comp ?g ?f) ?A ?C))
+
+  ;; -- Terminal --
+  (rule hom-bang
+    :conclusion (hom bang ?A top))
+
+  ;; -- Product --
+  (rule hom-fst
+    :conclusion (hom fst (prod ?A ?B) ?A))
+
+  (rule hom-snd
+    :conclusion (hom snd (prod ?A ?B) ?B))
+
+  (rule hom-fork
+    :premises ((hom ?f ?C ?A) (hom ?g ?C ?B))
+    :conclusion (hom (fork ?f ?g) ?C (prod ?A ?B)))
+
+  ;; -- Exponential --
+  (rule hom-ev
+    :conclusion (hom ev (prod (exp ?B ?A) ?A) ?B))
+
+  (rule hom-curry
+    :premises ((hom ?f (prod ?C ?A) ?B))
+    :conclusion (hom (curry ?f) ?C (exp ?B ?A)))
+
+  ;; ══════════════════════════════════════
+  ;; EQUATIONAL LAWS (rewrite rules)
+  ;; These are the computational content of the category.
+  ;; ══════════════════════════════════════
+
+  ;; Category: identity is neutral
+  (rewrite id-left  (comp id ?f) ?f)
+  (rewrite id-right (comp ?f id) ?f)
+
+  ;; Product: projections extract components
+  (rewrite beta-fst (comp fst (fork ?f ?g)) ?f)
+  (rewrite beta-snd (comp snd (fork ?f ?g)) ?g)
+
+  ;; Equality checker
+  (sort Eq)
+  (constructor eq : (-> Mor Mor Eq))
+  (judgment (mor-eq ?e) :where e : Eq)
+  (rule eq-refl :conclusion (mor-eq (eq ?A ?A))))
+
+(check-theory CCC)
+
+
+;; ════════════════════════════════════════════════════════════
+;;  MORPHISM 1: Identity  (the axiom A ⊢ A)
+;; ════════════════════════════════════════════════════════════
+;;  id : P → P
+;;  "From P, deduce P."  The simplest proof.
+
+(proof identity
+  :theory CCC
+  :goal (hom id P P)
+  :derivation (hom-id))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  MORPHISM 2: Composition  (the cut rule)
+;; ════════════════════════════════════════════════════════════
+;;  snd ∘ fst : (P×Q)×R → Q
+;;  "From (P∧Q)∧R, extract Q."
+;;  First project to P×Q, then project to Q.
+
+(proof composition
+  :theory CCC
+  :goal (hom (comp snd fst) (prod (prod P Q) R) Q)
+  :derivation (hom-comp (hom-snd) (hom-fst)))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  MORPHISM 3: Terminal  (truth is always provable)
+;; ════════════════════════════════════════════════════════════
+;;  ! : P → ⊤
+;;  "From anything, deduce True."  The unique morphism to ⊤.
+
+(proof terminal
+  :theory CCC
+  :goal (hom bang P top)
+  :derivation (hom-bang))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  MORPHISM 4: Diagonal  (contraction / duplication)
+;; ════════════════════════════════════════════════════════════
+;;  ⟨id,id⟩ : P → P×P
+;;  "From P, deduce P∧P."  Copy the evidence.
+
+(proof diagonal
+  :theory CCC
+  :goal (hom (fork id id) P (prod P P))
+  :derivation (hom-fork (hom-id) (hom-id)))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  MORPHISM 5: Swap  (commutativity of conjunction)
+;; ════════════════════════════════════════════════════════════
+;;  ⟨snd,fst⟩ : P×Q → Q×P
+;;  "From P∧Q, deduce Q∧P."
+
+(proof swap
+  :theory CCC
+  :goal (hom (fork snd fst) (prod P Q) (prod Q P))
+  :derivation (hom-fork (hom-snd) (hom-fst)))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  MORPHISM 6: Product β₁  (equational law)
+;; ════════════════════════════════════════════════════════════
+;;  π₁ ∘ ⟨id, !⟩ = id
+;;  "Project the first component of ⟨identity, discard⟩."
+;;  The rewrite rule beta-fst computes this automatically.
+
+(proof product-beta-1
+  :theory CCC
+  :goal (mor-eq (eq (comp fst (fork id bang)) id))
+  :derivation (eq-refl))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  MORPHISM 7: Product β₂  (equational law)
+;; ════════════════════════════════════════════════════════════
+;;  π₂ ∘ ⟨!, id⟩ = id
+;;  "Project the second component of ⟨discard, identity⟩."
+
+(proof product-beta-2
+  :theory CCC
+  :goal (mor-eq (eq (comp snd (fork bang id)) id))
+  :derivation (eq-refl))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  MORPHISM 8: Evaluation  (modus ponens)
+;; ════════════════════════════════════════════════════════════
+;;  eval : (Q^P) × P → Q
+;;  "Given a proof of P→Q and a proof of P, get Q."
+;;  This is the categorical modus ponens.
+
+(proof modus-ponens
+  :theory CCC
+  :goal (hom ev (prod (exp Q P) P) Q)
+  :derivation (hom-ev))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  MORPHISM 9: Curried Weakening  (the K combinator)
+;; ════════════════════════════════════════════════════════════
+;;  curry(π₁) : P → (P ^ Q) = P → (Q → P)
+;;  "From P, build a function that ignores Q and returns P."
+;;  This is the K combinator in categorical form.
+
+(proof weakening
+  :theory CCC
+  :goal (hom (curry fst) P (exp P Q))
+  :derivation (hom-curry (hom-fst)))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  MORPHISM 10: Hypothetical Syllogism  (the grand proof)
+;; ════════════════════════════════════════════════════════════
+;;  (P→Q) × (Q→R) → (P→R)
+;;  "Implication composes."
+;;
+;;  This is the categorical proof of transitivity.
+;;  Built entirely from universal morphisms:
+;;
+;;    (P→Q)×(Q→R) × P
+;;         │
+;;    ⟨fst∘fst, snd⟩           extract (P→Q) and P
+;;         │
+;;    (P→Q) × P ──eval──→ Q    apply first implication
+;;         │
+;;    ⟨snd∘fst, Q⟩             pair (Q→R) with Q
+;;         │
+;;    (Q→R) × Q ──eval──→ R    apply second implication
+;;         │
+;;    curry: (P→Q)×(Q→R) → R^P = (P→Q)×(Q→R) → (P→R)
+
+(proof syllogism
+  :theory CCC
+  :goal (hom
+    (curry
+      (comp ev
+        (fork
+          (comp snd fst)
+          (comp ev
+            (fork
+              (comp fst fst)
+              snd)))))
+    (prod (exp Q P) (exp R Q))
+    (exp R P))
+  :derivation
+    (hom-curry
+      (hom-comp (hom-ev)
+        (hom-fork
+          (hom-comp (hom-snd) (hom-fst))
+          (hom-comp (hom-ev)
+            (hom-fork
+              (hom-comp (hom-fst) (hom-fst))
+              (hom-snd)))))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; THE LAMBEK CORRESPONDENCE
+;; ════════════════════════════════════════════════════════════
+;;
+;;   Category         Logic              Type Theory
+;;   ─────────────────────────────────────────────────
+;;   Object           Proposition         Type
+;;   Morphism A→B     Proof of A⊢B       Function A→B
+;;   id               Axiom (A⊢A)        λx.x
+;;   comp(g,f)        Cut rule            g(f(x))
+;;   ⊤ (terminal)     True                Unit
+;;   A×B (product)    A∧B                 Pair type
+;;   B^A (exp)        A→B                 Function type
+;;   π₁               ∧-elim-left         fst
+;;   π₂               ∧-elim-right        snd
+;;   ⟨f,g⟩           ∧-intro              (f(x), g(x))
+;;   eval             Modus ponens         apply
+;;   curry(f)         →-intro              λx. f(...,x)
+;;
+;; This isn't three analogies.  It's ONE structure,
+;; viewed from three angles.
+;; ════════════════════════════════════════════════════════════

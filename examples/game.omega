@@ -1,0 +1,321 @@
+;;; Game Semantics: Logic as Interaction
+;;;
+;;; Forget "truth."  A proposition is a GAME between two players:
+;;;
+;;;   Prover (P)   — tries to DEFEND the proposition
+;;;   Opponent (O)  — tries to REFUTE it
+;;;
+;;; A proposition is "true" iff the Prover has a WINNING STRATEGY.
+;;;
+;;; The connectives define the RULES of the game:
+;;;
+;;;   A ∧ B    O chooses to attack A or B.  P must defend the chosen one.
+;;;   A ∨ B    P chooses to defend A or B.  O must attack the chosen one.
+;;;   A → B    O plays a winning strategy for A.  P must then win B.
+;;;   ⊤        P wins immediately (trivial game).
+;;;   ⊥        O wins immediately (impossible game).
+;;;
+;;; This gives a computational interpretation of proofs:
+;;;   - A proof of A ∧ B is a PAIR of strategies (for A and for B)
+;;;   - A proof of A ∨ B is a CHOICE (left or right) plus a strategy
+;;;   - A proof of A → B is a FUNCTION from O's strategies to P's responses
+;;;
+;;; This is Curry-Howard in game form:
+;;;   Proof terms = Programs = Winning strategies
+;;;
+;;; Proved here (10 proofs):
+;;;
+;;;    1.  P wins ⊤                                (trivial game)
+;;;    2.  P wins A → A                            (copycat strategy)
+;;;    3.  P wins A → (B → A)                      (ignore B, replay A)
+;;;    4.  P wins (A∧B) → A                        (respond to O's extraction)
+;;;    5.  P wins A → (A∧A)                        (duplicate strategy)
+;;;    6.  P wins (A∧B) → (B∧A)                    (swap components)
+;;;    7.  P wins (A→B) → ((A→C) → (A → B∧C))     (fork two responses)
+;;;    8.  P wins A → (A∨B)                        (choose left)
+;;;    9.  P wins (A→C) → ((B→C) → ((A∨B) → C))   (case analysis)
+;;;   10.  P wins ((A→B)→A) → A                    (Peirce — classical!)
+
+(theory GameSemantics
+
+  ;; ══════════════════════════════════════
+  ;; GAMES (propositions as challenges)
+  ;; ══════════════════════════════════════
+
+  (sort Game)
+
+  ;; Atomic games (won by fiat / assumption)
+  (constructor A : Game)
+  (constructor B : Game)
+  (constructor C : Game)
+
+  ;; Game connectives
+  (constructor g-and : (-> Game Game Game))    ;; O chooses side, P defends
+  (constructor g-or  : (-> Game Game Game))    ;; P chooses side, P defends
+  (constructor g-imp : (-> Game Game Game))    ;; O plays antecedent, P plays consequent
+  (constructor g-top : Game)                   ;; P wins immediately
+  (constructor g-bot : Game)                   ;; O wins immediately
+
+  ;; ══════════════════════════════════════
+  ;; WINNING CONDITION
+  ;; ══════════════════════════════════════
+  ;; (wins ?g) means: P has a winning strategy for game g.
+
+  (judgment (wins ?g) :where g : Game)
+
+  ;; ── Trivial game ──
+  (rule win-top
+    :conclusion (wins g-top))
+
+  ;; ── Conjunction: P must handle BOTH of O's choices ──
+  (rule win-and
+    :premises ((wins ?A) (wins ?B))
+    :conclusion (wins (g-and ?A ?B)))
+
+  ;; ── Disjunction: P CHOOSES which side to defend ──
+  (rule win-or-left
+    :premises ((wins ?A))
+    :conclusion (wins (g-or ?A ?B)))
+
+  (rule win-or-right
+    :premises ((wins ?B))
+    :conclusion (wins (g-or ?A ?B)))
+
+  ;; ── Implication: O provides A, P must produce B ──
+  (rule win-imp
+    :premises ((wins ?B))
+    :context ((0 (wins ?A)))
+    :conclusion (wins (g-imp ?A ?B)))
+
+  ;; ── Modus ponens: apply a strategy ──
+  (rule win-mp
+    :premises ((wins (g-imp ?A ?B)) (wins ?A))
+    :conclusion (wins ?B))
+
+  ;; ── Conjunction extraction: respond to O's query ──
+  (rule and-left
+    :premises ((wins (g-and ?A ?B)))
+    :conclusion (wins ?A))
+
+  (rule and-right
+    :premises ((wins (g-and ?A ?B)))
+    :conclusion (wins ?B))
+
+  ;; ── Disjunction elimination: case analysis ──
+  ;; If P wins A∨B, and can win C from either A or B, then P wins C.
+  (rule or-elim
+    :premises ((wins (g-or ?A ?B)) (wins ?C) (wins ?C))
+    :context ((1 (wins ?A)) (2 (wins ?B)))
+    :conclusion (wins ?C))
+
+  ;; ── Ex falso: if O wins (⊥), P can claim anything ──
+  (rule win-absurd
+    :premises ((wins g-bot))
+    :conclusion (wins ?A))
+
+  ;; ── Classical power: call/cc ──
+  ;; P can win by showing O's attack strategy leads to contradiction.
+  ;; This is the game-theoretic Peirce's law / double-negation elimination.
+  ;; "If O's only move leads to O's own defeat, P wins."
+  (rule win-classical
+    :premises ((wins g-bot))
+    :context ((0 (wins (g-imp ?A g-bot))))
+    :conclusion (wins ?A)))
+
+(check-theory GameSemantics)
+
+
+;; ════════════════════════════════════════════════════════════
+;;  BASIC STRATEGIES
+;; ════════════════════════════════════════════════════════════
+
+;; ─── Proof 1: P wins ⊤  (trivial game) ───
+;; The simplest possible game: P wins immediately.
+;; No interaction needed.
+
+(proof trivial-game
+  :theory GameSemantics
+  :goal (wins g-top)
+  :derivation (win-top))
+
+
+;; ─── Proof 2: P wins A → A  (copycat strategy) ───
+;; O provides a play for A.  P copies it exactly.
+;; This is the identity function as a game strategy.
+
+(proof copycat
+  :theory GameSemantics
+  :goal (wins (g-imp A A))
+  :derivation (win-imp (assumption)))
+
+
+;; ─── Proof 3: P wins A → (B → A)  (constant strategy) ───
+;; O provides A.  O provides B.  P ignores B, replays A.
+;; This is the K combinator as a game: "I already have what I need."
+
+(proof constant-strategy
+  :theory GameSemantics
+  :goal (wins (g-imp A (g-imp B A)))
+  :derivation (win-imp (win-imp (assumption 0))))
+
+
+;; ─── Proof 4: P wins (A ∧ B) → A  (extraction) ───
+;; O provides a pair (strategy for A, strategy for B).
+;; P extracts the A-component.
+;; This is fst as a game: "O gave me both; I take what I need."
+
+(proof extraction
+  :theory GameSemantics
+  :goal (wins (g-imp (g-and A B) A))
+  :derivation (win-imp (and-left (assumption))))
+
+
+;; ─── Proof 5: P wins A → (A ∧ A)  (duplication) ───
+;; O provides A.  P uses it twice: once for each component.
+;; This is the diagonal as a game: "I use my move for both answers."
+;;
+;; Note: This is CLASSICAL duplication — in a linear game,
+;; P cannot reuse O's move.
+
+(proof duplication
+  :theory GameSemantics
+  :goal (wins (g-imp A (g-and A A)))
+  :derivation (win-imp (win-and (assumption) (assumption))))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  STRUCTURAL STRATEGIES
+;; ════════════════════════════════════════════════════════════
+
+;; ─── Proof 6: P wins (A ∧ B) → (B ∧ A)  (swap) ───
+;; O provides (A, B).  P responds (B, A).
+;; Conjunction is commutative in the game.
+
+(proof swap-strategy
+  :theory GameSemantics
+  :goal (wins (g-imp (g-and A B) (g-and B A)))
+  :derivation
+    (win-imp
+      (win-and
+        (and-right (assumption))
+        (and-left (assumption)))))
+
+
+;; ─── Proof 7: P wins (A→B) → ((A→C) → (A → B∧C))  (fork) ───
+;; O provides strategies for A→B and A→C.
+;; Then O provides A.
+;; P applies both functions to A, getting B and C.
+;; P responds with (B, C).
+;;
+;; This is the FORK strategy: "Given two responses to the same
+;; challenge, combine them."
+
+(proof fork-strategy
+  :theory GameSemantics
+  :goal (wins (g-imp (g-imp A B) (g-imp (g-imp A C) (g-imp A (g-and B C)))))
+  :derivation
+    (win-imp
+      (win-imp
+        (win-imp
+          (win-and
+            (win-mp (assumption 0) (assumption))
+            (win-mp (assumption 1) (assumption)))))))
+
+
+;; ─── Proof 8: P wins A → (A ∨ B)  (left choice) ───
+;; O provides A.  P chooses the left disjunct.
+;; P's strategy: "I'll defend A — I already have it."
+
+(proof left-choice
+  :theory GameSemantics
+  :goal (wins (g-imp A (g-or A B)))
+  :derivation (win-imp (win-or-left (assumption))))
+
+
+;; ─── Proof 9: P wins (A→C) → ((B→C) → ((A∨B) → C))  (case analysis) ───
+;; O provides: a strategy for A→C, a strategy for B→C, and A∨B.
+;; P performs case analysis on A∨B:
+;;   - If A: apply (A→C) to get C.
+;;   - If B: apply (B→C) to get C.
+;;
+;; This is the elimination principle for disjunction.
+;; The game interpretation: "No matter which side O committed to
+;; in the disjunction, P has a response."
+
+(proof case-analysis
+  :theory GameSemantics
+  :goal (wins (g-imp (g-imp A C) (g-imp (g-imp B C) (g-imp (g-or A B) C))))
+  :derivation
+    (win-imp
+      (win-imp
+        (win-imp
+          (or-elim
+            (assumption)
+            (win-mp (assumption 0) (assumption))
+            (win-mp (assumption 1) (assumption)))))))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  THE CLASSICAL STRATEGY: Peirce's Law
+;; ════════════════════════════════════════════════════════════
+
+;; ─── Proof 10: P wins ((A→B)→A) → A  (Peirce's law) ───
+;; This is the game-theoretic CALL/CC.
+;;
+;; The strategy:
+;;   O provides a function f : (A→B)→A.
+;;   P needs to win A.
+;;   P's bold move: assume ¬A (i.e., A→⊥).
+;;     Build A→B: given A, use ¬A to get ⊥, then anything (B).
+;;     Apply f to (A→B) to get A.
+;;     But wait — now P has A, contradicting the assumption ¬A!
+;;   The contradiction means P's assumption was wrong.
+;;   P wins A by classical reasoning.
+;;
+;; In game terms: P "bluffs" by assuming A is false,
+;; catches O in a contradiction, and wins.
+
+(proof peirce-game
+  :theory GameSemantics
+  :goal (wins (g-imp (g-imp (g-imp A B) A) A))
+  :derivation
+    (win-imp
+      (win-classical
+        (win-mp
+          (assumption)
+          (win-mp
+            (assumption 0)
+            (win-imp
+              (win-absurd
+                (win-mp
+                  (assumption 1)
+                  (assumption)))))))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; WHAT GAME SEMANTICS REVEALS
+;; ════════════════════════════════════════════════════════════
+;;
+;;   Logic              Game Interpretation
+;;   ──────────────────────────────────────────────
+;;   A ∧ B              P handles BOTH challenges
+;;   A ∨ B              P CHOOSES which to defend
+;;   A → B              P transforms O's A-play into a B-play
+;;   ⊤                  P wins with no effort
+;;   ⊥                  O wins — game over
+;;   ¬A = A → ⊥        P turns O's A-play into a contradiction
+;;
+;;   Proof               = Winning strategy
+;;   Cut elimination      = Strategy simplification
+;;   Normalization        = Removing unnecessary moves
+;;   Identity (A → A)    = Copycat (repeat O's move)
+;;   Composition (g ∘ f) = Sequential play
+;;
+;;   Classical logic:   P can bluff (call/cc, Peirce)
+;;   Intuitionistic:    P must play constructively (no bluffing)
+;;   Linear logic:      P cannot reuse O's moves (resources)
+;;
+;; Every proof you write is a game you play against the universe.
+;; The type checker is the referee.
+;; Validity means you always win.
+;; ════════════════════════════════════════════════════════════

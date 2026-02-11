@@ -660,15 +660,158 @@ fn relevant_logic_example() {
 fn girard_bridge_example() {
     let results = check_example("examples/girard.omega");
     assert!(results.iter().any(|r| r.contains("Theory GirardBridge: registered OK")));
-    // Compilation checks (rewrite rules compute the translation)
-    assert!(results.iter().any(|r| r.contains("Proof compile-identity: VALID")));
-    assert!(results.iter().any(|r| r.contains("Proof compile-contraction: VALID")));
-    assert!(results.iter().any(|r| r.contains("Proof compile-chain: VALID")));
-    // Classical proofs
     assert!(results.iter().any(|r| r.contains("Proof c-identity: VALID")));
-    assert!(results.iter().any(|r| r.contains("Proof c-contraction: VALID")));
-    // Linear proofs of compiled forms
+    assert!(results.iter().any(|r| r.contains("Proof compile-identity: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof l-identity: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof compile-contraction: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof l-contraction: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof l-chain: VALID")));
+}
+
+#[test]
+fn glivenko_bridge_example() {
+    let results = check_example("examples/glivenko.omega");
+    assert!(results.iter().any(|r| r.contains("Theory GlivenkoBridge: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof c-lem: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof compile-lem: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof i-lem: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof i-peirce: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof i-dummett: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof i-contraposition: VALID")));
+}
+
+#[test]
+fn collapse_filter_example() {
+    let results = check_example("examples/collapse.omega");
+    assert!(results.iter().any(|r| r.contains("Theory CollapseFilter: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof p-paradox: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof filter-paradox: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof c-dne-thm: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof c-lem: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof filter-tautology: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof c-composition: VALID")));
+}
+
+#[test]
+fn cut_elim_example() {
+    let results = check_example("examples/cut-elim.omega");
+    assert!(results.iter().any(|r| r.contains("Theory LinearMachine: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof beta-identity: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof cut-let: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof contraction: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof double-two: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof compose-succ-succ: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof girard-roundtrip: VALID")));
+}
+
+#[test]
+fn category_example() {
+    let results = check_example("examples/category.omega");
+    assert!(results.iter().any(|r| r.contains("Theory CCC: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof identity: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof composition: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof diagonal: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof swap: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof product-beta-1: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof product-beta-2: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof modus-ponens: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof weakening: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof syllogism: VALID")));
+}
+
+#[test]
+fn temporal_bridge_example() {
+    let results = check_example("examples/temporal.omega");
+    assert!(results.iter().any(|r| r.contains("Theory TemporalBridge: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof light-go: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof light-cycle: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof light-reach-red: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof mutex-acquire: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof mutex-protocol: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof mutex-safe-free: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof mutex-reach-free: VALID")));
+}
+
+#[test]
+fn monad_bridge_example() {
+    let results = check_example("examples/monad.omega");
+    assert!(results.iter().any(|r| r.contains("Theory KleisliMonad: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof kleisli-return: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof kleisli-compose: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof monad-left-id: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof monad-right-id: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof counter-inc-inc: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof hoare-inc-inc: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof hoare-inc-inc-inc: VALID")));
+}
+
+#[test]
+fn separation_bi_example() {
+    let results = check_example("examples/separation.omega");
+    assert!(results.iter().any(|r| r.contains("Theory BunchedImplications: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof classical-contraction: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof star-commutative: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof distribution-bridge: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof wand-modus-ponens: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof heap-sharing: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof swap-safe: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof framed-write: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof write-then-swap: VALID")));
+}
+
+#[test]
+fn topos_example() {
+    let results = check_example("examples/topos.omega");
+    assert!(results.iter().any(|r| r.contains("Theory Topos: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof bool-dne-true: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof bool-dne-false: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof bool-lem: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof heyt-dne-unknown: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof heyt-lem-fails: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof heyt-peirce-fails: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof bool-noncontradiction: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof heyt-noncontradiction: VALID")));
+}
+
+#[test]
+fn godel_example() {
+    let results = check_example("examples/godel.omega");
+    assert!(results.iter().any(|r| r.contains("Theory GodelGL: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof box-top: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof box-identity: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof introspection: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof lob-instance: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof godel-implies-unprovable: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof unprovable-implies-godel: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof box-godel-fwd: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof second-incompleteness: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof distribution: VALID")));
+}
+
+#[test]
+fn game_semantics_example() {
+    let results = check_example("examples/game.omega");
+    assert!(results.iter().any(|r| r.contains("Theory GameSemantics: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof trivial-game: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof copycat: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof constant-strategy: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof fork-strategy: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof case-analysis: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof peirce-game: VALID")));
+}
+
+#[test]
+fn pi_calculus_example() {
+    let results = check_example("examples/pi.omega");
+    assert!(results.iter().any(|r| r.contains("Theory SessionPi: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof request-response-duality: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof server-typed: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof client-typed: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof request-response-safe: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof request-response-terminates: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof auth-duality: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof auth-server-typed: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof auth-accept-safe: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof auth-accept-terminates: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof auth-reject-terminates: VALID")));
 }

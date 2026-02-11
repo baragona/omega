@@ -1,0 +1,426 @@
+;;; The Linear Machine: Cut Elimination as Computation
+;;;
+;;; Proofs are programs.  Cut elimination is execution.
+;;; This file builds a linear logic proof-term calculus where
+;;; Omega's normalizer IS the abstract machine.
+;;;
+;;; The key insight: each cut elimination step is a rewrite rule.
+;;; The normalizer chains them automatically.  No interpreter needed.
+;;;
+;;;   Cut elimination step     =  Rewrite rule
+;;;   Cut-reduce               =  Substitution (let-binding)
+;;;   Principal cut (⊗)       =  Projection
+;;;   Principal cut (&)       =  Selection
+;;;   Principal cut (!)       =  Dereliction / Clone / GC
+;;;   Beta-reduction (⊸)     =  Built-in (Omega's normalizer)
+;;;   Full normalization       =  The normalizer runs ALL rules
+;;;
+;;; Proved here (10 computations, all verified by eq-refl):
+;;;
+;;;   1.  (λx.x)(0) = 0                       (beta: identity)
+;;;   2.  cut(0, λx.S(x)) = 1                 (cut-reduce: let-binding)
+;;;   3.  fst(⟨1, 2⟩) = 1                     (tensor projection)
+;;;   4.  π₁(⟨0, 1⟩) = 0                      (additive projection)
+;;;   5.  derelict(!2) = 2                     (bang: use once)
+;;;   6.  dup(!0, λa.λb.⟨a,b⟩) = ⟨!0, !0⟩    (bang: clone)
+;;;   7.  discard(!0, 1) = 1                   (bang: garbage collect)
+;;;   8.  cut(0, λx.cut(S(x), λy.S(y))) = 2   (pipeline: chained cuts)
+;;;   9.  double(!2) = 4                       (bang + arithmetic)
+;;;  10.  compose(succ, succ)(!0) = 2          (the grand computation)
+
+(theory LinearMachine
+  (binder-behavior lam :substitutive)
+
+  ;; ══════════════════════════════════════
+  ;; PROOF TERMS (the "assembly language")
+  ;; ══════════════════════════════════════
+
+  (sort Pf)
+
+  ;; -- Peano data --
+  (constructor z : Pf)
+  (constructor s : (-> Pf Pf))
+
+  ;; -- Linear implication (⊸) --
+  ;; lam is a substitutive binder: (lam (x : Pf) body)
+  ;; Function application is direct Omega application:
+  ;;   (f arg) where f is a lambda → beta-reduces automatically.
+
+  ;; -- Multiplicative pair (⊗) --
+  (constructor pair : (-> Pf Pf Pf))
+  (constructor fst : (-> Pf Pf))
+  (constructor snd : (-> Pf Pf))
+
+  ;; -- Additive pair (&) --
+  (constructor wpair : (-> Pf Pf Pf))
+  (constructor pi1 : (-> Pf Pf))
+  (constructor pi2 : (-> Pf Pf))
+
+  ;; -- Exponential (!) --
+  (constructor promote : (-> Pf Pf))     ;; !a  (box: mark reusable)
+  (constructor derelict : (-> Pf Pf))    ;; use !a once
+  (constructor dup : (-> Pf Pf Pf))      ;; clone: dup(!a, λx.λy. body)
+  (constructor discard : (-> Pf Pf Pf))  ;; GC: discard(!a, result)
+
+  ;; -- Arithmetic --
+  (constructor add : (-> Pf Pf Pf))
+
+  ;; -- CUT: explicit composition / let-binding --
+  ;; cut(value, λx. body) = "let x = value in body"
+  (constructor cut : (-> Pf Pf Pf))
+
+  ;; ══════════════════════════════════════
+  ;; CUT ELIMINATION RULES
+  ;; Each rewrite rule = one computation step.
+  ;; The normalizer chains them all.
+  ;; ══════════════════════════════════════
+
+  ;; 1. CUT-REDUCE: the fundamental step
+  ;;    cut(v, f) → f(v) → body[v/x]
+  ;;    "Let x = v in body" executes by substitution.
+  ;;    The rewrite produces a direct application;
+  ;;    Omega's beta-reduction does the rest.
+  (rewrite cut-reduce (cut ?v ?f) (?f ?v))
+
+  ;; 2-3. TENSOR PROJECTIONS: principal cut for ⊗
+  (rewrite fst-pair (fst (pair ?a ?b)) ?a)
+  (rewrite snd-pair (snd (pair ?a ?b)) ?b)
+
+  ;; 4-5. ADDITIVE PROJECTIONS: principal cut for &
+  (rewrite pi1-wpair (pi1 (wpair ?a ?b)) ?a)
+  (rewrite pi2-wpair (pi2 (wpair ?a ?b)) ?b)
+
+  ;; 6. DERELICTION: principal cut for !
+  ;;    derelict(!a) → a
+  ;;    "Unwrap a reusable resource for single use."
+  (rewrite derelict-bang (derelict (promote ?a)) ?a)
+
+  ;; 7. CONTRACTION: the copy machine
+  ;;    dup(!a, f) → f(!a, !a)
+  ;;    "Clone the resource, give both copies to f."
+  (rewrite dup-bang (dup (promote ?a) ?f)
+    (?f (promote ?a) (promote ?a)))
+
+  ;; 8. WEAKENING: garbage collection
+  ;;    discard(!a, r) → r
+  ;;    "Throw away the resource, keep the result."
+  (rewrite discard-bang (discard (promote ?a) ?r) ?r)
+
+  ;; 9-10. PEANO ARITHMETIC
+  (rewrite add-z (add z ?n) ?n)
+  (rewrite add-s (add (s ?m) ?n) (s (add ?m ?n)))
+
+  ;; ══════════════════════════════════════
+  ;; NAMED FUNCTIONS (defined via rewrites)
+  ;; Calling (f arg) rewrites f to a lambda,
+  ;; then Omega's beta-reduction fires.
+  ;; ══════════════════════════════════════
+
+  ;; succ-fn : !Nat ⊸ Nat
+  (constructor succ-fn : Pf)
+  (rewrite def-succ succ-fn
+    (lam (x : Pf) (s (derelict #0))))
+
+  ;; double-fn : !Nat ⊸ Nat  (uses arg TWICE via dup)
+  (constructor double-fn : Pf)
+  (rewrite def-double double-fn
+    (lam (x : Pf)
+      (dup #0 (lam (a : Pf) (lam (b : Pf)
+        (add (derelict #1) (derelict #0)))))))
+
+  ;; compose-fn : !(!A⊸B) ⊸ !(!B⊸C) ⊸ !A ⊸ C
+  ;; The body uses direct Omega application (not app constructor).
+  (constructor compose-fn : Pf)
+  (rewrite def-compose compose-fn
+    (lam (f : Pf) (lam (g : Pf) (lam (x : Pf)
+      ((derelict #1) (promote ((derelict #2) #0)))))))
+
+  ;; ══════════════════════════════════════
+  ;; TYPES — for the Girard bridge
+  ;; ══════════════════════════════════════
+
+  ;; Classical types (the source language)
+  (sort CTy)
+  (constructor c-nat : CTy)
+  (constructor c-imp : (-> CTy CTy CTy))
+  (constructor c-and : (-> CTy CTy CTy))
+
+  ;; Linear types (the target language)
+  (sort LTy)
+  (constructor l-nat : LTy)
+  (constructor lolli : (-> LTy LTy LTy))
+  (constructor tensor : (-> LTy LTy LTy))
+  (constructor lwith : (-> LTy LTy LTy))
+  (constructor bang : (-> LTy LTy))
+
+  ;; Girard compilation: Classical → Linear
+  (constructor compile : (-> CTy LTy))
+  (rewrite c-nat-ty  (compile c-nat) l-nat)
+  (rewrite c-imp-ty  (compile (c-imp ?A ?B))
+    (lolli (bang (compile ?A)) (compile ?B)))
+  (rewrite c-and-ty  (compile (c-and ?A ?B))
+    (lwith (compile ?A) (compile ?B)))
+
+  ;; Readback: Linear → Classical (left inverse of compile)
+  (constructor readback : (-> LTy CTy))
+  (rewrite r-nat-ty  (readback l-nat) c-nat)
+  (rewrite r-imp-ty  (readback (lolli (bang ?A) ?B))
+    (c-imp (readback ?A) (readback ?B)))
+  (rewrite r-and-ty  (readback (lwith ?A ?B))
+    (c-and (readback ?A) (readback ?B)))
+
+  ;; ══════════════════════════════════════
+  ;; EQUALITY (verification by normalization)
+  ;; ══════════════════════════════════════
+
+  (sort Eq)
+  (constructor equals : (-> Pf Pf Eq))
+  (judgment (is-equal ?e) :where e : Eq)
+  (rule eq-refl :conclusion (is-equal (equals ?A ?A)))
+
+  (sort TyEq)
+  (constructor ty-equals : (-> CTy CTy TyEq))
+  (judgment (types-equal ?e) :where e : TyEq)
+  (rule ty-refl :conclusion (types-equal (ty-equals ?A ?A))))
+
+(check-theory LinearMachine)
+
+
+;; ════════════════════════════════════════════════════════════
+;;  COMPUTATION 1: Beta-Reduction  (principal cut for ⊸)
+;; ════════════════════════════════════════════════════════════
+;;  (λx.x)(0) = 0
+;;  The identity function applied to zero.
+;;  No rewrite needed — Omega's beta-reduction handles it.
+
+(proof beta-identity
+  :theory LinearMachine
+  :goal (is-equal (equals
+    ((lam (x : Pf) #0) z)
+    z))
+  :derivation (eq-refl))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  COMPUTATION 2: Cut-Reduce  (the fundamental let-binding)
+;; ════════════════════════════════════════════════════════════
+;;  cut(0, λx. S(x)) = 1
+;;  "Let x = 0 in x+1"
+;;  Steps: cut(z, λ) → (λ)(z) → s(z)
+
+(proof cut-let
+  :theory LinearMachine
+  :goal (is-equal (equals
+    (cut z (lam (x : Pf) (s #0)))
+    (s z)))
+  :derivation (eq-refl))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  COMPUTATION 3: Tensor Projection  (principal cut for ⊗)
+;; ════════════════════════════════════════════════════════════
+;;  fst(⟨1, 2⟩) = 1
+;;  A constructor meets its destructor: COMPUTE.
+
+(proof tensor-project
+  :theory LinearMachine
+  :goal (is-equal (equals
+    (fst (pair (s z) (s (s z))))
+    (s z)))
+  :derivation (eq-refl))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  COMPUTATION 4: Additive Projection  (principal cut for &)
+;; ════════════════════════════════════════════════════════════
+;;  π₁(⟨0, 1⟩) = 0
+
+(proof additive-project
+  :theory LinearMachine
+  :goal (is-equal (equals
+    (pi1 (wpair z (s z)))
+    z))
+  :derivation (eq-refl))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  COMPUTATION 5: Dereliction  (principal cut for !)
+;; ════════════════════════════════════════════════════════════
+;;  derelict(!2) = 2
+;;  "Unwrap a reusable resource for single use."
+
+(proof dereliction
+  :theory LinearMachine
+  :goal (is-equal (equals
+    (derelict (promote (s (s z))))
+    (s (s z))))
+  :derivation (eq-refl))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  COMPUTATION 6: Contraction  (! = the copy machine)
+;; ════════════════════════════════════════════════════════════
+;;  dup(!0, λa.λb. ⟨a, b⟩) = ⟨!0, !0⟩
+;;  "Clone the resource into two copies."
+;;  Steps: dup(!0, f) → f(!0, !0) → ⟨!0, !0⟩
+
+(proof contraction
+  :theory LinearMachine
+  :goal (is-equal (equals
+    (dup (promote z) (lam (a : Pf) (lam (b : Pf) (pair #1 #0))))
+    (pair (promote z) (promote z))))
+  :derivation (eq-refl))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  COMPUTATION 7: Weakening  (! = garbage collection)
+;; ════════════════════════════════════════════════════════════
+;;  discard(!0, 1) = 1
+;;  "Throw away the resource, keep the result."
+
+(proof weakening
+  :theory LinearMachine
+  :goal (is-equal (equals
+    (discard (promote z) (s z))
+    (s z)))
+  :derivation (eq-refl))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  COMPUTATION 8: Pipeline  (chained cuts = sequential code)
+;; ════════════════════════════════════════════════════════════
+;;  cut(0, λx. cut(S(x), λy. S(y))) = 2
+;;  "Let x = 0 in let y = x+1 in y+1"
+;;  Steps: cut(0, ...) → cut(1, λy.S(y)) → S(1) = 2
+
+(proof pipeline
+  :theory LinearMachine
+  :goal (is-equal (equals
+    (cut z (lam (x : Pf) (cut (s #0) (lam (y : Pf) (s #0)))))
+    (s (s z))))
+  :derivation (eq-refl))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  COMPUTATION 9: Double  (bang + contraction + arithmetic)
+;; ════════════════════════════════════════════════════════════
+;;  double(!2) = 4
+;;
+;;  double(!n) = dup(!n, λa.λb. derelict(a) + derelict(b))
+;;
+;;  The ! grants permission to CLONE the argument.
+;;  Without !, using n twice would violate linearity.
+;;
+;;  Steps:
+;;    double(!2)
+;;    → dup(!2, λa.λb. derelict(a) + derelict(b))    [beta]
+;;    → (λa.λb. ...)(! 2, !2)                          [contraction]
+;;    → add(derelict(!2), derelict(!2))                 [beta ×2]
+;;    → add(2, 2)                                       [dereliction ×2]
+;;    → 4                                               [arithmetic]
+
+(proof double-two
+  :theory LinearMachine
+  :goal (is-equal (equals
+    (double-fn (promote (s (s z))))
+    (s (s (s (s z))))))
+  :derivation (eq-refl))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  COMPUTATION 10: Compose  (the grand computation)
+;; ════════════════════════════════════════════════════════════
+;;  compose(!succ, !succ, !0) = 2
+;;
+;;  compose(!f, !g, !x) = derelict(!g)(promote(derelict(!f)(!x)))
+;;
+;;  This is Girard Bridge 4 running as a program:
+;;    Classical type:  (Nat→Nat) → (Nat→Nat) → Nat → Nat
+;;    Linear type:     !(!Nat⊸Nat) ⊸ !(!Nat⊸Nat) ⊸ !Nat ⊸ Nat
+;;
+;;  Steps:
+;;    compose(!succ, !succ, !0)
+;;    → derelict(!succ)(promote(derelict(!succ)(!0)))
+;;    → succ(promote(succ(!0)))           [dereliction ×2]
+;;    → succ(promote(s(derelict(!0))))    [beta on inner]
+;;    → succ(!(s(0)))                     [dereliction, normalize]
+;;    → s(derelict(!(s(0))))              [beta]
+;;    → s(s(0))                           [dereliction]
+;;    = 2
+
+(proof compose-succ-succ
+  :theory LinearMachine
+  :goal (is-equal (equals
+    (compose-fn (promote succ-fn) (promote succ-fn) (promote z))
+    (s (s z))))
+  :derivation (eq-refl))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  THE GRAND UNIFIED DEMO
+;; ════════════════════════════════════════════════════════════
+;;
+;;  The complete pipeline:
+;;    Classical → [Girard compile] → Linear → [compute] → result
+;;                                            [readback] → Classical
+;;
+;;  Step 1: Girard-compile the classical composition type
+;;    (Nat→Nat) → (Nat→Nat) → Nat → Nat
+;;  Step 2: Read it back to classical
+;;  Step 3: Verify it's the SAME type  (readback ∘ compile = id)
+;;  Step 4: Run the proof term and verify compose(succ,succ)(0) = 2
+
+;; The type round-trips through Girard compilation:
+;;   compile((N→N)→(N→N)→N→N) = !(!N⊸N) ⊸ !(!N⊸N) ⊸ !N ⊸ N
+;;   readback(!(!N⊸N) ⊸ !(!N⊸N) ⊸ !N ⊸ N) = (N→N)→(N→N)→N→N
+;;
+;; The normalizer does ALL the work.  eq-refl just checks.
+
+(proof girard-roundtrip
+  :theory LinearMachine
+  :goal (types-equal (ty-equals
+    (readback (compile
+      (c-imp (c-imp c-nat c-nat)
+             (c-imp (c-imp c-nat c-nat)
+                    (c-imp c-nat c-nat)))))
+    (c-imp (c-imp c-nat c-nat)
+           (c-imp (c-imp c-nat c-nat)
+                  (c-imp c-nat c-nat)))))
+  :derivation (ty-refl))
+
+;; And the computation still works at this type:
+;; compose(succ, succ)(0) = 2  (verified above as proof 10)
+;;
+;; So: the type is preserved through the bridge,
+;; AND the program computes correctly.
+;; Logic IS computation.  QED.
+
+
+;; ════════════════════════════════════════════════════════════
+;; WHAT THIS PROVES
+;; ════════════════════════════════════════════════════════════
+;;
+;; Every proof above uses eq-refl.  That means the normalizer
+;; (cut elimination engine) reduced both sides to the SAME
+;; normal form.  No manual proof steps — just computation.
+;;
+;;   Rewrite rule          =  Computation step
+;;   ─────────────────────────────────────────────────
+;;   cut-reduce            =  Let-binding (substitution)
+;;   beta-reduction        =  Function call
+;;   fst-pair / snd-pair   =  Struct field access
+;;   pi1-wpair / pi2-wpair =  Pattern match (select branch)
+;;   derelict-bang          =  Pointer dereference
+;;   dup-bang               =  Clone / deep copy
+;;   discard-bang           =  Free / garbage collect
+;;   add-z / add-s         =  Primitive arithmetic
+;;
+;; Cut elimination IS a programming language runtime:
+;;   - Beta-reduction  = function calls
+;;   - Projections     = field access
+;;   - !-handling      = memory management
+;;   - Chained cuts    = sequential execution
+;;
+;; The Curry-Howard correspondence isn't a metaphor.
+;; It's an engineering specification.
+;; ════════════════════════════════════════════════════════════

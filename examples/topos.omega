@@ -1,0 +1,335 @@
+;;; The Engine of Truth: Topos Theory
+;;;
+;;; WHY are Classical and Intuitionistic logic different?
+;;; Because they have different subobject classifiers.
+;;;
+;;; A Topos is a category with a special object Ω (the "truth values")
+;;; and a morphism  true : 1 → Ω  that classifies subobjects.
+;;; The internal logic of the topos is determined ENTIRELY by the
+;;; algebraic structure of Ω.
+;;;
+;;;   Boolean Ω = {⊤, ⊥}         → Classical logic
+;;;   Heyting Ω = {⊤, u, ⊥}      → Intuitionistic logic
+;;;
+;;; Same connectives.  Same rules.  Different truth values.
+;;; Change Ω, change the logic.
+;;;
+;;; The key difference: in the 3-element Heyting algebra,
+;;;   ¬u = ⊥  (negating "unknown" gives "false")
+;;;   ¬¬u = ⊤ (double-negating "unknown" gives "true", NOT "unknown")
+;;; So ¬¬x ≠ x in general.  DNE fails.  Intuitionistic.
+;;;
+;;; Meta-joke: We are defining Ω inside Omega.
+;;;
+;;; Proved here (10 proofs):
+;;;
+;;;   Boolean Ω (Classical):
+;;;    1.  ¬¬⊤ = ⊤                  (DNE on true)
+;;;    2.  ¬¬⊥ = ⊥                  (DNE on false → ¬¬x = x for all x)
+;;;    3.  ⊥ ∨ ¬⊥ = ⊤              (LEM holds)
+;;;
+;;;   Heyting Ω (Intuitionistic):
+;;;    4.  ¬¬⊤ = ⊤                  (DNE works on definite truths)
+;;;    5.  ¬¬u = ⊤                  (DNE maps unknown → true ≠ u!)
+;;;    6.  u ∨ ¬u = u               (LEM FAILS — gives "unknown")
+;;;    7.  (¬¬u → u) = u            (DNE as implication fails)
+;;;
+;;;   Universal Laws:
+;;;    8.  Bool: ⊤ ∧ ¬⊤ = ⊥        (non-contradiction)
+;;;    9.  Heyt: ⊤ ∧ ¬⊤ = ⊥        (non-contradiction — same!)
+;;;
+;;;   The Diagnostic:
+;;;   10.  Heyt: ((u→⊥)→u)→u = u   (Peirce's law FAILS at u)
+
+(theory Topos
+
+  ;; ══════════════════════════════════════════
+  ;; BOOLEAN SUBOBJECT CLASSIFIER
+  ;; Ω_Bool = {⊤, ⊥}  —  two truth values
+  ;; ══════════════════════════════════════════
+
+  (sort BVal)
+
+  (constructor bt : BVal)     ;; true
+  (constructor bf : BVal)     ;; false
+
+  (constructor b-not : (-> BVal BVal))
+  (constructor b-and : (-> BVal BVal BVal))
+  (constructor b-or  : (-> BVal BVal BVal))
+  (constructor b-imp : (-> BVal BVal BVal))
+
+  ;; Negation
+  (rewrite bn-t (b-not bt) bf)
+  (rewrite bn-f (b-not bf) bt)
+
+  ;; Conjunction (min)
+  (rewrite ba-tt (b-and bt bt) bt)
+  (rewrite ba-tf (b-and bt bf) bf)
+  (rewrite ba-ft (b-and bf bt) bf)
+  (rewrite ba-ff (b-and bf bf) bf)
+
+  ;; Disjunction (max)
+  (rewrite bo-tt (b-or bt bt) bt)
+  (rewrite bo-tf (b-or bt bf) bt)
+  (rewrite bo-ft (b-or bf bt) bt)
+  (rewrite bo-ff (b-or bf bf) bf)
+
+  ;; Implication (¬a ∨ b)
+  (rewrite bi-tt (b-imp bt bt) bt)
+  (rewrite bi-tf (b-imp bt bf) bf)
+  (rewrite bi-ft (b-imp bf bt) bt)
+  (rewrite bi-ff (b-imp bf bf) bt)
+
+  ;; ══════════════════════════════════════════
+  ;; HEYTING SUBOBJECT CLASSIFIER
+  ;; Ω_Heyt = {⊤, u, ⊥}  —  three truth values
+  ;;
+  ;; The middle value u = "unknown" / "open" / "not yet decided"
+  ;; This is the smallest Heyting algebra that is NOT Boolean.
+  ;; Ordered: ⊥ < u < ⊤
+  ;; ══════════════════════════════════════════
+
+  (sort HVal)
+
+  (constructor ht : HVal)     ;; true  (top)
+  (constructor hu : HVal)     ;; unknown (middle)
+  (constructor hf : HVal)     ;; false (bottom)
+
+  (constructor h-not : (-> HVal HVal))
+  (constructor h-and : (-> HVal HVal HVal))
+  (constructor h-or  : (-> HVal HVal HVal))
+  (constructor h-imp : (-> HVal HVal HVal))
+
+  ;; Negation: ¬a = a → ⊥
+  ;; ¬⊤ = ⊥,  ¬u = ⊥ (KEY!),  ¬⊥ = ⊤
+  (rewrite hn-t (h-not ht) hf)
+  (rewrite hn-u (h-not hu) hf)    ;; ¬(unknown) = false
+  (rewrite hn-f (h-not hf) ht)
+
+  ;; Conjunction (min)
+  (rewrite ha-tt (h-and ht ht) ht)
+  (rewrite ha-tu (h-and ht hu) hu)
+  (rewrite ha-tf (h-and ht hf) hf)
+  (rewrite ha-ut (h-and hu ht) hu)
+  (rewrite ha-uu (h-and hu hu) hu)
+  (rewrite ha-uf (h-and hu hf) hf)
+  (rewrite ha-ft (h-and hf ht) hf)
+  (rewrite ha-fu (h-and hf hu) hf)
+  (rewrite ha-ff (h-and hf hf) hf)
+
+  ;; Disjunction (max)
+  (rewrite ho-tt (h-or ht ht) ht)
+  (rewrite ho-tu (h-or ht hu) ht)
+  (rewrite ho-tf (h-or ht hf) ht)
+  (rewrite ho-ut (h-or hu ht) ht)
+  (rewrite ho-uu (h-or hu hu) hu)
+  (rewrite ho-uf (h-or hu hf) hu)
+  (rewrite ho-ft (h-or hf ht) ht)
+  (rewrite ho-fu (h-or hf hu) hu)
+  (rewrite ho-ff (h-or hf hf) hf)
+
+  ;; Implication: a → b = sup{c | c ∧ a ≤ b}
+  ;; ⊤→⊤ = ⊤  ⊤→u = u  ⊤→⊥ = ⊥
+  ;; u→⊤ = ⊤  u→u = ⊤  u→⊥ = ⊥
+  ;; ⊥→⊤ = ⊤  ⊥→u = ⊤  ⊥→⊥ = ⊤
+  (rewrite hi-tt (h-imp ht ht) ht)
+  (rewrite hi-tu (h-imp ht hu) hu)
+  (rewrite hi-tf (h-imp ht hf) hf)
+  (rewrite hi-ut (h-imp hu ht) ht)
+  (rewrite hi-uu (h-imp hu hu) ht)
+  (rewrite hi-uf (h-imp hu hf) hf)
+  (rewrite hi-ft (h-imp hf ht) ht)
+  (rewrite hi-fu (h-imp hf hu) ht)
+  (rewrite hi-ff (h-imp hf hf) ht)
+
+  ;; ══════════════════════════════════════════
+  ;; EQUALITY CHECKERS
+  ;; ══════════════════════════════════════════
+
+  (sort BEq)
+  (constructor b-eq : (-> BVal BVal BEq))
+  (judgment (bool-eq ?e) :where e : BEq)
+  (rule b-refl :conclusion (bool-eq (b-eq ?x ?x)))
+
+  (sort HEq)
+  (constructor h-eq : (-> HVal HVal HEq))
+  (judgment (heyt-eq ?e) :where e : HEq)
+  (rule h-refl :conclusion (heyt-eq (h-eq ?x ?x))))
+
+(check-theory Topos)
+
+
+;; ════════════════════════════════════════════════════════════
+;;  BOOLEAN Ω: Classical Logic
+;; ════════════════════════════════════════════════════════════
+;; Ω = {⊤, ⊥}.  Every proposition is decided.
+;; ¬¬x = x for all x.  DNE holds.  LEM holds.
+;; This is the internal logic of Set (the category of sets).
+
+
+;; ─── Proof 1: ¬¬⊤ = ⊤  (DNE on true) ───
+;; ¬⊤ = ⊥, ¬⊥ = ⊤, so ¬¬⊤ = ⊤.
+
+(proof bool-dne-true
+  :theory Topos
+  :goal (bool-eq (b-eq (b-not (b-not bt)) bt))
+  :derivation (b-refl))
+
+
+;; ─── Proof 2: ¬¬⊥ = ⊥  (DNE on false) ───
+;; ¬⊥ = ⊤, ¬⊤ = ⊥, so ¬¬⊥ = ⊥.
+;; Together with proof 1: ¬¬x = x for ALL x ∈ Ω_Bool.
+
+(proof bool-dne-false
+  :theory Topos
+  :goal (bool-eq (b-eq (b-not (b-not bf)) bf))
+  :derivation (b-refl))
+
+
+;; ─── Proof 3: ⊥ ∨ ¬⊥ = ⊤  (LEM) ───
+;; ¬⊥ = ⊤, ⊥ ∨ ⊤ = ⊤.
+;; LEM holds for ALL truth values (check: ⊤ ∨ ¬⊤ = ⊤ ∨ ⊥ = ⊤).
+
+(proof bool-lem
+  :theory Topos
+  :goal (bool-eq (b-eq (b-or bf (b-not bf)) bt))
+  :derivation (b-refl))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  HEYTING Ω: Intuitionistic Logic
+;; ════════════════════════════════════════════════════════════
+;; Ω = {⊤, u, ⊥}.  Three truth values.
+;; u = "unknown" / "not yet decided" / "open problem"
+;;
+;; The key: ¬u = u → ⊥ = ⊥  (negating unknown gives false)
+;;          ¬¬u = ¬⊥ = ⊤    (double-negating unknown gives TRUE)
+;;
+;; So ¬¬u ≠ u.  DNE fails.  The logic is intuitionistic.
+;;
+;; This is the internal logic of Sh(X) (sheaves on a topological
+;; space) where the open sets form a non-Boolean Heyting algebra.
+
+
+;; ─── Proof 4: ¬¬⊤ = ⊤  (DNE works on definite truths) ───
+;; Even in Heyting logic, double-negating a definite truth is fine.
+
+(proof heyt-dne-true
+  :theory Topos
+  :goal (heyt-eq (h-eq (h-not (h-not ht)) ht))
+  :derivation (h-refl))
+
+
+;; ─── Proof 5: ¬¬u = ⊤  (DNE SHIFTS the unknown!) ───
+;; ¬u = ⊥ (unknown becomes false)
+;; ¬⊥ = ⊤ (false becomes true)
+;; So ¬¬u = ⊤.
+;;
+;; But u ≠ ⊤!  Double negation CHANGED the truth value.
+;; In classical logic, ¬¬x = x is a tautology.
+;; In intuitionistic logic, ¬¬x may differ from x.
+;; This single computation explains WHY the two logics diverge.
+
+(proof heyt-dne-unknown
+  :theory Topos
+  :goal (heyt-eq (h-eq (h-not (h-not hu)) ht))
+  :derivation (h-refl))
+
+
+;; ─── Proof 6: u ∨ ¬u = u  (LEM FAILS!) ───
+;; ¬u = ⊥, so u ∨ ¬u = u ∨ ⊥ = u.
+;;
+;; In classical logic, P ∨ ¬P = ⊤ always.
+;; In intuitionistic logic, u ∨ ¬u = u ≠ ⊤.
+;;
+;; "Is this proposition true or false?"
+;; Classical: "It must be one or the other!"
+;; Intuitionistic: "We don't know yet."
+
+(proof heyt-lem-fails
+  :theory Topos
+  :goal (heyt-eq (h-eq (h-or hu (h-not hu)) hu))
+  :derivation (h-refl))
+
+
+;; ─── Proof 7: (¬¬u → u) = u  (DNE as implication fails) ───
+;; ¬¬u = ⊤ (from proof 5), so (¬¬u → u) = (⊤ → u) = u.
+;;
+;; In classical logic, ¬¬P → P is a tautology (= ⊤).
+;; In Heyting, it evaluates to u — the logic cannot decide it.
+
+(proof heyt-dne-imp-fails
+  :theory Topos
+  :goal (heyt-eq (h-eq (h-imp (h-not (h-not hu)) hu) hu))
+  :derivation (h-refl))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  UNIVERSAL LAWS (both algebras agree)
+;; ════════════════════════════════════════════════════════════
+;; Non-contradiction is universal: ⊤ ∧ ¬⊤ = ⊥ in EVERY topos.
+;; The Law of Non-Contradiction does not depend on Ω.
+
+
+;; ─── Proof 8: Bool: ⊤ ∧ ¬⊤ = ⊥  (non-contradiction) ───
+
+(proof bool-noncontradiction
+  :theory Topos
+  :goal (bool-eq (b-eq (b-and bt (b-not bt)) bf))
+  :derivation (b-refl))
+
+
+;; ─── Proof 9: Heyt: ⊤ ∧ ¬⊤ = ⊥  (non-contradiction — same!) ───
+
+(proof heyt-noncontradiction
+  :theory Topos
+  :goal (heyt-eq (h-eq (h-and ht (h-not ht)) hf))
+  :derivation (h-refl))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  THE DIAGNOSTIC: Peirce's Law
+;; ════════════════════════════════════════════════════════════
+;; ((P → Q) → P) → P  is classically valid, intuitionistically invalid.
+;; Evaluation at P = u, Q = ⊥:
+;;
+;;   (u → ⊥) → u) → u
+;; = (  ⊥   → u) → u
+;; = (    ⊤    ) → u
+;; =           u
+;;
+;; In Boolean: always ⊤.  In Heyting: u (not ⊤).
+;; Peirce's law is the shibboleth separating classical from intuitionistic.
+
+
+;; ─── Proof 10: Heyt: ((u→⊥)→u)→u = u  (Peirce FAILS) ───
+
+(proof heyt-peirce-fails
+  :theory Topos
+  :goal (heyt-eq (h-eq (h-imp (h-imp (h-imp hu hf) hu) hu) hu))
+  :derivation (h-refl))
+
+
+;; ════════════════════════════════════════════════════════════
+;; WHAT THE TOPOS REVEALS
+;; ════════════════════════════════════════════════════════════
+;;
+;;   Boolean Ω = {⊤, ⊥}          Heyting Ω = {⊤, u, ⊥}
+;;   ─────────────────────────────────────────────────────
+;;   ¬¬x = x  (always)           ¬¬u = ⊤ ≠ u  (sometimes)
+;;   x ∨ ¬x = ⊤  (always)       u ∨ ¬u = u ≠ ⊤  (sometimes)
+;;   Peirce = ⊤  (always)        Peirce = u  (sometimes)
+;;   x ∧ ¬x = ⊥  (always)       x ∧ ¬x = ⊥  (always!)
+;;
+;;   Same connectives, same computation rules.
+;;   The ONLY difference is the set of truth values.
+;;
+;;   Classical logic = Boolean Ω = {decided}
+;;   Intuitionistic logic = Heyting Ω = {decided} ∪ {open}
+;;
+;;   The internal logic of a topos is determined by its Ω.
+;;   Every topos IS a universe of mathematical reasoning.
+;;   Different toposes, different mathematics.
+;;
+;;   And we defined Ω... inside Omega.
+;; ════════════════════════════════════════════════════════════

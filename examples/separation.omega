@@ -1,0 +1,415 @@
+;;; The Space Bridge: Bunched Implications (BI)
+;;;
+;;; Classical logic says: A ∧ A = A   (sharing is free)
+;;; Linear logic says:   A ⊗ A ≠ A   (resources are consumed)
+;;;
+;;; What if you need BOTH in the same system?
+;;;
+;;; The Logic of Bunched Implications puts them side by side:
+;;;
+;;;   P ∧ Q   "P and Q hold for the SAME heap"    (classical / sharing)
+;;;   P * Q   "P and Q hold for DISJOINT heaps"   (linear / ownership)
+;;;   P → Q   "assuming P (shared), deduce Q"     (classical implication)
+;;;   P -* Q  "consuming P (owned), produce Q"    (separating implication)
+;;;
+;;; This is the logic of SPACE — of memory, ownership, and aliasing.
+;;; Every heap-manipulating program lives in this logic.
+;;;
+;;; The critical distinction:
+;;;   (x ↦ v) ∧ (x ↦ v)   is fine   — observing the same cell twice
+;;;   (x ↦ v) * (x ↦ v)   is wrong  — claiming to OWN the same cell twice
+;;;
+;;; The first is a fact.  The second is a lie about resources.
+;;; swap(x, y) requires  (x ↦ a) * (y ↦ b)  — SEPARATE ownership —
+;;; because it writes to both.  Classical ∧ would allow aliasing (x=y),
+;;; which makes the swap corrupt memory.
+;;;
+;;; BI is the synthesis: classical reasoning ABOUT linear resources.
+;;; It is the foundation of Rust's borrow checker, Iris, and every
+;;; modern separation logic framework.
+;;;
+;;; Proved here (10 proofs):
+;;;
+;;;   BI Algebra (the pure logic):
+;;;    1.  P ⊢ P ∧ P                              (classical contraction)
+;;;    2.  P * Q ⊢ Q * P                           (star commutativity)
+;;;    3.  (P * Q) * R ⊢ P * (Q * R)              (star associativity)
+;;;    4.  P * emp ⊢ P                             (emp is unit)
+;;;    5.  (P ∧ Q) * R ⊢ (P*R) ∧ (Q*R)           (THE BRIDGE)
+;;;    6.  P * (P -* Q) ⊢ Q                        (wand modus ponens)
+;;;
+;;;   Heap Verification (the physics):
+;;;    7.  (x↦a) ⊢ (x↦a) ∧ (x↦a)                (sharing: OK)
+;;;    8.  {x↦a * y↦b} swap(x,y) {x↦b * y↦a}    (ownership: safe)
+;;;    9.  {x↦a * y↦b} write(x,c) {x↦c * y↦b}   (frame isolates y)
+;;;   10.  {x↦a * y↦b} write(x,c); swap(x,y)     (composition)
+;;;                     {x↦b * y↦c}
+
+(theory BunchedImplications
+
+  ;; ══════════════════════════════════════
+  ;; PROPOSITIONS (BI formulas)
+  ;; ══════════════════════════════════════
+
+  (sort Prop)
+
+  ;; Generic propositions (for algebraic proofs)
+  (constructor P : Prop)
+  (constructor Q : Prop)
+  (constructor R : Prop)
+
+  ;; ── Additive (classical) connectives ──
+  ;; These share the SAME heap.  Contraction and weakening allowed.
+  (constructor c-and : (-> Prop Prop Prop))    ;; P ∧ Q  (same heap)
+  (constructor c-top : Prop)                   ;; ⊤       (always true)
+
+  ;; ── Multiplicative (linear) connectives ──
+  ;; These split into DISJOINT heaps.  No contraction, no weakening.
+  (constructor star : (-> Prop Prop Prop))     ;; P * Q  (disjoint heaps)
+  (constructor wand : (-> Prop Prop Prop))     ;; P -* Q (separating implication)
+  (constructor emp  : Prop)                    ;; I      (empty heap)
+
+  ;; ══════════════════════════════════════
+  ;; HEAP MODEL
+  ;; ══════════════════════════════════════
+
+  (sort Loc)
+  (sort Val)
+
+  (constructor pto : (-> Loc Val Prop))        ;; x ↦ v  (points-to)
+
+  ;; Concrete locations and values
+  (constructor lx : Loc)
+  (constructor ly : Loc)
+  (constructor va : Val)
+  (constructor vb : Val)
+  (constructor vc : Val)
+
+  ;; ══════════════════════════════════════
+  ;; ENTAILMENT (the BI sequent calculus)
+  ;; ══════════════════════════════════════
+
+  (judgment (entails ?A ?B) :where A : Prop B : Prop)
+
+  ;; ── Structural ──
+  (rule ent-refl
+    :conclusion (entails ?A ?A))
+
+  (rule ent-trans
+    :premises ((entails ?A ?B) (entails ?B ?C))
+    :conclusion (entails ?A ?C))
+
+  ;; ── Classical conjunction (additive) ──
+  ;; Key property: CONTRACTION.  P ⊢ P ∧ P.
+  ;; Both conjuncts see the SAME underlying resource.
+  (rule c-and-intro
+    :premises ((entails ?G ?A) (entails ?G ?B))
+    :conclusion (entails ?G (c-and ?A ?B)))
+
+  (rule c-and-elim-l
+    :conclusion (entails (c-and ?A ?B) ?A))
+
+  (rule c-and-elim-r
+    :conclusion (entails (c-and ?A ?B) ?B))
+
+  (rule c-top-intro
+    :conclusion (entails ?A c-top))
+
+  ;; ── Separating conjunction (multiplicative) ──
+  ;; Key property: NO CONTRACTION.  P ⊬ P * P.
+  ;; The two conjuncts live in DISJOINT heaps.
+  (rule star-mono
+    :premises ((entails ?A ?C) (entails ?B ?D))
+    :conclusion (entails (star ?A ?B) (star ?C ?D)))
+
+  (rule star-comm
+    :conclusion (entails (star ?A ?B) (star ?B ?A)))
+
+  (rule star-assoc
+    :conclusion (entails (star (star ?A ?B) ?C) (star ?A (star ?B ?C))))
+
+  (rule star-emp-l
+    :conclusion (entails (star emp ?A) ?A))
+
+  (rule star-emp-r
+    :conclusion (entails (star ?A emp) ?A))
+
+  (rule emp-star-intro
+    :conclusion (entails ?A (star emp ?A)))
+
+  ;; ── Magic wand (separating implication) ──
+  ;; P -* Q means: "if you give me a P-heap (disjoint from mine),
+  ;; I can produce a Q-heap from the combination."
+  (rule wand-mp
+    :conclusion (entails (star ?A (wand ?A ?B)) ?B))
+
+  (rule wand-intro
+    :premises ((entails (star ?A ?B) ?C))
+    :conclusion (entails ?B (wand ?A ?C)))
+
+  ;; ── THE BRIDGE: distribution of ∧ over * ──
+  ;; Classical knowledge distributes over linear ownership.
+  ;; "If I know (P ∧ Q) about one region and R about another,
+  ;;  then I know (P*R) and also (Q*R) about the whole heap."
+  (rule dist-and-star
+    :conclusion (entails (star (c-and ?A ?B) ?C) (c-and (star ?A ?C) (star ?B ?C))))
+
+  ;; ══════════════════════════════════════
+  ;; HEAP COMMANDS (for pointer verification)
+  ;; ══════════════════════════════════════
+
+  (sort Cmd)
+
+  (constructor skip-cmd : Cmd)
+  (constructor write    : (-> Loc Val Cmd))
+  (constructor swap-cmd : (-> Loc Loc Cmd))
+  (constructor seq      : (-> Cmd Cmd Cmd))
+
+  ;; Hoare triple: {Pre} cmd {Post}
+  (judgment (triple ?pre ?cmd ?post) :where pre : Prop cmd : Cmd post : Prop)
+
+  (rule ht-skip
+    :conclusion (triple ?A skip-cmd ?A))
+
+  ;; Write: {x ↦ v} write(x, w) {x ↦ w}
+  (rule ht-write
+    :conclusion (triple (pto ?x ?v) (write ?x ?w) (pto ?x ?w)))
+
+  ;; Swap: {x ↦ a * y ↦ b} swap(x,y) {x ↦ b * y ↦ a}
+  ;; REQUIRES separating conjunction — the two cells MUST be disjoint.
+  ;; With classical ∧, x and y could alias, making swap corrupt memory.
+  ;; With linear *, aliasing is impossible by construction.
+  (rule ht-swap
+    :conclusion (triple (star (pto ?x ?a) (pto ?y ?b))
+                        (swap-cmd ?x ?y)
+                        (star (pto ?x ?b) (pto ?y ?a))))
+
+  ;; Sequencing
+  (rule ht-seq
+    :premises ((triple ?A ?c1 ?B) (triple ?B ?c2 ?C))
+    :conclusion (triple ?A (seq ?c1 ?c2) ?C))
+
+  ;; THE FRAME RULE: the heart of separation logic.
+  ;; "If {P} c {Q}, then c doesn't touch R, so {P*R} c {Q*R}."
+  ;; This is what makes LOCAL reasoning possible.
+  (rule ht-frame
+    :premises ((triple ?A ?c ?B))
+    :conclusion (triple (star ?A ?R) ?c (star ?B ?R))))
+
+(check-theory BunchedImplications)
+
+
+;; ════════════════════════════════════════════════════════════
+;;  PART 1: BI ALGEBRA (the pure logic of sharing vs ownership)
+;; ════════════════════════════════════════════════════════════
+
+
+;; ─── Proof 1: Classical Contraction ───
+;; P ⊢ P ∧ P
+;;
+;; "From one copy of P, get two copies."
+;; This is the hallmark of classical conjunction: SHARING IS FREE.
+;; Both copies refer to the same underlying resource.
+;;
+;; Note: there is NO corresponding rule for star.
+;; You CANNOT prove P ⊢ P * P.
+;; Ownership cannot be duplicated — only shared.
+
+(proof classical-contraction
+  :theory BunchedImplications
+  :goal (entails P (c-and P P))
+  :derivation (c-and-intro (ent-refl) (ent-refl)))
+
+
+;; ─── Proof 2: Star Commutativity ───
+;; P * Q ⊢ Q * P
+;;
+;; "Disjoint heaps can be named in either order."
+;; The split is symmetric — the two regions don't know about each other.
+
+(proof star-commutative
+  :theory BunchedImplications
+  :goal (entails (star P Q) (star Q P))
+  :derivation (star-comm))
+
+
+;; ─── Proof 3: Star Associativity ───
+;; (P * Q) * R ⊢ P * (Q * R)
+;;
+;; "Heap splitting is associative."
+;; Three disjoint regions can be grouped either way.
+
+(proof star-associative
+  :theory BunchedImplications
+  :goal (entails (star (star P Q) R) (star P (star Q R)))
+  :derivation (star-assoc))
+
+
+;; ─── Proof 4: Emp is Unit ───
+;; P * emp ⊢ P
+;;
+;; "Owning an empty heap alongside P is just owning P."
+;; The empty heap ∅ is the unit for disjoint union.
+
+(proof emp-is-unit
+  :theory BunchedImplications
+  :goal (entails (star P emp) P)
+  :derivation (star-emp-r))
+
+
+;; ─── Proof 5: THE BRIDGE — Distribution ───
+;; (P ∧ Q) * R ⊢ (P * R) ∧ (Q * R)
+;;
+;; This is the KEY law connecting classical and linear reasoning.
+;;
+;; Reading: "If I KNOW both P and Q about one heap region (∧),
+;; and I OWN a separate region satisfying R (*),
+;; then I have two views of the whole heap:
+;;   - one where the first region satisfies P (combined with R)
+;;   - one where the first region satisfies Q (combined with R)"
+;;
+;; Classical knowledge DISTRIBUTES over linear ownership.
+;; This is what makes BI strictly more expressive than either
+;; classical logic or linear logic alone.
+
+(proof distribution-bridge
+  :theory BunchedImplications
+  :goal (entails (star (c-and P Q) R) (c-and (star P R) (star Q R)))
+  :derivation (dist-and-star))
+
+
+;; ─── Proof 6: Magic Wand (Separating Modus Ponens) ───
+;; P * (P -* Q) ⊢ Q
+;;
+;; "If you own P, and you have a ticket that converts P into Q,
+;;  then you can get Q (consuming both P and the ticket)."
+;;
+;; This is modus ponens for ownership:
+;;   classical:  P ∧ (P → Q) ⊢ Q   (keep P, deduce Q)
+;;   linear:     P * (P -* Q) ⊢ Q   (spend P, get Q)
+
+(proof wand-modus-ponens
+  :theory BunchedImplications
+  :goal (entails (star P (wand P Q)) Q)
+  :derivation (wand-mp))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  PART 2: HEAP VERIFICATION (the physics of memory)
+;; ════════════════════════════════════════════════════════════
+
+
+;; ─── Proof 7: Heap Sharing (Classical) ───
+;; (x ↦ a) ⊢ (x ↦ a) ∧ (x ↦ a)
+;;
+;; "The same cell can be observed twice."
+;; This is classical contraction applied to a heap fact.
+;; Both copies refer to the SAME memory cell — no duplication.
+;;
+;; Contrast: (x ↦ a) ⊬ (x ↦ a) * (x ↦ a)
+;; You CANNOT duplicate ownership.  That would mean two separate
+;; heap regions both contain x, which is physically impossible.
+;; This is the difference between LOOKING and OWNING.
+
+(proof heap-sharing
+  :theory BunchedImplications
+  :goal (entails (pto lx va) (c-and (pto lx va) (pto lx va)))
+  :derivation (c-and-intro (ent-refl) (ent-refl)))
+
+
+;; ─── Proof 8: Pointer Swap (Separating Conjunction) ───
+;; {x ↦ a * y ↦ b} swap(x,y) {x ↦ b * y ↦ a}
+;;
+;; The precondition uses STAR, not AND.
+;; Star means: x and y are in DISJOINT heap regions.
+;; This guarantees x ≠ y — so the swap is safe.
+;;
+;; If we used (x ↦ a) ∧ (y ↦ b), the cells could overlap
+;; (x and y might alias), and the swap would corrupt memory.
+;; The CHOICE of connective IS the safety guarantee.
+
+(proof swap-safe
+  :theory BunchedImplications
+  :goal (triple (star (pto lx va) (pto ly vb))
+                (swap-cmd lx ly)
+                (star (pto lx vb) (pto ly va)))
+  :derivation (ht-swap))
+
+
+;; ─── Proof 9: Framed Write ───
+;; {x ↦ a * y ↦ b} write(x, c) {x ↦ c * y ↦ b}
+;;
+;; write(x, c) only needs {x ↦ a}.  The frame rule extends it
+;; to a larger heap: {x ↦ a * y ↦ b}.
+;;
+;; The frame rule says: "y ↦ b is UNTOUCHED by the write."
+;; This is LOCAL reasoning — verify the command against
+;; only the cells it touches, then frame in the rest.
+
+(proof framed-write
+  :theory BunchedImplications
+  :goal (triple (star (pto lx va) (pto ly vb))
+                (write lx vc)
+                (star (pto lx vc) (pto ly vb)))
+  :derivation (ht-frame (ht-write)))
+
+
+;; ─── Proof 10: THE GRAND PROOF — Write then Swap ───
+;; {x ↦ a * y ↦ b} write(x,c); swap(x,y) {x ↦ b * y ↦ c}
+;;
+;; A two-step pointer operation:
+;;   Step 1: write c to x   (frame preserves y)
+;;           {x ↦ a * y ↦ b} → {x ↦ c * y ↦ b}
+;;   Step 2: swap x and y   (requires separate ownership)
+;;           {x ↦ c * y ↦ b} → {x ↦ b * y ↦ c}
+;;
+;; The derivation composes:
+;;   - ht-frame(ht-write) for step 1  (local write + frame)
+;;   - ht-swap for step 2             (disjoint swap)
+;;   - ht-seq to combine them         (sequential composition)
+;;
+;; This is separation logic doing real work: verifying a
+;; multi-step heap manipulation with local reasoning.
+
+(proof write-then-swap
+  :theory BunchedImplications
+  :goal (triple (star (pto lx va) (pto ly vb))
+                (seq (write lx vc) (swap-cmd lx ly))
+                (star (pto lx vb) (pto ly vc)))
+  :derivation
+    (ht-seq
+      (ht-frame (ht-write))
+      (ht-swap)))
+
+
+;; ════════════════════════════════════════════════════════════
+;; WHAT BI REVEALS
+;; ════════════════════════════════════════════════════════════
+;;
+;;   Classical (∧)                 Linear (*)
+;;   ──────────────────────────────────────────────
+;;   P ∧ P = P                    P * P ≠ P
+;;   Sharing is free               Ownership costs
+;;   Same heap                     Disjoint heaps
+;;   Observation                   Permission
+;;   Can alias                     Cannot alias
+;;   (x↦v) ∧ (x↦v) = x↦v        (x↦v) * (x↦v) = ERROR
+;;   "I see x twice"              "I own x twice"
+;;
+;;   The BRIDGE: (P ∧ Q) * R ⊢ (P*R) ∧ (Q*R)
+;;   "Classical knowledge distributes over linear ownership."
+;;
+;;   In Rust terms:
+;;     ∧  =  shared reference (&T)   — many readers, same data
+;;     *  =  unique ownership (T)     — one owner, no aliasing
+;;     -* =  move semantics           — consume input, produce output
+;;     Frame rule = borrow checker    — unused references are safe
+;;
+;; BI completes the Space pillar:
+;;   Time:      temporal.omega     (when things happen)
+;;   Resources: linear.omega       (what gets consumed)
+;;   Effects:   monad.omega        (what changes state)
+;;   Space:     separation.omega   (where things live)
+;;
+;; Together they verify the four dimensions of computation.
+;; ════════════════════════════════════════════════════════════

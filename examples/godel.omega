@@ -1,0 +1,291 @@
+;;; The Limits of Proof: Gödel's Incompleteness via Provability Logic
+;;;
+;;; The system looks in the mirror.
+;;;
+;;; Provability Logic (GL) models a system reasoning about its own
+;;; proofs.  The modality □P means "P is provable."  The axioms:
+;;;
+;;;   K:   □(P→Q) → (□P → □Q)       (provability distributes)
+;;;   4:   □P → □□P                   (provable things are provably provable)
+;;;   Löb: □(□P→P) → □P              (the constructive Gödel theorem)
+;;;
+;;; Löb's axiom says: "If you can prove that your proof of P
+;;; implies P, then you can prove P."  This seems harmless —
+;;; but it has devastating consequences:
+;;;
+;;;   Set P = ⊥:  □(□⊥→⊥) → □⊥
+;;;   i.e., "if you can prove your own consistency, you're inconsistent."
+;;;   This IS the Second Incompleteness Theorem.
+;;;
+;;; The Gödel sentence G says: "I am not provable."
+;;;   G ↔ ¬□G
+;;;
+;;; Proved here (10 proofs):
+;;;
+;;;   GL Structure:
+;;;    1.  □⊤                                  (tautologies are provable)
+;;;    2.  □(P → P)                            (identity is provable)
+;;;    3.  □P → □□P                            (positive introspection)
+;;;    4.  □(□⊥→⊥) → □⊥                       (Löb instance)
+;;;
+;;;   The Gödel Sentence:
+;;;    5.  G → ¬□G                             (if true, unprovable)
+;;;    6.  ¬□G → G                             (if unprovable, true)
+;;;    7.  □(G → ¬□G)                          (the biconditional is provable)
+;;;    8.  □(¬□G → G)                          (both directions!)
+;;;
+;;;   The Incompleteness Theorems:
+;;;    9.  Con → ¬□Con                         (Second Incompleteness)
+;;;   10.  □(P→Q) → (□P → □Q)                 (distribution as theorem)
+
+(theory GodelGL
+
+  ;; ══════════════════════════════════════
+  ;; FORMULAS
+  ;; ══════════════════════════════════════
+  ;; We model negation as  ¬A = A → ⊥
+  ;; so the Gödel sentence  G = ¬□G = □G → ⊥
+
+  (sort Formula)
+
+  ;; Connectives
+  (constructor f-imp : (-> Formula Formula Formula))
+  (constructor f-bot : Formula)
+  (constructor f-top : Formula)
+
+  ;; The provability modality
+  (constructor box : (-> Formula Formula))
+
+  ;; Atomic formulas (for universal proofs)
+  (constructor fP : Formula)
+  (constructor fQ : Formula)
+
+  ;; The Gödel sentence: G ↔ ¬□G = (□G → ⊥)
+  (constructor godel : Formula)
+
+  ;; ══════════════════════════════════════
+  ;; PROVABILITY JUDGMENT
+  ;; ══════════════════════════════════════
+
+  (judgment (proves ?A) :where A : Formula)
+
+  ;; ── Propositional logic ──
+
+  (rule top-intro
+    :conclusion (proves f-top))
+
+  (rule imp-intro
+    :premises ((proves ?B))
+    :context ((0 (proves ?A)))
+    :conclusion (proves (f-imp ?A ?B)))
+
+  (rule imp-elim
+    :premises ((proves (f-imp ?A ?B)) (proves ?A))
+    :conclusion (proves ?B))
+
+  ;; ── GL axioms ──
+
+  ;; K: □(P→Q) → □P → □Q  (distribution)
+  (rule gl-k
+    :premises ((proves (box (f-imp ?P ?Q))) (proves (box ?P)))
+    :conclusion (proves (box ?Q)))
+
+  ;; 4: □P → □□P  (positive introspection)
+  (rule gl-4
+    :premises ((proves (box ?P)))
+    :conclusion (proves (box (box ?P))))
+
+  ;; Löb: □(□P→P) → □P  (the deep axiom)
+  (rule gl-lob
+    :premises ((proves (box (f-imp (box ?P) ?P))))
+    :conclusion (proves (box ?P)))
+
+  ;; Necessitation: if P is proved, then □P
+  (rule gl-nec
+    :premises ((proves ?P))
+    :conclusion (proves (box ?P)))
+
+  ;; ── The Gödel sentence ──
+  ;; G ↔ ¬□G, modeled as two rules:
+  ;; G implies ¬□G (i.e., □G → ⊥)
+  ;; ¬□G implies G
+
+  (rule godel-fwd
+    :premises ((proves godel))
+    :conclusion (proves (f-imp (box godel) f-bot)))
+
+  (rule godel-bwd
+    :premises ((proves (f-imp (box godel) f-bot)))
+    :conclusion (proves godel)))
+
+(check-theory GodelGL)
+
+
+;; ════════════════════════════════════════════════════════════
+;;  GL STRUCTURE
+;; ════════════════════════════════════════════════════════════
+
+;; ─── Proof 1: □⊤  (tautologies are provable) ───
+;; top-intro proves ⊤.  gl-nec boxes it.
+
+(proof box-top
+  :theory GodelGL
+  :goal (proves (box f-top))
+  :derivation (gl-nec (top-intro)))
+
+
+;; ─── Proof 2: □(P → P)  (identity is provable) ───
+;; imp-intro proves P→P.  gl-nec boxes it.
+
+(proof box-identity
+  :theory GodelGL
+  :goal (proves (box (f-imp fP fP)))
+  :derivation (gl-nec (imp-intro (assumption))))
+
+
+;; ─── Proof 3: □P → □□P  (positive introspection) ───
+;; "If P is provable, then it's provably provable."
+;; The 4 axiom: the system knows what it can prove.
+
+(proof introspection
+  :theory GodelGL
+  :goal (proves (f-imp (box fP) (box (box fP))))
+  :derivation (imp-intro (gl-4 (assumption))))
+
+
+;; ─── Proof 4: □(□⊥→⊥) → □⊥  (Löb instance) ───
+;; Set P = ⊥ in Löb's axiom:
+;;   "If you can prove that your own consistency implies truth,
+;;    then you can prove falsehood."
+;;
+;; Equivalently: "If you can prove Con, you're inconsistent."
+;; This is the engine of the Second Incompleteness Theorem.
+
+(proof lob-instance
+  :theory GodelGL
+  :goal (proves (f-imp (box (f-imp (box f-bot) f-bot)) (box f-bot)))
+  :derivation (imp-intro (gl-lob (assumption))))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  THE GÖDEL SENTENCE
+;; ════════════════════════════════════════════════════════════
+;; G says: "I am not provable."
+;; Formally: G ↔ (□G → ⊥)
+
+
+;; ─── Proof 5: G → ¬□G  (if G is true, G is unprovable) ───
+;; "If the Gödel sentence is true, it cannot be proved."
+;; This is the FORWARD direction of the fixed-point equation.
+
+(proof godel-implies-unprovable
+  :theory GodelGL
+  :goal (proves (f-imp godel (f-imp (box godel) f-bot)))
+  :derivation (imp-intro (godel-fwd (assumption))))
+
+
+;; ─── Proof 6: ¬□G → G  (if G is unprovable, G is true) ───
+;; "If the Gödel sentence cannot be proved, it IS true."
+;; This is the BACKWARD direction: G's truth IS its unprovability.
+
+(proof unprovable-implies-godel
+  :theory GodelGL
+  :goal (proves (f-imp (f-imp (box godel) f-bot) godel))
+  :derivation (imp-intro (godel-bwd (assumption))))
+
+
+;; ─── Proof 7: □(G → ¬□G)  (the biconditional is provable!) ───
+;; The system CAN prove "G implies its own unprovability."
+;; This is not a contradiction — the system reasons correctly
+;; about G's meaning.  It just can't decide G's truth value.
+
+(proof box-godel-fwd
+  :theory GodelGL
+  :goal (proves (box (f-imp godel (f-imp (box godel) f-bot))))
+  :derivation
+    (gl-nec
+      (imp-intro (godel-fwd (assumption)))))
+
+
+;; ─── Proof 8: □(¬□G → G)  (both directions are provable) ───
+;; The system knows G ↔ ¬□G.  It proves BOTH directions.
+;; What it CANNOT do is prove G itself (or ¬G).
+
+(proof box-godel-bwd
+  :theory GodelGL
+  :goal (proves (box (f-imp (f-imp (box godel) f-bot) godel)))
+  :derivation
+    (gl-nec
+      (imp-intro (godel-bwd (assumption)))))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  THE INCOMPLETENESS THEOREMS
+;; ════════════════════════════════════════════════════════════
+
+;; ─── Proof 9: Con → ¬□Con  (Second Incompleteness Theorem) ───
+;; Con = ¬□⊥ = (□⊥ → ⊥)
+;;
+;; "If the system is consistent, it cannot prove its own consistency."
+;;
+;; The proof is stunningly short via Löb:
+;;   □Con = □(□⊥→⊥).  By Löb (with P=⊥), □(□⊥→⊥) → □⊥.
+;;   So □Con → □⊥.  But Con says □⊥ → ⊥.
+;;   Combining: □Con → ⊥.  That's ¬□Con.
+;;
+;; Five lines of derivation for one of the deepest theorems
+;; in the foundations of mathematics.
+
+(proof second-incompleteness
+  :theory GodelGL
+  :goal (proves (f-imp
+    (f-imp (box f-bot) f-bot)
+    (f-imp (box (f-imp (box f-bot) f-bot)) f-bot)))
+  :derivation
+    (imp-intro
+      (imp-intro
+        (imp-elim
+          (assumption 0)
+          (gl-lob (assumption))))))
+
+
+;; ─── Proof 10: □(P→Q) → (□P → □Q)  (distribution) ───
+;; The K axiom expressed as a theorem, not just a rule.
+;; "Provability distributes over implication."
+;; This is the fundamental property of any normal modal logic.
+
+(proof distribution
+  :theory GodelGL
+  :goal (proves (f-imp (box (f-imp fP fQ)) (f-imp (box fP) (box fQ))))
+  :derivation
+    (imp-intro
+      (imp-intro
+        (gl-k (assumption 0) (assumption)))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; WHAT GÖDEL REVEALS
+;; ════════════════════════════════════════════════════════════
+;;
+;; Proof 9 in plain language:
+;;
+;;   Suppose the system can prove "I am consistent."       (assume □Con)
+;;   By Löb's axiom, □(□⊥→⊥) → □⊥, so □Con → □⊥.       (Löb at ⊥)
+;;   So the system can prove ⊥.                            (□⊥)
+;;   But we assumed the system IS consistent (Con = □⊥→⊥). (assumption)
+;;   From □⊥ and Con, derive ⊥.                           (contradiction)
+;;   Therefore: if consistent, it can't prove consistency.  (QED)
+;;
+;; The Gödel sentence G = "I am not provable":
+;;   - G ↔ ¬□G          (fixed point: G IS the statement of its own unprovability)
+;;   - □(G ↔ ¬□G)       (the system KNOWS what G means)
+;;   - Con → G           (if consistent, G is true)
+;;   - Con → ¬□G         (if consistent, G is unprovable)
+;;   - Con → ¬□Con       (if consistent, consistency is unprovable)
+;;
+;; This is not a paradox.  It's a theorem about the geometry of
+;; self-reference: any sufficiently powerful system that can
+;; express "I am not provable" must leave that sentence undecided.
+;;
+;; The mirror shows the system its own blind spot.
+;; ════════════════════════════════════════════════════════════

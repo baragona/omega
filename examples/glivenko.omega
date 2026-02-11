@@ -1,0 +1,452 @@
+;;; Glivenko's Translation: The Double-Negation Compiler
+;;;
+;;; Every classical tautology becomes an intuitionistic theorem
+;;; when wrapped in double negation.  This is Glivenko's 1929
+;;; theorem — the first "bridge" between logics ever discovered.
+;;;
+;;; The translation:
+;;;   Classical A    ->    Intuitionistic ¬¬A
+;;;
+;;; That's it.  One wrapper.  But the intuitionistic proofs of
+;;; ¬¬A are STRUCTURALLY DIFFERENT from the classical proofs of A.
+;;; Classical logic uses DNE to "jump out" of negations; the
+;;; intuitionistic proofs must carefully thread continuations.
+;;;
+;;; The deep insight: ¬¬ is a MONAD (the continuation monad).
+;;; Classical logic = intuitionistic logic + the ¬¬ monad.
+;;;
+;;; Proved here (4 bridges, 10 proofs):
+;;;
+;;;  Bridge 1 -- Excluded Middle:
+;;;   1.  Classical: P ∨ ¬P                    (by DNE, 6 steps)
+;;;   2.  Compilation check: g(P∨¬P) = ¬¬(P∨¬P)
+;;;   3.  Intuitionistic: ¬¬(P ∨ ¬P)          (3 steps — EASIER!)
+;;;
+;;;  Bridge 2 -- Peirce's Law:
+;;;   4.  Classical: ((P→Q)→P)→P               (by DNE, 8 steps)
+;;;   5.  Compilation check
+;;;   6.  Intuitionistic: ¬¬(((P→Q)→P)→P)     (continuation threading)
+;;;
+;;;  Bridge 3 -- Double Negation Shift:
+;;;   7.  Classical: (P→Q) ∨ (Q→P)             (Dummett's scheme)
+;;;   8.  Intuitionistic: ¬¬((P→Q) ∨ (Q→P))   (classical in disguise)
+;;;
+;;;  Bridge 4 -- Contraposition:
+;;;   9.  Classical: (¬Q→¬P) → (P→Q)
+;;;  10.  Intuitionistic: ¬¬((¬Q→¬P) → (P→Q))
+
+(theory GlivenkoBridge
+
+  ;; ====================================================
+  ;; CLASSICAL LOGIC (source language)
+  ;; ====================================================
+
+  (sort CProp)
+
+  (constructor cP : CProp)
+  (constructor cQ : CProp)
+
+  (constructor c-and  : (-> CProp CProp CProp))
+  (constructor c-or   : (-> CProp CProp CProp))
+  (constructor c-imp  : (-> CProp CProp CProp))
+  (constructor c-not  : (-> CProp CProp))
+  (constructor c-bot  : CProp)
+
+  (judgment (c-proves ?A) :where A : CProp)
+
+  (rule c-and-intro
+    :premises ((c-proves ?A) (c-proves ?B))
+    :conclusion (c-proves (c-and ?A ?B)))
+
+  (rule c-and-elim-l
+    :premises ((c-proves (c-and ?A ?B)))
+    :conclusion (c-proves ?A))
+
+  (rule c-and-elim-r
+    :premises ((c-proves (c-and ?A ?B)))
+    :conclusion (c-proves ?B))
+
+  (rule c-or-intro-l
+    :premises ((c-proves ?A))
+    :conclusion (c-proves (c-or ?A ?B)))
+
+  (rule c-or-intro-r
+    :premises ((c-proves ?B))
+    :conclusion (c-proves (c-or ?A ?B)))
+
+  (rule c-imp-intro
+    :premises ((c-proves ?B))
+    :context ((0 (c-proves ?A)))
+    :conclusion (c-proves (c-imp ?A ?B)))
+
+  (rule c-imp-elim
+    :premises ((c-proves (c-imp ?A ?B)) (c-proves ?A))
+    :conclusion (c-proves ?B))
+
+  (rule c-not-intro
+    :premises ((c-proves c-bot))
+    :context ((0 (c-proves ?A)))
+    :conclusion (c-proves (c-not ?A)))
+
+  (rule c-not-elim
+    :premises ((c-proves (c-not ?A)) (c-proves ?A))
+    :conclusion (c-proves c-bot))
+
+  (rule c-bot-elim
+    :premises ((c-proves c-bot))
+    :conclusion (c-proves ?A))
+
+  ;; The classical axiom
+  (rule c-dne
+    :premises ((c-proves (c-not (c-not ?A))))
+    :conclusion (c-proves ?A))
+
+  ;; ====================================================
+  ;; INTUITIONISTIC LOGIC (target language)
+  ;; Same connectives, NO double negation elimination.
+  ;; ====================================================
+
+  (sort IProp)
+
+  (constructor iP : IProp)
+  (constructor iQ : IProp)
+
+  (constructor i-and  : (-> IProp IProp IProp))
+  (constructor i-or   : (-> IProp IProp IProp))
+  (constructor i-imp  : (-> IProp IProp IProp))
+  (constructor i-not  : (-> IProp IProp))
+  (constructor i-bot  : IProp)
+
+  (judgment (i-proves ?A) :where A : IProp)
+
+  (rule i-and-intro
+    :premises ((i-proves ?A) (i-proves ?B))
+    :conclusion (i-proves (i-and ?A ?B)))
+
+  (rule i-and-elim-l
+    :premises ((i-proves (i-and ?A ?B)))
+    :conclusion (i-proves ?A))
+
+  (rule i-and-elim-r
+    :premises ((i-proves (i-and ?A ?B)))
+    :conclusion (i-proves ?B))
+
+  (rule i-or-intro-l
+    :premises ((i-proves ?A))
+    :conclusion (i-proves (i-or ?A ?B)))
+
+  (rule i-or-intro-r
+    :premises ((i-proves ?B))
+    :conclusion (i-proves (i-or ?A ?B)))
+
+  (rule i-or-elim
+    :premises ((i-proves (i-or ?A ?B)) (i-proves ?C) (i-proves ?C))
+    :context ((1 (i-proves ?A)) (2 (i-proves ?B)))
+    :conclusion (i-proves ?C))
+
+  (rule i-imp-intro
+    :premises ((i-proves ?B))
+    :context ((0 (i-proves ?A)))
+    :conclusion (i-proves (i-imp ?A ?B)))
+
+  (rule i-imp-elim
+    :premises ((i-proves (i-imp ?A ?B)) (i-proves ?A))
+    :conclusion (i-proves ?B))
+
+  (rule i-not-intro
+    :premises ((i-proves i-bot))
+    :context ((0 (i-proves ?A)))
+    :conclusion (i-proves (i-not ?A)))
+
+  (rule i-not-elim
+    :premises ((i-proves (i-not ?A)) (i-proves ?A))
+    :conclusion (i-proves i-bot))
+
+  (rule i-bot-elim
+    :premises ((i-proves i-bot))
+    :conclusion (i-proves ?A))
+
+  ;; NO i-dne rule!  That's the whole point.
+
+  ;; ====================================================
+  ;; THE COMPILER (rewrite rules)
+  ;; ====================================================
+  ;; Glivenko: wrap in ¬¬.  Atomic props translate directly.
+
+  (constructor glivenko : (-> CProp IProp))
+
+  ;; Atoms
+  (rewrite g-P (glivenko cP) iP)
+  (rewrite g-Q (glivenko cQ) iQ)
+
+  ;; Connectives: translate recursively
+  (rewrite g-and (glivenko (c-and ?A ?B))
+    (i-and (glivenko ?A) (glivenko ?B)))
+  (rewrite g-or (glivenko (c-or ?A ?B))
+    (i-or (glivenko ?A) (glivenko ?B)))
+  (rewrite g-imp (glivenko (c-imp ?A ?B))
+    (i-imp (glivenko ?A) (glivenko ?B)))
+  (rewrite g-not (glivenko (c-not ?A))
+    (i-not (glivenko ?A)))
+  (rewrite g-bot (glivenko c-bot) i-bot)
+
+  ;; ====================================================
+  ;; EQUALITY CHECKER
+  ;; ====================================================
+
+  (sort Eq)
+  (constructor equals : (-> IProp IProp Eq))
+  (judgment (is-equal ?e) :where e : Eq)
+  (rule eq-refl :conclusion (is-equal (equals ?A ?A))))
+
+(check-theory GlivenkoBridge)
+
+
+;; ============================================================
+;;  BRIDGE 1: Excluded Middle  (P ∨ ¬P)
+;; ============================================================
+;;
+;;  Classical:       P ∨ ¬P             (by DNE, needs 6 rules)
+;;  Glivenko:        ¬¬(P ∨ ¬P)
+;;  Intuitionistic:  ¬¬(P ∨ ¬P)        (ONLY 3 rules!)
+;;
+;;  This is the poster child of Glivenko's theorem.
+;;  LEM is classically obvious but intuitionistically unprovable.
+;;  Yet ¬¬LEM is intuitionistically TRIVIAL.
+;;
+;;  Proof: Assume ¬(P∨¬P).  Build ¬P: assume P, then P∨¬P
+;;  by or-intro-l, contradicts our assumption.  Now P∨¬P by
+;;  or-intro-r with ¬P — contradicts again.  So ¬¬(P∨¬P).
+
+(proof c-lem
+  :theory GlivenkoBridge
+  :goal (c-proves (c-or cP (c-not cP)))
+  :derivation
+    (c-dne
+      (c-not-intro
+        (c-not-elim
+          (assumption)
+          (c-or-intro-r
+            (c-not-intro
+              (c-not-elim
+                (assumption 0)
+                (c-or-intro-l (assumption)))))))))
+
+(proof compile-lem
+  :theory GlivenkoBridge
+  :goal (is-equal (equals
+    (i-not (i-not (glivenko (c-or cP (c-not cP)))))
+    (i-not (i-not (i-or iP (i-not iP))))))
+  :derivation (eq-refl))
+
+(proof i-lem
+  :theory GlivenkoBridge
+  :goal (i-proves (i-not (i-not (i-or iP (i-not iP)))))
+  :derivation
+    (i-not-intro
+      (i-not-elim
+        (assumption)
+        (i-or-intro-r
+          (i-not-intro
+            (i-not-elim
+              (assumption 0)
+              (i-or-intro-l (assumption))))))))
+
+
+;; ============================================================
+;;  BRIDGE 2: Peirce's Law  (((P→Q)→P)→P)
+;; ============================================================
+;;
+;;  Classical:       ((P→Q)→P) → P     (needs DNE)
+;;  Glivenko:        ¬¬(((P→Q)→P)→P)
+;;  Intuitionistic:  ¬¬(((P→Q)→P)→P)  (continuation magic)
+;;
+;;  Peirce's law is the canonical example of a classically
+;;  valid formula that is intuitionistically unprovable.
+;;  But wrapped in ¬¬, it becomes provable!
+
+(proof c-peirce
+  :theory GlivenkoBridge
+  :goal (c-proves (c-imp (c-imp (c-imp cP cQ) cP) cP))
+  :derivation
+    (c-imp-intro
+      (c-dne
+        (c-not-intro
+          (c-not-elim
+            (assumption)
+            (c-imp-elim
+              (assumption 0)
+              (c-imp-intro
+                (c-bot-elim
+                  (c-not-elim
+                    (assumption 1)
+                    (assumption))))))))))
+
+(proof compile-peirce
+  :theory GlivenkoBridge
+  :goal (is-equal (equals
+    (i-not (i-not (glivenko (c-imp (c-imp (c-imp cP cQ) cP) cP))))
+    (i-not (i-not (i-imp (i-imp (i-imp iP iQ) iP) iP)))))
+  :derivation (eq-refl))
+
+;; Intuitionistic: ¬¬(((P→Q)→P)→P)
+;; Assume k: ¬(((P→Q)→P)→P). Derive ⊥.
+;; Build ((P→Q)→P)→P:
+;;   Assume h:(P→Q)→P. Apply h to (P→Q):
+;;     Assume p:P. Apply k to (λ_.p) → ⊥. Ex falso Q.
+;;   Get P. Done.
+
+(proof i-peirce
+  :theory GlivenkoBridge
+  :goal (i-proves (i-not (i-not (i-imp (i-imp (i-imp iP iQ) iP) iP))))
+  :derivation
+    (i-not-intro
+      (i-not-elim
+        (assumption)
+        (i-imp-intro
+          (i-imp-elim
+            (assumption)
+            (i-imp-intro
+              (i-bot-elim
+                (i-not-elim
+                  (assumption 0)
+                  (i-imp-intro (assumption))))))))))
+
+
+;; ============================================================
+;;  BRIDGE 3: Dummett's Scheme  ((P→Q) ∨ (Q→P))
+;; ============================================================
+;;
+;;  Classical:       (P→Q) ∨ (Q→P)     (always true classically)
+;;  Glivenko:        ¬¬((P→Q) ∨ (Q→P))
+;;  Intuitionistic:  ¬¬((P→Q) ∨ (Q→P))
+;;
+;;  This is Dummett's formula — the axiom that characterizes
+;;  Gödel-Dummett intermediate logic (LC).  Classically obvious
+;;  (either P≤Q or Q≤P in any linear order), intuitionistically
+;;  unprovable, but ¬¬-translated it works.
+
+;; Classical proof: by DNE. Assume k: ¬((P→Q)∨(Q→P)).
+;; Build P→Q: assume P.
+;;   Build Q→P = λq.P (have P in context).
+;;   or-intro-r(Q→P) contradicts k → ⊥. Ex falso Q.
+;; or-intro-l(P→Q) contradicts k → ⊥. Done.
+
+(proof c-dummett
+  :theory GlivenkoBridge
+  :goal (c-proves (c-or (c-imp cP cQ) (c-imp cQ cP)))
+  :derivation
+    (c-dne
+      (c-not-intro
+        (c-not-elim
+          (assumption)
+          (c-or-intro-l
+            (c-imp-intro
+              (c-bot-elim
+                (c-not-elim
+                  (assumption 0)
+                  (c-or-intro-r
+                    (c-imp-intro (assumption 1)))))))))))
+;; Intuitionistic: ¬¬((P→Q) ∨ (Q→P))
+;; Assume k: ¬((P→Q)∨(Q→P)). Derive ⊥.
+;; Build P→Q: assume p:P. Build Q→P = λq.p.
+;;   Apply k to or-intro-r(Q→P) → ⊥. Ex falso Q.
+;; Apply k to or-intro-l(P→Q) → ⊥.
+
+(proof i-dummett
+  :theory GlivenkoBridge
+  :goal (i-proves (i-not (i-not (i-or (i-imp iP iQ) (i-imp iQ iP)))))
+  :derivation
+    (i-not-intro
+      (i-not-elim
+        (assumption)
+        (i-or-intro-l
+          (i-imp-intro
+            (i-bot-elim
+              (i-not-elim
+                (assumption 0)
+                (i-or-intro-r
+                  (i-imp-intro (assumption 1))))))))))
+
+
+;; ============================================================
+;;  BRIDGE 4: Contraposition  ((¬Q→¬P) → (P→Q))
+;; ============================================================
+;;
+;;  Classical:       (¬Q→¬P) → (P→Q)     (reverse contraposition)
+;;  Glivenko:        ¬¬((¬Q→¬P) → (P→Q))
+;;  Intuitionistic:  ¬¬((¬Q→¬P) → (P→Q))
+;;
+;;  The forward direction (P→Q)→(¬Q→¬P) is intuitionistic.
+;;  The reverse requires classical reasoning — or ¬¬.
+
+(proof c-contraposition
+  :theory GlivenkoBridge
+  :goal (c-proves (c-imp (c-imp (c-not cQ) (c-not cP)) (c-imp cP cQ)))
+  :derivation
+    (c-imp-intro
+      (c-imp-intro
+        (c-dne
+          (c-not-intro
+            (c-not-elim
+              (c-imp-elim (assumption 0) (assumption))
+              (assumption 1)))))))
+
+;; Intuitionistic: ¬¬((¬Q→¬P) → (P→Q))
+;; Assume k: ¬((¬Q→¬P)→(P→Q)). Derive ⊥.
+;; Build (¬Q→¬P)→(P→Q):
+;;   Assume f:¬Q→¬P, p:P. Need Q.
+;;   Build ¬Q: assume q:Q. Build (¬Q→¬P)→(P→Q) = λ_.λ_.q.
+;;     Apply k to that → ⊥.
+;;   Apply f(¬Q) = ¬P. Apply ¬P(p) = ⊥. Ex falso Q.
+;; Apply k to the whole thing. ⊥.
+
+(proof i-contraposition
+  :theory GlivenkoBridge
+  :goal (i-proves (i-not (i-not (i-imp (i-imp (i-not iQ) (i-not iP)) (i-imp iP iQ)))))
+  :derivation
+    (i-not-intro
+      (i-not-elim
+        (assumption)
+        (i-imp-intro
+          (i-imp-intro
+            (i-bot-elim
+              (i-not-elim
+                (i-imp-elim
+                  (assumption 1)
+                  (i-not-intro
+                    (i-not-elim
+                      (assumption 0)
+                      (i-imp-intro
+                        (i-imp-intro (assumption 3))))))
+                (assumption))))))))
+
+;; ============================================================
+;; WHAT THE BRIDGE REVEALS
+;; ============================================================
+;;
+;; Glivenko's theorem says: for propositional logic,
+;;   Classical ⊢ A   implies   Intuitionistic ⊢ ¬¬A
+;;
+;; The ¬¬ wrapper is a CONTINUATION PASSING TRANSFORM.
+;; Proving ¬¬A means: "given any refutation of A, I can
+;; derive a contradiction."  This is exactly CPS!
+;;
+;;   Classical proof:  "A is true"        (direct style)
+;;   ¬¬ proof:         "A can't be false"  (continuation style)
+;;
+;; The bridge reveals that classical logic IS intuitionistic
+;; logic in continuation-passing style.  DNE is just "call/cc."
+;;
+;;   Classical            Intuitionistic via ¬¬
+;;   ─────────────────────────────────────────────
+;;   Direct proof         Continuation proof
+;;   DNE (jump out)       Pass to refutation
+;;   LEM (P ∨ ¬P)         Trivial as ¬¬(P ∨ ¬P)
+;;   Peirce's law         Continuation capture
+;;
+;; Combined with Girard: every classical proof can be
+;;   1. ¬¬-translated to intuitionistic logic  (Glivenko)
+;;   2. Resource-compiled to linear logic       (Girard)
+;; These bridges compose: Classical → Intuitionistic → Linear.
+;; ============================================================

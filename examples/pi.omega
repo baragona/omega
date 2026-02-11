@@ -1,0 +1,474 @@
+;;; The Logic of Processes: Session-Typed Pi-Calculus
+;;;
+;;; The true logic of the internet.
+;;;
+;;; You have LinearLogic (resource exchange) and TemporalLogic
+;;; (state changes).  But you don't have CONCURRENCY — processes
+;;; talking to each other over channels.
+;;;
+;;; The Pi-Calculus models concurrent communicating processes.
+;;; Session Types give them a LOGIC:
+;;;
+;;;   A protocol is a TYPE:
+;;;     ?S  = receive, then continue with S
+;;;     !S  = send, then continue with S
+;;;     S&T = offer a choice (server decides)
+;;;     S⊕T = make a selection (client decides)
+;;;     end = session complete
+;;;
+;;;   A process is a PROOF:
+;;;     The process code proves it satisfies the protocol type.
+;;;
+;;;   DUALITY is the key:
+;;;     dual(?S) = !dual(S)     (your receive is my send)
+;;;     dual(!S) = ?dual(S)     (your send is my receive)
+;;;     dual(S&T) = dual(S)⊕dual(T)  (your offer is my choice)
+;;;     dual(end) = end         (we both stop)
+;;;
+;;;   If P : S and Q : dual(S), then (P | Q) is DEADLOCK-FREE.
+;;;   The types guarantee that every send has a matching receive,
+;;;   every offer has a matching selection.
+;;;
+;;; Proved here (10 proofs):
+;;;
+;;;   Request-Response Protocol:
+;;;    1.  dual(Server) = Client                   (type duality)
+;;;    2.  server : Server                          (server is well-typed)
+;;;    3.  client : Client                          (client is well-typed)
+;;;    4.  (server | client) is safe                (deadlock freedom)
+;;;    5.  (server | client) →* terminated          (communication completes)
+;;;
+;;;   Authentication Protocol (with branching):
+;;;    6.  dual(AuthServer) = AuthClient            (type duality)
+;;;    7.  auth-server : AuthServer                 (server is well-typed)
+;;;    8.  (auth-server | client-accept) is safe    (accept path safe)
+;;;    9.  (auth-server | client-accept) →* terminated
+;;;   10.  (auth-server | client-reject) →* terminated
+
+(theory SessionPi
+
+  ;; ══════════════════════════════════════
+  ;; SESSION TYPES (protocols)
+  ;; ══════════════════════════════════════
+
+  (sort SType)
+
+  (constructor s-end    : SType)                    ;; session complete
+  (constructor s-recv   : (-> SType SType))         ;; ?S: receive, then S
+  (constructor s-send   : (-> SType SType))         ;; !S: send, then S
+  (constructor s-choice : (-> SType SType SType))   ;; S & T: offer choice
+  (constructor s-select : (-> SType SType SType))   ;; S ⊕ T: make selection
+
+  ;; ── Duality (the complement protocol) ──
+  ;; If the server sends, the client receives.  And vice versa.
+  ;; Duality is an involution: dual(dual(S)) = S.
+
+  (constructor dual : (-> SType SType))
+
+  (rewrite d-end    (dual s-end) s-end)
+  (rewrite d-recv   (dual (s-recv ?S)) (s-send (dual ?S)))
+  (rewrite d-send   (dual (s-send ?S)) (s-recv (dual ?S)))
+  (rewrite d-choice (dual (s-choice ?S1 ?S2)) (s-select (dual ?S1) (dual ?S2)))
+  (rewrite d-select (dual (s-select ?S1 ?S2)) (s-choice (dual ?S1) (dual ?S2)))
+
+  ;; ── Named protocols ──
+
+  ;; Request-Response: receive request, send response, end
+  (constructor server-ty : SType)
+  (rewrite def-server server-ty (s-recv (s-send s-end)))
+
+  ;; Client: send request, receive response, end
+  (constructor client-ty : SType)
+  (rewrite def-client client-ty (s-send (s-recv s-end)))
+
+  ;; Auth Server: receive credentials, then OFFER:
+  ;;   left  = accept: send token, end
+  ;;   right = reject: end
+  (constructor auth-server-ty : SType)
+  (rewrite def-auth-server auth-server-ty
+    (s-recv (s-choice (s-send s-end) s-end)))
+
+  ;; Auth Client: send credentials, then SELECT:
+  ;;   left  = on accept: receive token, end
+  ;;   right = on reject: end
+  (constructor auth-client-ty : SType)
+  (rewrite def-auth-client auth-client-ty
+    (s-send (s-select (s-recv s-end) s-end)))
+
+  ;; ══════════════════════════════════════
+  ;; PROCESSES (programs that implement protocols)
+  ;; ══════════════════════════════════════
+
+  (sort Proc)
+
+  (constructor p-done      : Proc)                    ;; terminated
+  (constructor p-send      : (-> Proc Proc))          ;; send, then continue
+  (constructor p-recv      : (-> Proc Proc))          ;; receive, then continue
+  (constructor p-offer     : (-> Proc Proc Proc))     ;; offer left or right
+  (constructor p-sel-left  : (-> Proc Proc))          ;; select left branch
+  (constructor p-sel-right : (-> Proc Proc))          ;; select right branch
+
+  ;; Parallel composition
+  (constructor par : (-> Proc Proc Proc))
+
+  ;; Successful termination (both sides done)
+  (constructor terminated : Proc)
+
+  ;; ══════════════════════════════════════
+  ;; TYPING JUDGMENT
+  ;; (has-type ?P ?S) = process P implements session type S
+  ;; ══════════════════════════════════════
+
+  (judgment (has-type ?P ?S) :where P : Proc S : SType)
+
+  (rule t-done
+    :conclusion (has-type p-done s-end))
+
+  (rule t-send
+    :premises ((has-type ?P ?S))
+    :conclusion (has-type (p-send ?P) (s-send ?S)))
+
+  (rule t-recv
+    :premises ((has-type ?P ?S))
+    :conclusion (has-type (p-recv ?P) (s-recv ?S)))
+
+  (rule t-offer
+    :premises ((has-type ?P ?S1) (has-type ?Q ?S2))
+    :conclusion (has-type (p-offer ?P ?Q) (s-choice ?S1 ?S2)))
+
+  (rule t-sel-left
+    :premises ((has-type ?P ?S1))
+    :conclusion (has-type (p-sel-left ?P) (s-select ?S1 ?S2)))
+
+  (rule t-sel-right
+    :premises ((has-type ?P ?S2))
+    :conclusion (has-type (p-sel-right ?P) (s-select ?S1 ?S2)))
+
+  ;; ══════════════════════════════════════
+  ;; COMPOSITION SAFETY (deadlock freedom)
+  ;; If P : S and Q : dual(S), then (P | Q) is safe.
+  ;; The types guarantee every send has a matching receive.
+  ;; ══════════════════════════════════════
+
+  (judgment (safe ?P) :where P : Proc)
+
+  (rule safe-compose
+    :premises ((has-type ?P ?S) (has-type ?Q (dual ?S)))
+    :conclusion (safe (par ?P ?Q)))
+
+  ;; ══════════════════════════════════════
+  ;; OPERATIONAL SEMANTICS (communication steps)
+  ;; Each step is an explicit derivation — not a rewrite —
+  ;; so types and safety work on UNREDUCED terms.
+  ;; ══════════════════════════════════════
+
+  ;; Single-step reduction
+  (judgment (step ?P ?Q) :where P : Proc Q : Proc)
+
+  ;; Send meets receive → both continue
+  (rule step-comm
+    :conclusion (step (par (p-send ?P) (p-recv ?Q)) (par ?P ?Q)))
+
+  (rule step-comm-flip
+    :conclusion (step (par (p-recv ?Q) (p-send ?P)) (par ?Q ?P)))
+
+  ;; Selection meets offer → chosen branch continues
+  (rule step-sel-l
+    :conclusion (step (par (p-sel-left ?P) (p-offer ?Q1 ?Q2)) (par ?P ?Q1)))
+
+  (rule step-sel-r
+    :conclusion (step (par (p-sel-right ?P) (p-offer ?Q1 ?Q2)) (par ?P ?Q2)))
+
+  (rule step-sel-l-flip
+    :conclusion (step (par (p-offer ?Q1 ?Q2) (p-sel-left ?P)) (par ?Q1 ?P)))
+
+  (rule step-sel-r-flip
+    :conclusion (step (par (p-offer ?Q1 ?Q2) (p-sel-right ?P)) (par ?Q2 ?P)))
+
+  ;; Both done → terminated
+  (rule step-done
+    :conclusion (step (par p-done p-done) terminated))
+
+  ;; Multi-step reduction (reflexive-transitive closure)
+  (judgment (reduces ?P ?Q) :where P : Proc Q : Proc)
+
+  (rule red-refl
+    :conclusion (reduces ?P ?P))
+
+  (rule red-step
+    :premises ((step ?P ?Q) (reduces ?Q ?R))
+    :conclusion (reduces ?P ?R))
+
+  ;; ══════════════════════════════════════
+  ;; TYPE EQUALITY (for duality proofs)
+  ;; ══════════════════════════════════════
+
+  (sort Eq)
+  (constructor ty-eq : (-> SType SType Eq))
+  (judgment (is-eq ?e) :where e : Eq)
+  (rule teq :conclusion (is-eq (ty-eq ?A ?A))))
+
+(check-theory SessionPi)
+
+
+;; ════════════════════════════════════════════════════════════
+;;  PROTOCOL 1: Request-Response
+;; ════════════════════════════════════════════════════════════
+;;
+;;   Server: ?(!end)     "receive request, send response, done"
+;;   Client: !(? end)     "send request, receive response, done"
+;;
+;;          Client                Server
+;;            │                     │
+;;            │──── request ───────→│
+;;            │                     │
+;;            │←──── response ──────│
+;;            │                     │
+;;           done                  done
+
+
+;; ─── Proof 1: dual(Server) = Client ───
+;; The server and client protocols are DUALS of each other.
+;; This is verified by computation:
+;;   dual(recv(send(end))) = send(dual(send(end)))
+;;                         = send(recv(dual(end)))
+;;                         = send(recv(end))
+;;                         = client-ty
+
+(proof request-response-duality
+  :theory SessionPi
+  :goal (is-eq (ty-eq (dual server-ty) client-ty))
+  :derivation (teq))
+
+
+;; ─── Proof 2: Server process is well-typed ───
+;; recv(send(done)) : recv(send(end))
+
+(proof server-typed
+  :theory SessionPi
+  :goal (has-type (p-recv (p-send p-done)) (s-recv (s-send s-end)))
+  :derivation (t-recv (t-send (t-done))))
+
+
+;; ─── Proof 3: Client process is well-typed ───
+;; send(recv(done)) : send(recv(end))
+
+(proof client-typed
+  :theory SessionPi
+  :goal (has-type (p-send (p-recv p-done)) (s-send (s-recv s-end)))
+  :derivation (t-send (t-recv (t-done))))
+
+
+;; ─── Proof 4: Composition is safe (DEADLOCK FREEDOM) ───
+;; Server : S,  Client : dual(S)  ⊢  (Server | Client) is safe.
+;;
+;; The type checker verifies:
+;;   1. Server has type recv(send(end))
+;;   2. dual(recv(send(end))) normalizes to send(recv(end))
+;;   3. Client has type send(recv(end))  ✓
+;;
+;; Therefore every send has a matching receive.
+;; No deadlock is possible.
+
+(proof request-response-safe
+  :theory SessionPi
+  :goal (safe (par
+    (p-recv (p-send p-done))
+    (p-send (p-recv p-done))))
+  :derivation
+    (safe-compose
+      (t-recv (t-send (t-done)))
+      (t-send (t-recv (t-done)))))
+
+
+;; ─── Proof 5: Communication terminates ───
+;; (Server | Client) reduces to terminated:
+;;
+;;   par(recv(send(done)), send(recv(done)))
+;;   → par(send(done), recv(done))              [step-comm-flip]
+;;   → par(done, done)                           [step-comm]
+;;   → terminated                                [step-done]
+;;
+;; Three reduction steps, each shown explicitly.
+;; Every message is delivered.  Both processes complete.
+
+(proof request-response-terminates
+  :theory SessionPi
+  :goal (reduces
+    (par (p-recv (p-send p-done)) (p-send (p-recv p-done)))
+    terminated)
+  :derivation
+    (red-step (step-comm-flip)
+      (red-step (step-comm)
+        (red-step (step-done)
+          (red-refl)))))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  PROTOCOL 2: Authentication (with branching)
+;; ════════════════════════════════════════════════════════════
+;;
+;;   AuthServer: ?(accept: !end  &  reject: end)
+;;   AuthClient: !(accept: ?end  ⊕  reject: end)
+;;
+;;          Client                    Server
+;;            │                         │
+;;            │──── credentials ───────→│
+;;            │                         │
+;;            │        ┌────────────────┤
+;;            │        │  OFFER:        │
+;;            │        │  left=accept   │
+;;            │        │  right=reject  │
+;;            │        └────────────────┤
+;;            │                         │
+;;            ├────────────────┐        │
+;;            │  SELECT:       │        │
+;;            │  left=accept   │        │
+;;            │  right=reject  │        │
+;;            ├────────────────┘        │
+;;            │                         │
+;;     [if accept]                      │
+;;            │←──── token ─────────────│
+;;            │                         │
+;;           done                      done
+
+
+;; ─── Proof 6: dual(AuthServer) = AuthClient ───
+;; The duality computation handles branching:
+;;   dual(recv(choice(send(end), end)))
+;;   = send(dual(choice(send(end), end)))
+;;   = send(select(dual(send(end)), dual(end)))
+;;   = send(select(recv(dual(end)), end))
+;;   = send(select(recv(end), end))
+;;   = auth-client-ty
+
+(proof auth-duality
+  :theory SessionPi
+  :goal (is-eq (ty-eq (dual auth-server-ty) auth-client-ty))
+  :derivation (teq))
+
+
+;; ─── Proof 7: Auth server process is well-typed ───
+;; recv(offer(send(done), done)) : recv(choice(send(end), end))
+
+(proof auth-server-typed
+  :theory SessionPi
+  :goal (has-type
+    (p-recv (p-offer (p-send p-done) p-done))
+    (s-recv (s-choice (s-send s-end) s-end)))
+  :derivation (t-recv (t-offer (t-send (t-done)) (t-done))))
+
+
+;; ─── Proof 8: Auth composition is safe (accept path) ───
+;; Server : S,  Client-accept : dual(S)
+;; The client selects the "accept" branch.
+;; Duality ensures the selection matches the offer.
+
+(proof auth-accept-safe
+  :theory SessionPi
+  :goal (safe (par
+    (p-recv (p-offer (p-send p-done) p-done))
+    (p-send (p-sel-left (p-recv p-done)))))
+  :derivation
+    (safe-compose
+      (t-recv (t-offer (t-send (t-done)) (t-done)))
+      (t-send (t-sel-left (t-recv (t-done))))))
+
+
+;; ─── Proof 9: Auth accept → terminated ───
+;; Client selects LEFT (accept).  Communication:
+;;
+;;   par(recv(offer(send(done), done)), send(sel-left(recv(done))))
+;;   → par(offer(send(done), done), sel-left(recv(done)))  [step-comm-flip]
+;;   → par(send(done), recv(done))                          [step-sel-l-flip]
+;;   → par(done, done)                                      [step-comm]
+;;   → terminated                                           [step-done]
+;;
+;; Four steps: credential exchange, branch selection,
+;; token delivery, termination.
+
+(proof auth-accept-terminates
+  :theory SessionPi
+  :goal (reduces
+    (par
+      (p-recv (p-offer (p-send p-done) p-done))
+      (p-send (p-sel-left (p-recv p-done))))
+    terminated)
+  :derivation
+    (red-step (step-comm-flip)
+      (red-step (step-sel-l-flip)
+        (red-step (step-comm)
+          (red-step (step-done)
+            (red-refl))))))
+
+
+;; ─── Proof 10: Auth reject → terminated ───
+;; Client selects RIGHT (reject).  Communication:
+;;
+;;   par(recv(offer(send(done), done)), send(sel-right(done)))
+;;   → par(offer(send(done), done), sel-right(done))  [step-comm-flip]
+;;   → par(done, done)                                 [step-sel-r-flip]
+;;   → terminated                                      [step-done]
+;;
+;; Shorter path: no token exchange needed.
+;; Both branches terminate cleanly.
+
+(proof auth-reject-terminates
+  :theory SessionPi
+  :goal (reduces
+    (par
+      (p-recv (p-offer (p-send p-done) p-done))
+      (p-send (p-sel-right p-done)))
+    terminated)
+  :derivation
+    (red-step (step-comm-flip)
+      (red-step (step-sel-r-flip)
+        (red-step (step-done)
+          (red-refl)))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; TYPE SAFETY: What CAN'T happen
+;; ════════════════════════════════════════════════════════════
+;;
+;; Try to type a broken client that sends twice:
+;;   send(send(done)) : send(send(end))
+;;   dual(recv(send(end))) = send(recv(end))
+;;   send(send(end)) ≠ send(recv(end))
+;;   → TYPE ERROR: the derivation checker rejects it.
+;;
+;; The second send has no matching receive on the server side.
+;; In a real system, this would be a deadlock.
+;; Session types prevent it at compile time.
+;;
+;; Similarly, if the client selects "accept" but the server
+;; only offers "reject", the types don't match — caught
+;; before any message is sent.
+;;
+;; ════════════════════════════════════════════════════════════
+;; THE SESSION TYPES CORRESPONDENCE
+;; ════════════════════════════════════════════════════════════
+;;
+;;   Session Types         Linear Logic        Category Theory
+;;   ──────────────────────────────────────────────────────────
+;;   !S (send)             A ⊗ S               morphism out
+;;   ?S (receive)          A ⅋ S               morphism in
+;;   S & T (offer)         S & T (with)        product
+;;   S ⊕ T (select)       S ⊕ T (plus)        coproduct
+;;   end                   1 (unit)            terminal
+;;   dual(S)               S⊥ (linear neg)     opposite
+;;   P | Q (parallel)      P ⊗ Q (tensor)      parallel comp
+;;   terminated            1 (done)            identity
+;;
+;;   A well-typed session IS a proof in linear logic.
+;;   Communication IS cut elimination.
+;;   Termination IS normalization.
+;;   Deadlock freedom IS type safety.
+;;
+;; This completes the Concurrency pillar:
+;;   Time:        temporal.omega    (when)
+;;   Space:       separation.omega  (where)
+;;   Resources:   linear.omega      (what)
+;;   Effects:     monad.omega       (how)
+;;   Interaction: pi.omega          (who talks to whom)
+;; ════════════════════════════════════════════════════════════
