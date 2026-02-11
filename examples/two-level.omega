@@ -1,0 +1,297 @@
+;;; Two-Level Type Theory (2LTT)
+;;;
+;;; 2LTT runs two type theories simultaneously:
+;;;   - INNER (fibrant) level: can be HoTT-like, with path types
+;;;     and higher structure.  No UIP, no reflection.
+;;;   - OUTER (strict/exo) level: has strict equality with UIP
+;;;     and reflection.  Used for metatheoretic reasoning.
+;;;
+;;; The levels are connected by a one-way map: every inner type
+;;; is an outer type, but NOT vice versa.  This lets you use the
+;;; powerful outer level for compile-time reasoning while keeping
+;;; the inner level's homotopical structure intact.
+;;;
+;;; Applications: staged compilation (compile-time vs. runtime),
+;;; parametricity arguments, and formalizing HoTT inside a strict
+;;; metatheory without losing the path structure.
+;;;
+;;; Proved here:
+;;;   1.  inner-refl : FibId(Nat, ze, ze)           (fibrant identity)
+;;;   2.  outer-refl : ExoId(Nat, ze, ze)            (strict identity)
+;;;   3.  outer-type Nat via lifting                  (fibrant → strict)
+;;;   4.  outer-typed ze via lifting                  (term lifting)
+;;;   5.  outer-typed refl (FibId ..)                (lift fibrant proof)
+;;;   6.  inner-inv : FibId(Nat, ze, ze)             (inner path inverse)
+;;;   7.  outer UIP: refl ≡ sym(refl)                (strict UIP)
+;;;   8.  outer reflection: ze ≡ ze                   (strict reflection)
+;;;   9.  outer-eq via lifting                        (inner eq → outer eq)
+;;;  10.  cross-level: strict refl on lifted term    (levels interact)
+
+(theory TwoLevelTT
+  (sort Ty)
+  (sort Tm)
+
+  ;; ── Types ──
+  (constructor Nat : Ty)
+  (constructor Bool : Ty)
+  (constructor FibId : (-> Ty Tm Tm Ty))     ;; Fibrant identity (inner, HoTT-like)
+  (constructor ExoId : (-> Ty Tm Tm Ty))     ;; Exo-identity (outer, strict)
+  (constructor Arr : (-> Ty Ty Ty))
+
+  ;; ── Terms ──
+  (constructor ze : Tm)
+  (constructor su : (-> Tm Tm))
+  (constructor tt : Tm)
+  (constructor ff : Tm)
+  (constructor refl : Tm)
+  (constructor inv-path : (-> Tm Tm))
+  (constructor concat-path : (-> Tm Tm Tm))
+  (constructor sym-exo : (-> Tm Tm))
+
+  ;; ════════════════════════════════════════
+  ;; INNER (fibrant) level
+  ;; ════════════════════════════════════════
+  ;; Path types, no UIP, no reflection.
+  ;; Paths have non-trivial structure (groupoid).
+
+  (judgment (inner-type ?A) :where A : Ty)
+  (judgment (inner-typed ?e ?T) :where e : Tm T : Ty)
+  (judgment (inner-eq ?a ?b) :where a : Tm b : Tm)
+
+  ;; Type formation
+  (rule inner-nat  :conclusion (inner-type Nat))
+  (rule inner-bool :conclusion (inner-type Bool))
+  (rule inner-fib-id
+    :premises ((inner-type ?A))
+    :conclusion (inner-type (FibId ?A ?a ?b)))
+
+  ;; Term typing
+  (rule inner-t-ze  :conclusion (inner-typed ze Nat))
+  (rule inner-t-su  :premises ((inner-typed ?n Nat)) :conclusion (inner-typed (su ?n) Nat))
+  (rule inner-t-tt  :conclusion (inner-typed tt Bool))
+  (rule inner-t-ff  :conclusion (inner-typed ff Bool))
+
+  ;; Fibrant identity: paths with groupoid structure
+  (rule inner-t-refl
+    :premises ((inner-typed ?a ?A))
+    :conclusion (inner-typed refl (FibId ?A ?a ?a)))
+
+  (rule inner-t-inv
+    :premises ((inner-typed ?p (FibId ?A ?a ?b)))
+    :conclusion (inner-typed (inv-path ?p) (FibId ?A ?b ?a)))
+
+  (rule inner-t-concat
+    :premises ((inner-typed ?p (FibId ?A ?a ?b))
+               (inner-typed ?q (FibId ?A ?b ?c)))
+    :conclusion (inner-typed (concat-path ?p ?q) (FibId ?A ?a ?c)))
+
+  ;; Inner equality: just reflexivity (NO UIP, NO reflection)
+  (rule inner-eq-refl :conclusion (inner-eq ?a ?a))
+
+  ;; ════════════════════════════════════════
+  ;; OUTER (strict/exo) level
+  ;; ════════════════════════════════════════
+  ;; Strict identity with UIP and reflection.
+  ;; All proofs of ExoId(A,a,b) are equal.
+
+  (judgment (outer-type ?A) :where A : Ty)
+  (judgment (outer-typed ?e ?T) :where e : Tm T : Ty)
+  (judgment (outer-eq ?a ?b) :where a : Tm b : Tm)
+
+  ;; Type formation
+  (rule outer-nat  :conclusion (outer-type Nat))
+  (rule outer-bool :conclusion (outer-type Bool))
+  (rule outer-exo-id
+    :premises ((outer-type ?A))
+    :conclusion (outer-type (ExoId ?A ?a ?b)))
+
+  ;; Term typing
+  (rule outer-t-ze  :conclusion (outer-typed ze Nat))
+  (rule outer-t-su  :premises ((outer-typed ?n Nat)) :conclusion (outer-typed (su ?n) Nat))
+  (rule outer-t-tt  :conclusion (outer-typed tt Bool))
+  (rule outer-t-ff  :conclusion (outer-typed ff Bool))
+
+  ;; Strict identity (no groupoid structure needed)
+  (rule outer-t-refl
+    :premises ((outer-typed ?a ?A))
+    :conclusion (outer-typed refl (ExoId ?A ?a ?a)))
+
+  (rule outer-t-sym
+    :premises ((outer-typed ?p (ExoId ?A ?a ?b)))
+    :conclusion (outer-typed (sym-exo ?p) (ExoId ?A ?b ?a)))
+
+  ;; Outer equality: reflexivity + reflection + UIP
+  (rule outer-eq-refl :conclusion (outer-eq ?a ?a))
+
+  ;; REFLECTION (outer only): propositional → definitional
+  (rule outer-reflection
+    :premises ((outer-typed ?p (ExoId ?A ?a ?b)))
+    :conclusion (outer-eq ?a ?b))
+
+  ;; UIP (outer only): all identity proofs are equal
+  (rule outer-uip
+    :premises ((outer-typed ?p (ExoId ?A ?a ?b))
+               (outer-typed ?q (ExoId ?A ?a ?b)))
+    :conclusion (outer-eq ?p ?q))
+
+  ;; ════════════════════════════════════════
+  ;; LEVEL INTERACTIONS (one-way lifting)
+  ;; ════════════════════════════════════════
+  ;;
+  ;; Every fibrant (inner) thing is also exo (outer).
+  ;; But NOT the reverse — outer strictness doesn't
+  ;; contaminate inner homotopical structure.
+
+  ;; Lift types: inner type → outer type
+  (rule lift-type
+    :premises ((inner-type ?A))
+    :conclusion (outer-type ?A))
+
+  ;; Lift terms: inner typing → outer typing
+  (rule lift-term
+    :premises ((inner-typed ?e ?T))
+    :conclusion (outer-typed ?e ?T))
+
+  ;; Lift equality: inner eq → outer eq
+  (rule lift-eq
+    :premises ((inner-eq ?a ?b))
+    :conclusion (outer-eq ?a ?b)))
+
+(check-theory TwoLevelTT)
+
+
+;; ════════════════════════════════════════════════════════════
+;; PART 1: Each level independently
+;; ════════════════════════════════════════════════════════════
+
+
+;; ─── Proof 1: Inner fibrant identity ───
+;; refl : FibId(Nat, ze, ze) — a path from ze to ze.
+
+(proof inner-refl
+  :theory TwoLevelTT
+  :goal (inner-typed refl (FibId Nat ze ze))
+  :derivation (inner-t-refl (inner-t-ze)))
+
+
+;; ─── Proof 2: Outer strict identity ───
+;; refl : ExoId(Nat, ze, ze) — a strict equality proof.
+
+(proof outer-refl
+  :theory TwoLevelTT
+  :goal (outer-typed refl (ExoId Nat ze ze))
+  :derivation (outer-t-refl (outer-t-ze)))
+
+
+;; ════════════════════════════════════════════════════════════
+;; PART 2: Lifting from inner to outer
+;; ════════════════════════════════════════════════════════════
+
+
+;; ─── Proof 3: Lift a type ───
+;; Nat is an inner type, therefore also an outer type.
+
+(proof lift-nat
+  :theory TwoLevelTT
+  :goal (outer-type Nat)
+  :derivation (lift-type (inner-nat)))
+
+
+;; ─── Proof 4: Lift a term ───
+;; ze : Nat at the inner level, therefore ze : Nat at outer level.
+
+(proof lift-ze
+  :theory TwoLevelTT
+  :goal (outer-typed ze Nat)
+  :derivation (lift-term (inner-t-ze)))
+
+
+;; ─── Proof 5: Lift a fibrant identity proof ───
+;; refl : FibId(Nat, ze, ze) at inner level → visible at outer level.
+;; The outer level can see fibrant proofs (but can't create new
+;; fibrant paths — only lift existing ones).
+
+(proof lift-fib-proof
+  :theory TwoLevelTT
+  :goal (outer-typed refl (FibId Nat ze ze))
+  :derivation (lift-term (inner-t-refl (inner-t-ze))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; PART 3: Inner level has groupoid structure
+;; ════════════════════════════════════════════════════════════
+
+
+;; ─── Proof 6: Path inverse at inner level ───
+;; inv(refl) : FibId(Nat, ze, ze)
+;; The inner level has path inversion — it's HoTT-like.
+
+(proof inner-inverse
+  :theory TwoLevelTT
+  :goal (inner-typed (inv-path refl) (FibId Nat ze ze))
+  :derivation (inner-t-inv (inner-t-refl (inner-t-ze))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; PART 4: Outer level has UIP and reflection
+;; ════════════════════════════════════════════════════════════
+
+
+;; ─── Proof 7: Outer UIP ───
+;; refl ≡ sym(refl) at the outer (strict) level.
+;; All proofs of ExoId(Nat, ze, ze) are equal.
+;; This does NOT hold at the inner level (where paths differ).
+
+(proof outer-uip-demo
+  :theory TwoLevelTT
+  :goal (outer-eq refl (sym-exo refl))
+  :derivation (outer-uip (outer-t-refl (outer-t-ze))
+                          (outer-t-sym (outer-t-refl (outer-t-ze)))))
+
+
+;; ─── Proof 8: Outer reflection ───
+;; From refl : ExoId(Nat, ze, ze), derive ze ≡ ze definitionally.
+;; Reflection is available at the outer level only.
+
+(proof outer-reflect
+  :theory TwoLevelTT
+  :goal (outer-eq ze ze)
+  :derivation (outer-reflection (outer-t-refl (outer-t-ze))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; PART 5: Cross-level interaction
+;; ════════════════════════════════════════════════════════════
+
+
+;; ─── Proof 9: Lift inner equality to outer ───
+;; inner-eq is weaker (just refl), but it lifts to outer-eq.
+
+(proof lift-equality
+  :theory TwoLevelTT
+  :goal (outer-eq ze ze)
+  :derivation (lift-eq (inner-eq-refl)))
+
+
+;; ─── Proof 10: Cross-level composition ───
+;; Start at inner level (ze : Nat), lift to outer, form ExoId there.
+;; This shows the two levels cooperating: inner provides the data,
+;; outer provides the strict metatheory.
+
+(proof cross-level
+  :theory TwoLevelTT
+  :goal (outer-typed refl (ExoId Nat ze ze))
+  :derivation (outer-t-refl (lift-term (inner-t-ze))))
+
+;; ════════════════════════════════════════════════════════════
+;; KEY INSIGHT: The inner level does NOT have UIP or reflection.
+;; There is no rule (inner-uip ...) or (inner-reflection ...).
+;;
+;; If we were doing HoTT at the inner level, paths would have
+;; non-trivial structure (loop ≠ refl on the circle).
+;; The outer level's UIP can't contaminate this — the lifting
+;; map is ONE-WAY (inner → outer), not bidirectional.
+;;
+;; This separation is what makes 2LTT useful for formalizing
+;; HoTT inside a strict metatheory.
+;; ════════════════════════════════════════════════════════════

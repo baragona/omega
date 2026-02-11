@@ -1,0 +1,243 @@
+;;; Quantitative Type Theory (QTT)
+;;;
+;;; QTT combines dependent types with resource tracking: every variable
+;;; binding has a quantity annotation — 0 (erased), 1 (linear), or
+;;; ω (unrestricted) — forming a semiring.  This merges theorem proving
+;;; with Rust-style ownership: prove logical properties while also proving
+;;; you won't leak memory.
+;;;
+;;; Omega's per-binder usage checks (binder-behavior) directly enforce
+;;; quantity discipline at the kernel level.
+;;;
+;;; Proved here:
+;;;   1.  lin-lam (x:Nat) x : Nat ⊸ Nat               (linear identity)
+;;;   2.  lin-lam (x:Nat) (su x) : Nat ⊸ Nat           (linear successor)
+;;;   3.  aff-lam (x:Nat) star : Nat ⇀ Unit             (affine discard)
+;;;   4.  aff-lam (x:Nat) x : Nat ⇀ Nat                (affine identity)
+;;;   5.  lambda (x:Nat) (pair x x) : Nat → Nat⊗Nat     (unrestricted dup)
+;;;   6.  lambda (x:Nat) star : Nat → Unit               (unrestricted discard)
+;;;   7.  0 + 1 = 1                                      (semiring law)
+;;;   8.  1 + 1 = ω                                      (semiring law)
+;;;   9.  0 · ω = 0                                      (semiring: erased stays erased)
+;;;  10.  1 · ω = ω                                      (semiring: linear of many = many)
+
+(theory QTT
+  ;; ── Binder behaviors: the heart of quantitative checking ──
+  ;; lin-lam: bound variable must appear EXACTLY ONCE (linear, 1-use)
+  ;; aff-lam: bound variable must appear AT MOST ONCE (affine, 0-or-1)
+  ;; lambda:  bound variable may appear ANY number of times (unrestricted, ω)
+  (binder-behavior lambda :substitutive)
+  (binder-behavior lin-lam :substitutive :linear)
+  (binder-behavior aff-lam :substitutive :affine)
+
+  (sort Ty)
+  (sort Tm)
+  (sort Qty)
+
+  ;; ── Quantity semiring {0, 1, ω} ──
+  (constructor q0 : Qty)
+  (constructor q1 : Qty)
+  (constructor qw : Qty)
+  (constructor qadd : (-> Qty Qty Qty))
+  (constructor qmul : (-> Qty Qty Qty))
+
+  ;; Addition
+  (rewrite add-0l (qadd q0 ?q) ?q)
+  (rewrite add-0r (qadd ?q q0) ?q)
+  (rewrite add-11 (qadd q1 q1) qw)
+  (rewrite add-1w (qadd q1 qw) qw)
+  (rewrite add-w1 (qadd qw q1) qw)
+  (rewrite add-ww (qadd qw qw) qw)
+
+  ;; Multiplication
+  (rewrite mul-0l (qmul q0 ?q) q0)
+  (rewrite mul-0r (qmul ?q q0) q0)
+  (rewrite mul-1l (qmul q1 ?q) ?q)
+  (rewrite mul-1r (qmul ?q q1) ?q)
+  (rewrite mul-ww (qmul qw qw) qw)
+
+  ;; ── Types ──
+  (constructor Nat : Ty)
+  (constructor Unit : Ty)
+  (constructor LinArr : (-> Ty Ty Ty))    ;; A ⊸ B  (use argument once)
+  (constructor AffArr : (-> Ty Ty Ty))    ;; A ⇀ B  (use argument at most once)
+  (constructor Arrow : (-> Ty Ty Ty))     ;; A → B  (use argument freely)
+  (constructor Tensor : (-> Ty Ty Ty))    ;; A ⊗ B  (multiplicative pair)
+
+  ;; ── Terms ──
+  (constructor ze : Tm)
+  (constructor su : (-> Tm Tm))
+  (constructor star : Tm)
+  (constructor pair : (-> Tm Tm Tm))
+  (constructor app : (-> Tm Tm Tm))
+
+  ;; ── Judgments ──
+  (judgment (typed ?e ?T) :where e : Tm T : Ty)
+  (judgment (qty-eq ?a ?b) :where a : Qty b : Qty)
+
+  ;; Quantity equality (via rewrite normalization)
+  (rule qeq :premises () :conclusion (qty-eq ?a ?a))
+
+  ;; ── Typing rules ──
+  (rule t-ze :premises () :conclusion (typed ze Nat))
+  (rule t-su :premises ((typed ?n Nat)) :conclusion (typed (su ?n) Nat))
+  (rule t-star :premises () :conclusion (typed star Unit))
+  (rule t-pair
+    :premises ((typed ?a ?A) (typed ?b ?B))
+    :conclusion (typed (pair ?a ?b) (Tensor ?A ?B)))
+
+  ;; Linear function: (lin-lam (x : A) body) — body must use x EXACTLY ONCE
+  (rule t-lin-lam
+    :premises ((typed ?body ?B))
+    :conclusion (typed (lin-lam (x : ?A) ?body) (LinArr ?A ?B)))
+
+  ;; Affine function: (aff-lam (x : A) body) — body must use x AT MOST ONCE
+  (rule t-aff-lam
+    :premises ((typed ?body ?B))
+    :conclusion (typed (aff-lam (x : ?A) ?body) (AffArr ?A ?B)))
+
+  ;; Unrestricted function: (lambda (x : A) body) — no usage restriction
+  (rule t-lam
+    :premises ((typed ?body ?B))
+    :conclusion (typed (lambda (x : ?A) ?body) (Arrow ?A ?B)))
+
+  ;; Application
+  (rule t-app-lin
+    :premises ((typed ?f (LinArr ?A ?B)) (typed ?a ?A))
+    :conclusion (typed (app ?f ?a) ?B))
+
+  (rule t-app-aff
+    :premises ((typed ?f (AffArr ?A ?B)) (typed ?a ?A))
+    :conclusion (typed (app ?f ?a) ?B))
+
+  (rule t-app
+    :premises ((typed ?f (Arrow ?A ?B)) (typed ?a ?A))
+    :conclusion (typed (app ?f ?a) ?B)))
+
+(check-theory QTT)
+
+
+;; ════════════════════════════════════════════════════════════
+;; PART 1: Quantity discipline via binder behavior
+;; ════════════════════════════════════════════════════════════
+
+
+;; ─── Proof 1: Linear identity ───
+;; lin-lam (x : Nat) x  — bound variable #0 used EXACTLY ONCE. ✓
+
+(proof linear-id
+  :theory QTT
+  :goal (typed (lin-lam (x : Nat) #0) (LinArr Nat Nat))
+  :derivation (t-lin-lam assumption)
+  :assumptions ((typed #0 Nat)))
+
+
+;; ─── Proof 2: Linear successor ───
+;; lin-lam (x : Nat) (su x)  — #0 appears once inside su. ✓
+
+(proof linear-suc
+  :theory QTT
+  :goal (typed (lin-lam (x : Nat) (su #0)) (LinArr Nat Nat))
+  :derivation (t-lin-lam (t-su assumption))
+  :assumptions ((typed #0 Nat)))
+
+
+;; ─── Proof 3: Affine discard ───
+;; aff-lam (x : Nat) star  — #0 appears ZERO times (≤ 1). ✓
+;; This models Rust's "drop": the resource is consumed by discarding.
+
+(proof affine-discard
+  :theory QTT
+  :goal (typed (aff-lam (x : Nat) star) (AffArr Nat Unit))
+  :derivation (t-aff-lam (t-star)))
+
+
+;; ─── Proof 4: Affine use ───
+;; aff-lam (x : Nat) x  — #0 appears once (≤ 1). ✓
+
+(proof affine-use
+  :theory QTT
+  :goal (typed (aff-lam (x : Nat) #0) (AffArr Nat Nat))
+  :derivation (t-aff-lam assumption)
+  :assumptions ((typed #0 Nat)))
+
+
+;; ─── Proof 5: Unrestricted duplication ───
+;; lambda (x : Nat) (pair x x)  — #0 appears TWICE.
+;; This is REJECTED by lin-lam and aff-lam, but ALLOWED by lambda.
+;; In Rust terms: only Copy types can be duplicated.
+
+(proof unrestricted-dup
+  :theory QTT
+  :goal (typed (lambda (x : Nat) (pair #0 #0)) (Arrow Nat (Tensor Nat Nat)))
+  :derivation (t-lam assumption)
+  :assumptions ((typed (pair #0 #0) (Tensor Nat Nat))))
+
+
+;; ─── Proof 6: Unrestricted discard ───
+;; lambda (x : Nat) star  — #0 appears zero times.
+;; Unrestricted allows both duplication AND discarding.
+
+(proof unrestricted-discard
+  :theory QTT
+  :goal (typed (lambda (x : Nat) star) (Arrow Nat Unit))
+  :derivation (t-lam (t-star)))
+
+
+;; ════════════════════════════════════════════════════════════
+;; PART 2: The quantity semiring {0, 1, ω}
+;; ════════════════════════════════════════════════════════════
+;;
+;; Quantities form a semiring under + and ·
+;; Key laws:  0+1 = 1,  1+1 = ω,  0·ω = 0,  1·ω = ω
+;;
+;; These compute via rewrite rules — both sides normalize
+;; to the same quantity, verified by qty-eq (which is refl).
+
+
+;; ─── Proof 7: 0 + 1 = 1 ───
+;; Erased + linear = linear.
+
+(proof add-zero-one
+  :theory QTT
+  :goal (qty-eq (qadd q0 q1) q1)
+  :derivation (qeq))
+
+
+;; ─── Proof 8: 1 + 1 = ω ───
+;; Using a linear resource twice makes it unrestricted.
+;; This is why (pair #0 #0) needs ω, not 1.
+
+(proof add-one-one
+  :theory QTT
+  :goal (qty-eq (qadd q1 q1) qw)
+  :derivation (qeq))
+
+
+;; ─── Proof 9: 0 · ω = 0 ───
+;; Erased times anything is erased: you can't observe
+;; an erased variable no matter how many copies you'd want.
+
+(proof mul-zero-omega
+  :theory QTT
+  :goal (qty-eq (qmul q0 qw) q0)
+  :derivation (qeq))
+
+
+;; ─── Proof 10: 1 · ω = ω ───
+;; Linear scaling of unrestricted = unrestricted.
+
+(proof mul-one-omega
+  :theory QTT
+  :goal (qty-eq (qmul q1 qw) qw)
+  :derivation (qeq))
+
+;; ════════════════════════════════════════════════════════════
+;; NOTE: Attempting (lin-lam (x : Nat) (pair #0 #0)) would FAIL
+;; because #0 appears twice, violating the :linear constraint.
+;; Similarly, (aff-lam (x : Nat) (pair #0 #0)) would FAIL
+;; because #0 appears twice, violating the :affine constraint.
+;;
+;; This is resource safety enforced at the KERNEL level —
+;; the same guarantee that Rust's borrow checker provides.
+;; ════════════════════════════════════════════════════════════

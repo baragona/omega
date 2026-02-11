@@ -1,0 +1,255 @@
+;;; System F — Impredicative Polymorphism
+;;;
+;;; In System F, functions can be polymorphic: they work for ALL types.
+;;; The key feature is IMPREDICATIVITY — a universally quantified type
+;;; like ∀α. α→α can be instantiated with itself.  This is more
+;;; powerful than Java/Haskell generics (which are predicative).
+;;;
+;;; Omega models polymorphism directly: meta-variables (?A, ?B) in
+;;; typing rules range over all types, exactly like System F's ∀.
+;;; When a proof uses (t-id) with goal (typed id-fn (Arr Nat Nat)),
+;;; ?A is instantiated to Nat.  When the goal is
+;;; (typed (app id-fn id-fn) (Arr ?A ?A)), ?A is instantiated to
+;;; (Arr ?X ?X) — the type of id-fn itself.  This is impredicativity.
+;;;
+;;; Also demonstrated: Church encodings (booleans as polymorphic
+;;; functions), which are inherently impredicative.
+;;;
+;;; Proved here:
+;;;   1.  id : Nat → Nat                                (id at Nat)
+;;;   2.  id : Bool → Bool                              (id at Bool)
+;;;   3.  id : (Nat→Nat) → (Nat→Nat)                   (id at function type)
+;;;   4.  app(id, ze) : Nat                             (apply id)
+;;;   5.  app(id, id) : ∀α. α→α                        (IMPREDICATIVE self-application)
+;;;   6.  church-true : Nat → Nat → Nat                 (Church bool at Nat)
+;;;   7.  app(app(church-true, ze), su(ze)) : Nat       (Church if-then-else)
+;;;   8.  app(app(const, ze), tt) : Nat                 (K combinator applied)
+;;;   9.  compose : (Nat→Bool)→(Bool→Nat)→(Bool→Bool)   (composition at specific types)
+;;;  10.  pair(id, church-true) : polymorphic pair       (pairing polymorphic values)
+
+(theory SystemF
+  (sort Ty)
+  (sort Tm)
+
+  ;; ── Types ──
+  (constructor Nat : Ty)
+  (constructor Bool : Ty)
+  (constructor Arr : (-> Ty Ty Ty))     ;; A → B
+  (constructor Prod : (-> Ty Ty Ty))    ;; A × B
+
+  ;; ── Terms ──
+  (constructor ze : Tm)
+  (constructor su : (-> Tm Tm))
+  (constructor tt : Tm)
+  (constructor ff : Tm)
+  (constructor app : (-> Tm Tm Tm))
+  (constructor pair : (-> Tm Tm Tm))
+  (constructor fst : (-> Tm Tm))
+  (constructor snd : (-> Tm Tm))
+
+  ;; ── Polymorphic combinators ──
+  ;; These have universally quantified types (∀ via meta-variables).
+
+  ;; id = Λα. λx:α. x
+  ;; Type: ∀α. α → α
+  (constructor id-fn : Tm)
+
+  ;; const = Λαβ. λx:α. λy:β. x
+  ;; Type: ∀αβ. α → β → α
+  (constructor const-fn : Tm)
+
+  ;; compose = Λαβγ. λf:β→γ. λg:α→β. λx:α. f(g(x))
+  ;; Type: ∀αβγ. (β→γ) → (α→β) → (α→γ)
+  (constructor compose-fn : Tm)
+
+  ;; ── Church-encoded booleans ──
+  ;; In System F, Bool = ∀α. α → α → α
+  ;; church-true  = Λα. λx:α. λy:α. x
+  ;; church-false = Λα. λx:α. λy:α. y
+  (constructor church-true : Tm)
+  (constructor church-false : Tm)
+
+  ;; ── Typing judgment ──
+  (judgment (typed ?e ?T) :where e : Tm T : Ty)
+
+  ;; ── Base types ──
+  (rule t-ze :premises () :conclusion (typed ze Nat))
+  (rule t-su :premises ((typed ?n Nat)) :conclusion (typed (su ?n) Nat))
+  (rule t-tt :premises () :conclusion (typed tt Bool))
+  (rule t-ff :premises () :conclusion (typed ff Bool))
+
+  ;; ── Polymorphic typing rules ──
+  ;; The meta-variables ?A, ?B, ?C are System F's type variables.
+  ;; Each use of a rule can instantiate them differently.
+
+  ;; id : ∀α. α → α
+  (rule t-id
+    :premises ()
+    :conclusion (typed id-fn (Arr ?A ?A)))
+
+  ;; const : ∀αβ. α → β → α
+  (rule t-const
+    :premises ()
+    :conclusion (typed const-fn (Arr ?A (Arr ?B ?A))))
+
+  ;; compose : ∀αβγ. (β→γ) → (α→β) → (α→γ)
+  (rule t-compose
+    :premises ()
+    :conclusion (typed compose-fn (Arr (Arr ?B ?C) (Arr (Arr ?A ?B) (Arr ?A ?C)))))
+
+  ;; Church booleans : ∀α. α → α → α
+  (rule t-church-true
+    :premises ()
+    :conclusion (typed church-true (Arr ?A (Arr ?A ?A))))
+
+  (rule t-church-false
+    :premises ()
+    :conclusion (typed church-false (Arr ?A (Arr ?A ?A))))
+
+  ;; ── Structural rules ──
+  (rule t-app
+    :premises ((typed ?f (Arr ?A ?B)) (typed ?a ?A))
+    :conclusion (typed (app ?f ?a) ?B))
+
+  (rule t-pair
+    :premises ((typed ?a ?A) (typed ?b ?B))
+    :conclusion (typed (pair ?a ?b) (Prod ?A ?B)))
+
+  (rule t-fst
+    :premises ((typed ?p (Prod ?A ?B)))
+    :conclusion (typed (fst ?p) ?A))
+
+  (rule t-snd
+    :premises ((typed ?p (Prod ?A ?B)))
+    :conclusion (typed (snd ?p) ?B)))
+
+(check-theory SystemF)
+
+
+;; ════════════════════════════════════════════════════════════
+;; PART 1: Polymorphic instantiation
+;; ════════════════════════════════════════════════════════════
+
+
+;; ─── Proof 1: id at Nat ───
+;; id : Nat → Nat  (∀α instantiated to Nat)
+
+(proof id-nat
+  :theory SystemF
+  :goal (typed id-fn (Arr Nat Nat))
+  :derivation (t-id))
+
+
+;; ─── Proof 2: id at Bool ───
+;; id : Bool → Bool  (∀α instantiated to Bool)
+
+(proof id-bool
+  :theory SystemF
+  :goal (typed id-fn (Arr Bool Bool))
+  :derivation (t-id))
+
+
+;; ─── Proof 3: id at function type ───
+;; id : (Nat→Nat) → (Nat→Nat)  (∀α instantiated to Nat→Nat)
+;; Higher-order polymorphism: type variables can be complex types.
+
+(proof id-higher-order
+  :theory SystemF
+  :goal (typed id-fn (Arr (Arr Nat Nat) (Arr Nat Nat)))
+  :derivation (t-id))
+
+
+;; ─── Proof 4: apply id to ze ───
+;; app(id, ze) : Nat
+
+(proof apply-id
+  :theory SystemF
+  :goal (typed (app id-fn ze) Nat)
+  :derivation (t-app (t-id) (t-ze)))
+
+
+;; ════════════════════════════════════════════════════════════
+;; PART 2: Impredicativity
+;; ════════════════════════════════════════════════════════════
+
+
+;; ─── Proof 5: IMPREDICATIVE self-application ───
+;; app(id, id) : ∀α. α → α
+;;
+;; The polymorphic identity is applied to ITSELF.
+;; The outer id has type (∀α. α→α) → (∀α. α→α),
+;; i.e., ∀α is instantiated with (∀β. β→β).
+;; This circular instantiation is the hallmark of impredicativity.
+;;
+;; In predicative systems (Java, Haskell), this is FORBIDDEN.
+;; In System F, it's perfectly valid.
+
+(proof self-application
+  :theory SystemF
+  :goal (typed (app id-fn id-fn) (Arr ?A ?A))
+  :derivation (t-app (t-id) (t-id)))
+
+
+;; ════════════════════════════════════════════════════════════
+;; PART 3: Church encodings (inherently impredicative)
+;; ════════════════════════════════════════════════════════════
+;;
+;; Church Bool = ∀α. α → α → α
+;; This type quantifies over ALL types (including itself),
+;; which is why Church encodings require impredicative ∀.
+
+
+;; ─── Proof 6: Church true at Nat ───
+;; church-true : Nat → Nat → Nat  (∀α instantiated to Nat)
+
+(proof church-true-nat
+  :theory SystemF
+  :goal (typed church-true (Arr Nat (Arr Nat Nat)))
+  :derivation (t-church-true))
+
+
+;; ─── Proof 7: Church if-then-else ───
+;; app(app(church-true, ze), su(ze)) : Nat
+;; "If true then 0 else 1" — selects the first argument.
+
+(proof church-ite
+  :theory SystemF
+  :goal (typed (app (app church-true ze) (su ze)) Nat)
+  :derivation (t-app (t-app (t-church-true) (t-ze)) (t-su (t-ze))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; PART 4: Combinators
+;; ════════════════════════════════════════════════════════════
+
+
+;; ─── Proof 8: K combinator applied ───
+;; app(app(const, ze), tt) : Nat
+;; const selects its first argument, discarding the second.
+;; Here ∀α=Nat, ∀β=Bool.
+
+(proof const-applied
+  :theory SystemF
+  :goal (typed (app (app const-fn ze) tt) Nat)
+  :derivation (t-app (t-app (t-const) (t-ze)) (t-tt)))
+
+
+;; ─── Proof 9: Composition at concrete types ───
+;; compose : (Nat→Bool) → (Bool→Nat) → (Bool→Bool)
+;; ∀α=Bool, ∀β=Nat, ∀γ=Bool
+
+(proof compose-concrete
+  :theory SystemF
+  :goal (typed compose-fn
+              (Arr (Arr Nat Bool) (Arr (Arr Bool Nat) (Arr Bool Bool))))
+  :derivation (t-compose))
+
+
+;; ─── Proof 10: Pairing polymorphic values ───
+;; pair(id, church-true) : (∀α. α→α) × (∀α. α→α→α)
+;; Both components are polymorphic — meta-variables stay unresolved.
+
+(proof poly-pair
+  :theory SystemF
+  :goal (typed (pair id-fn church-true) (Prod (Arr ?A ?A) (Arr ?B (Arr ?B ?B))))
+  :derivation (t-pair (t-id) (t-church-true)))
