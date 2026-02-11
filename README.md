@@ -204,6 +204,14 @@ The J eliminator (path induction), transport, ap (action on paths), and the full
 
 Circle (S¹ with base and loop), suspension (north, south, merid), and propositional truncation. Typing derivations for path composition `concat(loop, loop)`, path inversion, and the squash constructor. Recursor computation rules as definitional equalities.
 
+**`examples/cubical.omega`** — Cubical Type Theory (8 proofs)
+
+Transport and univalence that actually compute — not stuck terms like in Book HoTT. `transport(ua(neg), true) = false` reduces in 3 steps. The interval, Kan composition, and Glue types give computational content to the univalence axiom.
+
+**`examples/quotients.omega`** — Quotient Types (10 proofs)
+
+Integers as (N x N)/~, where (a,b) represents a-b. Well-definedness: `(2,0) + (1,0) ~ (3,1) + (2,1)` — different representatives, same equivalence class. The quotient eliminates into any type respecting the equivalence relation.
+
 **`examples/system-f.omega`** — System F (10 proofs)
 
 Impredicative polymorphism where `∀α. α→α` can be instantiated with itself — the self-application that STLC forbids. Church-encoded booleans as polymorphic functions, type abstraction/application, and the identity polymorphism that makes System F the simplest system with type:type flavor.
@@ -321,6 +329,14 @@ Session-typed concurrent processes where protocols are types and processes are p
 **`examples/cut-elim.omega`** — Cut Elimination (11 proofs)
 
 Proofs as programs with cut elimination as computation. Linear logic proof terms where each cut-reduction step is a rewrite rule and Omega's normalizer is the abstract machine. Tensor projection, additive selection, dereliction, duplication, and composition all reduce to normal forms by `eq-refl`.
+
+**`examples/effects.omega`** — Algebraic Effects (10 proofs)
+
+Three handlers for one program. `put(1, choose(get, val(0)))` produces `some(1)`, `(0, [err])`, or `[1, 0]` depending on which handler interprets the effects. State, nondeterminism, and exceptions as composable effect algebras — the program is fixed, only the interpretation changes.
+
+**`examples/inference.omega`** — Type Inference (15 proofs)
+
+Mini-ML with Robinson unification. Soundness: `unify(α→β, Int→Bool) = [α↦Int, β↦Bool]` and applying the substitution to both sides yields `Int→Bool`. Constraint generation, occurs check, and substitution composition — the algorithm behind `let x = ...` in ML-family languages.
 
 #### Verified State Machines
 
