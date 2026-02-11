@@ -1,0 +1,273 @@
+;;; Lambek Calculus — Non-Commutative Logic for Natural Language
+;;;
+;;; The Lambek calculus is a substructural logic where the tensor
+;;; product is NON-COMMUTATIVE: A ⊗ B ≠ B ⊗ A.  This captures
+;;; word order in natural language — "dog bites man" is not the
+;;; same as "man bites dog."
+;;;
+;;; There are TWO directed implications:
+;;;   A \ B  (under):  "if A is to my LEFT, then B"
+;;;   B / A  (over):   "if A is to my RIGHT, then B"
+;;;
+;;; This is GENUINELY IMPOSSIBLE to express natively in Lean/Coq,
+;;; where conjunction is commutative by definition.  Omega's logic-
+;;; agnostic framework simply doesn't add a commutativity rule.
+;;;
+;;; Example: parsing "John loves Mary"
+;;;   John : NP
+;;;   loves : (NP \ S) / NP   (needs NP left, NP right, produces S)
+;;;   Mary : NP
+;;;   John loves → S / NP     (partial application from left)
+;;;   John loves Mary → S     (complete sentence)
+;;;
+;;; Proved here:
+;;;   1.  A ⊢ A                               (identity / axiom)
+;;;   2.  NP, NP\S ⊢ S                        (left application)
+;;;   3.  S/NP, NP ⊢ S                        (right application)
+;;;   4.  NP, (NP\S)/NP, NP ⊢ S               (transitive verb parse)
+;;;   5.  A ⊢ B/(A\B)                          (type raising)
+;;;   6.  A\B, B\C ⊢ A\C                        (left composition)
+;;;   7.  A, B ⊢ A⊗B                           (tensor intro)
+;;;   8.  B/A, A/C ⊢ B/C                       (right composition)
+;;;   9.  Det, N ⊢ NP                          (determiner + noun)
+;;;  10.  Det, N, (NP\S)/NP, Det, N ⊢ S       (full sentence parse)
+
+(theory Lambek
+  (sort Cat)     ;; syntactic categories (types)
+  (sort Ctx)     ;; ordered sequences of categories
+
+  ;; ── Categories ──
+  (constructor S    : Cat)                          ;; sentence
+  (constructor NP   : Cat)                          ;; noun phrase
+  (constructor N    : Cat)                          ;; noun
+  (constructor Det  : Cat)                          ;; determiner
+  (constructor tensor : (-> Cat Cat Cat))           ;; A ⊗ B (ordered pair)
+  (constructor under  : (-> Cat Cat Cat))           ;; A \ B (left residual)
+  (constructor over   : (-> Cat Cat Cat))           ;; B / A (right residual)
+
+  ;; ── Contexts (ordered sequences) ──
+  (constructor emp  : Ctx)
+  (constructor sing : (-> Cat Ctx))                 ;; single category
+  (constructor join : (-> Ctx Ctx Ctx))             ;; concatenation
+
+  ;; ── Judgment: Γ ⊢ A ──
+  ;; "The ordered sequence Γ derives category A"
+  (judgment (derives ?G ?A) :where G : Ctx A : Cat)
+
+  ;; ════════════════════════════════════════
+  ;; Structural rules (NO exchange — order matters!)
+  ;; ════════════════════════════════════════
+
+  ;; Identity
+  (rule ax
+    :conclusion (derives (sing ?A) ?A))
+
+  ;; Cut: replace A in context with derivation of A
+  (rule cut
+    :premises ((derives ?G ?A) (derives (join ?D1 (join (sing ?A) ?D2)) ?B))
+    :conclusion (derives (join ?D1 (join ?G ?D2)) ?B))
+
+  ;; ════════════════════════════════════════
+  ;; Tensor (non-commutative product)
+  ;; ════════════════════════════════════════
+
+  ;; Tensor introduction: Γ ⊢ A  and  Δ ⊢ B  implies  Γ,Δ ⊢ A⊗B
+  (rule tensor-intro
+    :premises ((derives ?G ?A) (derives ?D ?B))
+    :conclusion (derives (join ?G ?D) (tensor ?A ?B)))
+
+  ;; Tensor elimination
+  (rule tensor-elim
+    :premises ((derives ?G (tensor ?A ?B))
+               (derives (join ?D1 (join (sing ?A) (join (sing ?B) ?D2))) ?C))
+    :conclusion (derives (join ?D1 (join ?G ?D2)) ?C))
+
+  ;; ════════════════════════════════════════
+  ;; Left residual: A \ B
+  ;; "Give me an A on my LEFT and I produce B"
+  ;; ════════════════════════════════════════
+
+  ;; Under intro: if A, Γ ⊢ B then Γ ⊢ A\B
+  (rule under-intro
+    :premises ((derives (join (sing ?A) ?G) ?B))
+    :conclusion (derives ?G (under ?A ?B)))
+
+  ;; Under elim (left application): Γ ⊢ A  and  Δ ⊢ A\B  implies  Γ,Δ ⊢ B
+  (rule under-elim
+    :premises ((derives ?G ?A) (derives ?D (under ?A ?B)))
+    :conclusion (derives (join ?G ?D) ?B))
+
+  ;; ════════════════════════════════════════
+  ;; Right residual: B / A
+  ;; "Give me an A on my RIGHT and I produce B"
+  ;; ════════════════════════════════════════
+
+  ;; Over intro: if Γ, A ⊢ B then Γ ⊢ B/A
+  (rule over-intro
+    :premises ((derives (join ?G (sing ?A)) ?B))
+    :conclusion (derives ?G (over ?B ?A)))
+
+  ;; Over elim (right application): Γ ⊢ B/A  and  Δ ⊢ A  implies  Γ,Δ ⊢ B
+  (rule over-elim
+    :premises ((derives ?G (over ?B ?A)) (derives ?D ?A))
+    :conclusion (derives (join ?G ?D) ?B))
+
+  ;; ════════════════════════════════════════
+  ;; Associativity of context concatenation
+  ;; ════════════════════════════════════════
+
+  (rule assoc-l
+    :premises ((derives (join ?G (join ?D ?E)) ?A))
+    :conclusion (derives (join (join ?G ?D) ?E) ?A))
+
+  (rule assoc-r
+    :premises ((derives (join (join ?G ?D) ?E) ?A))
+    :conclusion (derives (join ?G (join ?D ?E)) ?A))
+
+  ;; ════════════════════════════════════════
+  ;; Determiner rule: Det, N ⊢ NP
+  ;; "the dog" or "a cat" forms a noun phrase
+  ;; ════════════════════════════════════════
+
+  (rule det-np
+    :conclusion (derives (sing Det) (over NP N))))
+
+(check-theory Lambek)
+
+
+;; ════════════════════════════════════════════════════════════
+;; Proof 1: Identity — A ⊢ A
+;; ════════════════════════════════════════════════════════════
+
+(proof identity
+  :theory Lambek
+  :goal (derives (sing ?A) ?A)
+  :derivation (ax))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Proof 2: Left application — NP, NP\S ⊢ S
+;; ════════════════════════════════════════════════════════════
+;; "John runs" — NP on the left of an intransitive verb.
+
+(proof left-app
+  :theory Lambek
+  :goal (derives (join (sing NP) (sing (under NP S))) S)
+  :derivation (under-elim (ax) (ax)))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Proof 3: Right application — S/NP, NP ⊢ S
+;; ════════════════════════════════════════════════════════════
+;; Right application: the right residual consumes from the right.
+
+(proof right-app
+  :theory Lambek
+  :goal (derives (join (sing (over S NP)) (sing NP)) S)
+  :derivation (over-elim (ax) (ax)))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Proof 4: Transitive verb — NP, (NP\S)/NP, NP ⊢ S
+;; ════════════════════════════════════════════════════════════
+;; "John loves Mary"
+;;   NP  ,  (NP\S)/NP  ,  NP
+;;          \_________/
+;;   NP  ,    NP\S             (right-apply: verb gets object)
+;;   \___________/
+;;        S                    (left-apply: subject + verb phrase)
+
+(proof transitive-verb
+  :theory Lambek
+  :goal (derives (join (sing NP) (join (sing (over (under NP S) NP)) (sing NP))) S)
+  :derivation
+    (under-elim (ax) (over-elim (ax) (ax))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Proof 5: Type raising — A ⊢ B/(A\B)
+;; ════════════════════════════════════════════════════════════
+;; Type raising promotes A to a "higher-order" category.
+;; This is essential for coordination and scope ambiguity.
+
+(proof type-raising
+  :theory Lambek
+  :goal (derives (sing ?A) (over ?B (under ?A ?B)))
+  :derivation
+    (over-intro (under-elim (ax) (ax))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Proof 6: Left composition — A\B, B\C ⊢ A\C
+;; ════════════════════════════════════════════════════════════
+;; Compose two leftward-looking categories.
+;; With A on the left, first apply A\B to get B, then B\C to get C.
+
+(proof left-compose
+  :theory Lambek
+  :goal (derives (join (sing (under ?A ?B)) (sing (under ?B ?C))) (under ?A ?C))
+  :derivation
+    (under-intro
+      (assoc-r
+        (under-elim (under-elim (ax) (ax)) (ax)))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Proof 7: Tensor intro — A, B ⊢ A⊗B
+;; ════════════════════════════════════════════════════════════
+
+(proof tensor-pair
+  :theory Lambek
+  :goal (derives (join (sing ?A) (sing ?B)) (tensor ?A ?B))
+  :derivation (tensor-intro (ax) (ax)))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Proof 8: Right composition — B/A, A/C ⊢ B/C
+;; ════════════════════════════════════════════════════════════
+;; Geach rule: compose two rightward-looking categories.
+
+(proof right-compose
+  :theory Lambek
+  :goal (derives (join (sing (over ?B ?A)) (sing (over ?A ?C))) (over ?B ?C))
+  :derivation
+    (over-intro
+      (assoc-l
+        (over-elim (ax) (over-elim (ax) (ax))))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Proof 9: Determiner + Noun — Det, N ⊢ NP
+;; ════════════════════════════════════════════════════════════
+;; "the dog" — a determiner combines with a noun to form NP.
+;; Det is typed as NP/N (needs a noun to the right).
+
+(proof det-noun
+  :theory Lambek
+  :goal (derives (join (sing Det) (sing N)) NP)
+  :derivation (over-elim (det-np) (ax)))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Proof 10: Full sentence — Det, N, (NP\S)/NP, Det, N ⊢ S
+;; ════════════════════════════════════════════════════════════
+;; "the dog loves a cat"
+;;   Det N   (NP\S)/NP   Det N
+;;   \__/                 \__/
+;;    NP    (NP\S)/NP      NP     (det + noun = NP, twice)
+;;          \_________/
+;;    NP       NP\S               (verb gets object)
+;;    \___________/
+;;         S                      (subject + VP)
+
+(proof full-sentence
+  :theory Lambek
+  :goal (derives
+          (join (join (sing Det) (sing N))
+                (join (sing (over (under NP S) NP))
+                      (join (sing Det) (sing N))))
+          S)
+  :derivation
+    (under-elim
+      (over-elim (det-np) (ax))
+      (over-elim (ax) (over-elim (det-np) (ax)))))

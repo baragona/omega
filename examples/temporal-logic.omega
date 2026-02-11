@@ -1,0 +1,266 @@
+;;; Linear Temporal Logic (LTL)
+;;;
+;;; The logic of "what happens over time."  Used in model checking,
+;;; hardware verification, and protocol analysis.
+;;;
+;;; Formulas describe properties of infinite execution traces:
+;;;   □P     "always P"     (P holds at every future time step)
+;;;   ◇P     "eventually P" (P holds at some future time step)
+;;;   ○P     "next P"       (P holds at the next time step)
+;;;   P U Q  "P until Q"    (P holds until Q becomes true)
+;;;
+;;; These temporal operators have no analogue in CIC.  In Lean,
+;;; you'd encode traces as functions ℕ → Prop and quantify manually.
+;;; In Omega, the operators are first-class connectives with
+;;; inference rules capturing their axioms.
+;;;
+;;; Proved here:
+;;;   1.  □P → P                             (always implies now)
+;;;   2.  □P → ○P                            (always implies next)
+;;;   3.  □P → □□P                           (always is idempotent)
+;;;   4.  □(P → Q) → (□P → □Q)              (always distributes / K axiom)
+;;;   5.  □P → ◇P                            (always implies eventually)
+;;;   6.  P → ◇P                             (now implies eventually)
+;;;   7.  □(P → Q) → (◇P → ◇Q)             (always-imp lifts to eventually)
+;;;   8.  (P U Q) → ◇Q                       (until guarantees eventuality)
+;;;   9.  □P → (P U Q) ∨ □P                  (always: trivial until)
+;;;  10.  ○(P → Q) → (○P → ○Q)             (next distributes)
+
+(theory LTL
+  (sort Prop)
+
+  ;; ── Propositional connectives ──
+  (constructor and  : (-> Prop Prop Prop))
+  (constructor or   : (-> Prop Prop Prop))
+  (constructor imp  : (-> Prop Prop Prop))
+  (constructor not  : (-> Prop Prop))
+  (constructor top  : Prop)
+  (constructor bot  : Prop)
+
+  ;; ── Temporal operators ──
+  (constructor always     : (-> Prop Prop))          ;; □P
+  (constructor eventually : (-> Prop Prop))          ;; ◇P
+  (constructor next       : (-> Prop Prop))          ;; ○P
+  (constructor until      : (-> Prop Prop Prop))     ;; P U Q
+
+  ;; ── Atomic propositions (for examples) ──
+  (constructor P : Prop)
+  (constructor Q : Prop)
+  (constructor R : Prop)
+
+  ;; ── Judgment ──
+  (judgment (holds ?A) :where A : Prop)
+
+  ;; ── Propositional rules ──
+  (rule top-intro :conclusion (holds top))
+
+  (rule and-intro
+    :premises ((holds ?A) (holds ?B))
+    :conclusion (holds (and ?A ?B)))
+
+  (rule and-elim-l
+    :premises ((holds (and ?A ?B)))
+    :conclusion (holds ?A))
+
+  (rule and-elim-r
+    :premises ((holds (and ?A ?B)))
+    :conclusion (holds ?B))
+
+  (rule or-intro-l
+    :premises ((holds ?A))
+    :conclusion (holds (or ?A ?B)))
+
+  (rule or-intro-r
+    :premises ((holds ?B))
+    :conclusion (holds (or ?A ?B)))
+
+  (rule imp-intro
+    :premises ((holds ?B))
+    :context ((0 (holds ?A)))
+    :conclusion (holds (imp ?A ?B)))
+
+  (rule imp-elim
+    :premises ((holds (imp ?A ?B)) (holds ?A))
+    :conclusion (holds ?B))
+
+  ;; ════════════════════════════════════════
+  ;; Temporal axioms
+  ;; ════════════════════════════════════════
+
+  ;; □P → P  (what is always true is true now)
+  (rule always-now
+    :premises ((holds (always ?P)))
+    :conclusion (holds ?P))
+
+  ;; □P → ○P  (what is always true is true next)
+  (rule always-next
+    :premises ((holds (always ?P)))
+    :conclusion (holds (next ?P)))
+
+  ;; □P → □(○P)  (always implies always-next)
+  (rule always-next-always
+    :premises ((holds (always ?P)))
+    :conclusion (holds (always (next ?P))))
+
+  ;; □P → □□P  (always is transitive / idempotent)
+  (rule always-idem
+    :premises ((holds (always ?P)))
+    :conclusion (holds (always (always ?P))))
+
+  ;; □(P → Q) → □P → □Q  (K axiom for always)
+  (rule always-K
+    :premises ((holds (always (imp ?P ?Q))) (holds (always ?P)))
+    :conclusion (holds (always ?Q)))
+
+  ;; P → ◇P  (what is true now is eventually true)
+  (rule now-eventually
+    :premises ((holds ?P))
+    :conclusion (holds (eventually ?P)))
+
+  ;; □P → ◇P  (always implies eventually)
+  (rule always-eventually
+    :premises ((holds (always ?P)))
+    :conclusion (holds (eventually ?P)))
+
+  ;; □(P → Q) → ◇P → ◇Q  (always-imp lifts over eventually)
+  (rule eventually-lift
+    :premises ((holds (always (imp ?P ?Q))) (holds (eventually ?P)))
+    :conclusion (holds (eventually ?Q)))
+
+  ;; ── Until axioms ──
+
+  ;; P U Q → ◇Q  (until guarantees the goal is reached)
+  (rule until-eventually
+    :premises ((holds (until ?P ?Q)))
+    :conclusion (holds (eventually ?Q)))
+
+  ;; Q → (P U Q)  (if Q holds now, P-until-Q is trivially true)
+  (rule until-now
+    :premises ((holds ?Q))
+    :conclusion (holds (until ?P ?Q)))
+
+  ;; P ∧ ○(P U Q) → P U Q  (unfolding: P now + until later)
+  (rule until-step
+    :premises ((holds ?P) (holds (next (until ?P ?Q))))
+    :conclusion (holds (until ?P ?Q)))
+
+  ;; ── Next axioms ──
+
+  ;; ○(P → Q) → (○P → ○Q)  (next distributes over implication)
+  (rule next-K
+    :premises ((holds (next (imp ?P ?Q))) (holds (next ?P)))
+    :conclusion (holds (next ?Q)))
+
+  ;; Necessitation for next: if P is a theorem, so is ○P
+  (rule next-nec
+    :premises ((holds ?P))
+    :conclusion (holds (next ?P))))
+
+(check-theory LTL)
+
+
+;; ════════════════════════════════════════════════════════════
+;; Proof 1: □P → P  (always implies now)
+;; ════════════════════════════════════════════════════════════
+
+(proof always-to-now
+  :theory LTL
+  :goal (holds (imp (always P) P))
+  :derivation (imp-intro (always-now (assumption))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Proof 2: □P → ○P  (always implies next)
+;; ════════════════════════════════════════════════════════════
+
+(proof always-to-next
+  :theory LTL
+  :goal (holds (imp (always P) (next P)))
+  :derivation (imp-intro (always-next (assumption))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Proof 3: □P → □□P  (always is idempotent)
+;; ════════════════════════════════════════════════════════════
+
+(proof always-idempotent
+  :theory LTL
+  :goal (holds (imp (always P) (always (always P))))
+  :derivation (imp-intro (always-idem (assumption))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Proof 4: □(P → Q) → (□P → □Q)  (K axiom for always)
+;; ════════════════════════════════════════════════════════════
+;; "If it's always the case that P implies Q,
+;;  and P is always true, then Q is always true."
+
+(proof always-distributes
+  :theory LTL
+  :goal (holds (imp (always (imp P Q)) (imp (always P) (always Q))))
+  :derivation (imp-intro (imp-intro (always-K (assumption 0) (assumption)))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Proof 5: □P → ◇P  (always implies eventually)
+;; ════════════════════════════════════════════════════════════
+
+(proof always-to-eventually
+  :theory LTL
+  :goal (holds (imp (always P) (eventually P)))
+  :derivation (imp-intro (always-eventually (assumption))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Proof 6: P → ◇P  (now implies eventually)
+;; ════════════════════════════════════════════════════════════
+
+(proof now-to-eventually
+  :theory LTL
+  :goal (holds (imp P (eventually P)))
+  :derivation (imp-intro (now-eventually (assumption))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Proof 7: □(P → Q) → (◇P → ◇Q)
+;; ════════════════════════════════════════════════════════════
+;; "If P always implies Q, then if P happens eventually,
+;;  Q also happens eventually."
+
+(proof eventually-mono
+  :theory LTL
+  :goal (holds (imp (always (imp P Q)) (imp (eventually P) (eventually Q))))
+  :derivation (imp-intro (imp-intro (eventually-lift (assumption 0) (assumption)))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Proof 8: (P U Q) → ◇Q  (until guarantees eventuality)
+;; ════════════════════════════════════════════════════════════
+;; "If P holds until Q, then Q must eventually hold."
+;; This is the liveness guarantee of the until operator.
+
+(proof until-guarantees
+  :theory LTL
+  :goal (holds (imp (until P Q) (eventually Q)))
+  :derivation (imp-intro (until-eventually (assumption))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Proof 9: □P → (P U Q) ∨ □P
+;; ════════════════════════════════════════════════════════════
+;; "If P is always true, then trivially P-until-Q or always-P."
+
+(proof always-trivial-until
+  :theory LTL
+  :goal (holds (imp (always P) (or (until P Q) (always P))))
+  :derivation (imp-intro (or-intro-r (assumption))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Proof 10: ○(P → Q) → (○P → ○Q)  (next distributes)
+;; ════════════════════════════════════════════════════════════
+
+(proof next-distributes
+  :theory LTL
+  :goal (holds (imp (next (imp P Q)) (imp (next P) (next Q))))
+  :derivation (imp-intro (imp-intro (next-K (assumption 0) (assumption)))))

@@ -605,3 +605,53 @@ fn calc_example() {
     assert!(results.iter().any(|r| r.contains("Proof eval-min: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof eval-max: VALID")));
 }
+
+#[test]
+fn separation_logic_example() {
+    let results = check_example("examples/separation-logic.omega");
+    assert!(results.iter().any(|r| r.contains("Theory SeparationLogic: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof skip-emp: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof frame-mutate: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof wand-elim: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof swap-xy: VALID")));
+}
+
+#[test]
+fn temporal_logic_example() {
+    let results = check_example("examples/temporal-logic.omega");
+    assert!(results.iter().any(|r| r.contains("Theory LTL: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof always-to-now: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof always-distributes: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof until-guarantees: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof next-distributes: VALID")));
+}
+
+#[test]
+fn lambek_example() {
+    let results = check_example("examples/lambek.omega");
+    assert!(results.iter().any(|r| r.contains("Theory Lambek: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof transitive-verb: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof type-raising: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof left-compose: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof full-sentence: VALID")));
+}
+
+#[test]
+fn provability_logic_example() {
+    let results = check_example("examples/provability-logic.omega");
+    assert!(results.iter().any(|r| r.contains("Theory GL: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof lob-theorem: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof godel-two: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof box-and-intro: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof lob-lifts: VALID")));
+}
+
+#[test]
+fn relevant_logic_example() {
+    let results = check_example("examples/relevant-logic.omega");
+    assert!(results.iter().any(|r| r.contains("Theory RelevantLogic: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof identity: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof syllogism: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof currying: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof fusion-symmetric: VALID")));
+}

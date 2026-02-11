@@ -1,0 +1,283 @@
+;;; Separation Logic
+;;;
+;;; The logic of heap-manipulating programs.  Extends Hoare logic
+;;; with the SEPARATING CONJUNCTION (P * Q): "P and Q hold on
+;;; disjoint regions of memory."  This makes local reasoning
+;;; possible — you can verify a function knowing only the heap
+;;; cells it touches, ignoring the rest.
+;;;
+;;; In Lean/Coq, encoding this requires massive frameworks (Iris
+;;; is ~50k lines).  In Omega, it's a theory with the right rules.
+;;;
+;;; Key connectives:
+;;;   P * Q    separating conjunction (disjoint heaps)
+;;;   P -* Q   magic wand / separating implication
+;;;   emp      empty heap
+;;;   x ↦ v   singleton heap cell
+;;;
+;;; Proved here:
+;;;   1.  {emp} skip {emp}                         (skip on empty heap)
+;;;   2.  {x↦v} [x]:=w {x↦w}                     (mutation)
+;;;   3.  {emp} x:=alloc(v) {x↦v}                 (allocation)
+;;;   4.  {x↦v} free(x) {emp}                     (deallocation)
+;;;   5.  {P} c {Q}  ⊢  {P * R} c {Q * R}        (FRAME rule)
+;;;   6.  (P * Q) * R ⊢ P * (Q * R)               (star associativity)
+;;;   7.  P * Q ⊢ Q * P                            (star commutativity)
+;;;   8.  P * emp ⊢ P                              (emp is unit)
+;;;   9.  (P * (P -* Q)) ⊢ Q                       (modus ponens for wand)
+;;;  10.  {x↦a * y↦b} swap(x,y) {x↦b * y↦a}     (parallel swap)
+
+(theory SeparationLogic
+  (sort Heap)    ;; heap propositions
+  (sort Cmd)     ;; commands
+  (sort Loc)     ;; memory locations
+  (sort Val)     ;; values
+
+  ;; ── Heap propositions ──
+  (constructor emp : Heap)                         ;; empty heap
+  (constructor points-to : (-> Loc Val Heap))      ;; x ↦ v
+  (constructor star : (-> Heap Heap Heap))         ;; P * Q (separating conjunction)
+  (constructor wand : (-> Heap Heap Heap))         ;; P -* Q (magic wand)
+  (constructor pure : (-> Heap Heap))              ;; lift pure assertion
+
+  ;; ── Commands ──
+  (constructor skip : Cmd)
+  (constructor assign : (-> Loc Val Cmd))          ;; [x] := v  (heap mutation)
+  (constructor alloc : (-> Loc Val Cmd))           ;; x := alloc(v)
+  (constructor free-cmd : (-> Loc Cmd))            ;; free(x)
+  (constructor seq : (-> Cmd Cmd Cmd))             ;; c1 ; c2
+  (constructor swap-cmd : (-> Loc Loc Cmd))        ;; swap(x, y)
+
+  ;; ── Concrete locations and values (for examples) ──
+  (constructor loc-x : Loc)
+  (constructor loc-y : Loc)
+  (constructor val-a : Val)
+  (constructor val-b : Val)
+  (constructor val-w : Val)
+
+  ;; ── Judgments ──
+  ;; Hoare triple: {P} c {Q}
+  (judgment (triple ?P ?c ?Q) :where P : Heap c : Cmd Q : Heap)
+  ;; Entailment: P ⊢ Q
+  (judgment (entails ?P ?Q) :where P : Heap Q : Heap)
+
+  ;; ════════════════════════════════════════
+  ;; Hoare rules for heap operations
+  ;; ════════════════════════════════════════
+
+  ;; Skip
+  (rule ht-skip
+    :conclusion (triple ?P skip ?P))
+
+  ;; Mutation: [x] := w  changes x↦v to x↦w
+  (rule ht-mutate
+    :conclusion (triple (points-to ?x ?v) (assign ?x ?w) (points-to ?x ?w)))
+
+  ;; Allocation: x := alloc(v) creates x↦v from emp
+  (rule ht-alloc
+    :conclusion (triple emp (alloc ?x ?v) (points-to ?x ?v)))
+
+  ;; Deallocation: free(x) consumes x↦v to emp
+  (rule ht-free
+    :conclusion (triple (points-to ?x ?v) (free-cmd ?x) emp))
+
+  ;; Sequencing
+  (rule ht-seq
+    :premises ((triple ?P ?c1 ?R) (triple ?R ?c2 ?Q))
+    :conclusion (triple ?P (seq ?c1 ?c2) ?Q))
+
+  ;; ════════════════════════════════════════
+  ;; THE FRAME RULE — the heart of separation logic
+  ;; ════════════════════════════════════════
+  ;; If {P} c {Q}, then {P * R} c {Q * R} for ANY R.
+  ;; "c only touches the P part; R is untouched."
+
+  (rule frame
+    :premises ((triple ?P ?c ?Q))
+    :conclusion (triple (star ?P ?R) ?c (star ?Q ?R)))
+
+  ;; ════════════════════════════════════════
+  ;; Consequence rule
+  ;; ════════════════════════════════════════
+
+  (rule ht-consequence
+    :premises ((entails ?P1 ?P2) (triple ?P2 ?c ?Q2) (entails ?Q2 ?Q1))
+    :conclusion (triple ?P1 ?c ?Q1))
+
+  ;; ════════════════════════════════════════
+  ;; Structural rules for separating conjunction
+  ;; ════════════════════════════════════════
+
+  ;; Star is commutative
+  (rule star-comm
+    :premises ((entails (star ?P ?Q) ?R))
+    :conclusion (entails (star ?Q ?P) ?R))
+
+  ;; Star is associative
+  (rule star-assoc
+    :premises ((entails (star ?P (star ?Q ?R)) ?S))
+    :conclusion (entails (star (star ?P ?Q) ?R) ?S))
+
+  ;; Emp is unit for star
+  (rule star-emp-l
+    :conclusion (entails (star emp ?P) ?P))
+
+  (rule star-emp-r
+    :conclusion (entails (star ?P emp) ?P))
+
+  ;; Reflexivity of entailment
+  (rule ent-refl
+    :conclusion (entails ?P ?P))
+
+  ;; Monotonicity: P ⊢ Q implies P*R ⊢ Q*R
+  (rule ent-star-mono
+    :premises ((entails ?P ?Q))
+    :conclusion (entails (star ?P ?R) (star ?Q ?R)))
+
+  ;; ════════════════════════════════════════
+  ;; Magic wand (separating implication)
+  ;; ════════════════════════════════════════
+
+  ;; Modus ponens for wand: P * (P -* Q) ⊢ Q
+  (rule wand-mp
+    :conclusion (entails (star ?P (wand ?P ?Q)) ?Q))
+
+  ;; Wand introduction: if P * R ⊢ Q then R ⊢ P -* Q
+  (rule wand-intro
+    :premises ((entails (star ?P ?R) ?Q))
+    :conclusion (entails ?R (wand ?P ?Q)))
+
+  ;; ════════════════════════════════════════
+  ;; Swap (compound command)
+  ;; ════════════════════════════════════════
+
+  ;; swap(x,y) reads both, writes both: {x↦a * y↦b} swap {x↦b * y↦a}
+  (rule ht-swap
+    :conclusion (triple (star (points-to ?x ?a) (points-to ?y ?b))
+                        (swap-cmd ?x ?y)
+                        (star (points-to ?x ?b) (points-to ?y ?a)))))
+
+(check-theory SeparationLogic)
+
+
+;; ════════════════════════════════════════════════════════════
+;; Proof 1: Skip on empty heap
+;; ════════════════════════════════════════════════════════════
+
+(proof skip-emp
+  :theory SeparationLogic
+  :goal (triple emp skip emp)
+  :derivation (ht-skip))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Proof 2: Heap mutation
+;; ════════════════════════════════════════════════════════════
+;; {x ↦ val-a}  [x] := val-w  {x ↦ val-w}
+
+(proof mutate-x
+  :theory SeparationLogic
+  :goal (triple (points-to loc-x val-a) (assign loc-x val-w) (points-to loc-x val-w))
+  :derivation (ht-mutate))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Proof 3: Allocation
+;; ════════════════════════════════════════════════════════════
+;; {emp}  x := alloc(val-a)  {x ↦ val-a}
+
+(proof alloc-x
+  :theory SeparationLogic
+  :goal (triple emp (alloc loc-x val-a) (points-to loc-x val-a))
+  :derivation (ht-alloc))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Proof 4: Deallocation
+;; ════════════════════════════════════════════════════════════
+;; {x ↦ val-a}  free(x)  {emp}
+
+(proof free-x
+  :theory SeparationLogic
+  :goal (triple (points-to loc-x val-a) (free-cmd loc-x) emp)
+  :derivation (ht-free))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Proof 5: THE FRAME RULE
+;; ════════════════════════════════════════════════════════════
+;; {x↦a}  [x]:=w  {x↦w}      (local spec)
+;; ─────────────────────────────
+;; {x↦a * y↦b}  [x]:=w  {x↦w * y↦b}    (framed: y untouched)
+;;
+;; This is the key insight of separation logic: we verified
+;; the mutation knowing only about x.  The frame rule
+;; automatically extends it to a larger heap containing y.
+
+(proof frame-mutate
+  :theory SeparationLogic
+  :goal (triple (star (points-to loc-x val-a) (points-to loc-y val-b))
+                (assign loc-x val-w)
+                (star (points-to loc-x val-w) (points-to loc-y val-b)))
+  :derivation (frame (ht-mutate)))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Proof 6: Star associativity
+;; ════════════════════════════════════════════════════════════
+;; (P * Q) * R ⊢ P * (Q * R)
+
+(proof assoc
+  :theory SeparationLogic
+  :goal (entails (star (star ?P ?Q) ?R) (star ?P (star ?Q ?R)))
+  :derivation (star-assoc (ent-refl)))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Proof 7: Star commutativity
+;; ════════════════════════════════════════════════════════════
+;; P * Q ⊢ Q * P
+
+(proof comm
+  :theory SeparationLogic
+  :goal (entails (star ?P ?Q) (star ?Q ?P))
+  :derivation (star-comm (ent-refl)))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Proof 8: Emp is unit
+;; ════════════════════════════════════════════════════════════
+;; P * emp ⊢ P
+
+(proof emp-unit
+  :theory SeparationLogic
+  :goal (entails (star ?P emp) ?P)
+  :derivation (star-emp-r))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Proof 9: Magic wand modus ponens
+;; ════════════════════════════════════════════════════════════
+;; P * (P -* Q) ⊢ Q
+;; "If you have a resource P, and a promise that P can be
+;;  exchanged for Q, then you can get Q."
+
+(proof wand-elim
+  :theory SeparationLogic
+  :goal (entails (star ?P (wand ?P ?Q)) ?Q)
+  :derivation (wand-mp))
+
+
+;; ════════════════════════════════════════════════════════════
+;; Proof 10: Swap on disjoint cells
+;; ════════════════════════════════════════════════════════════
+;; {x↦a * y↦b}  swap(x,y)  {x↦b * y↦a}
+;; The separating conjunction guarantees x ≠ y (disjoint memory).
+;; Without separation logic, you'd need an explicit x≠y premise.
+
+(proof swap-xy
+  :theory SeparationLogic
+  :goal (triple (star (points-to loc-x val-a) (points-to loc-y val-b))
+                (swap-cmd loc-x loc-y)
+                (star (points-to loc-x val-b) (points-to loc-y val-a)))
+  :derivation (ht-swap))
