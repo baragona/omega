@@ -1164,14 +1164,46 @@ fn zfc_honest_example() {
     assert!(results.iter().any(|r| r.contains("Lemma diag-contradiction: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma cantor-no-surj: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma cantor: VALID [DERIVED]")));
-    // Infrastructure lemmas (formula induction + L ⊨ ZFC + Gödel)
+    // L-sat lemmas (from model-theoretic infrastructure: absoluteness + definable closure)
+    assert!(results.iter().any(|r| r.contains("Lemma L-sat-ext: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma L-sat-empty: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma L-sat-pair: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma L-sat-union: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma L-sat-inf: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma L-sat-sep: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma L-sat-reg: VALID [DERIVED]")));
+    // L-sat hard lemmas (from condensation/reflection/wellorder infrastructure)
+    assert!(results.iter().any(|r| r.contains("Lemma L-sat-power: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma L-sat-rep: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma L-sat-choice: VALID [DERIVED]")));
+    // Infrastructure lemmas (L ⊨ ZFC + GCH + Gödel + well-formedness)
     assert!(results.iter().any(|r| r.contains("Lemma L-models-zfc: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma L-satisfies-gch: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma godel-theorem: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma all-well-formed: VALID [DERIVED]")));
     // Truth Lemma + Forcing (decomposed into per-case/per-axiom + induction/chain)
     assert!(results.iter().any(|r| r.contains("Lemma truth-lemma-induction: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma truth-lemma: VALID [DERIVED]")));
+    // Forcing-sat lemmas (from model-theoretic infrastructure)
+    assert!(results.iter().any(|r| r.contains("Lemma forcing-sat-ext: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma forcing-sat-empty: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma forcing-sat-pair: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma forcing-sat-union: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma forcing-sat-inf: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma forcing-sat-sep: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma forcing-sat-reg: VALID [DERIVED]")));
+    // Forcing-sat hard lemmas (from CCC/nice-names/transfer infrastructure)
+    assert!(results.iter().any(|r| r.contains("Lemma forcing-sat-power: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma forcing-sat-rep: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma forcing-sat-choice: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma forcing-preserves-zfc: VALID [DERIVED]")));
+    // Cohen infrastructure lemmas
+    assert!(results.iter().any(|r| r.contains("Lemma cohen-has-ccc: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma generic-existence: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma cohen-adds-reals: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma ccc-preserves-cardinals: VALID [DERIVED]")));
+    // Cohen theorem (derived from forcing-preserves + generic + cohen-adds-reals)
+    assert!(results.iter().any(|r| r.contains("Lemma cohen-theorem: VALID [DERIVED]")));
     // Tier 1: pure axiom derivations
     assert!(results.iter().any(|r| r.contains("Proof zero-in-omega: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof empty-in-power: VALID")));
@@ -1181,7 +1213,7 @@ fn zfc_honest_example() {
     assert!(results.iter().any(|r| r.contains("Proof cantor-theorem: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof continuum-uncountable: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof id-bij: VALID")));
-    // Tier 3: architecture (admitted lemmas)
+    // Tier 3: architecture (all derived)
     assert!(results.iter().any(|r| r.contains("Proof godel-consistency: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof cohen-consistency: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof ch-independent: VALID")));
@@ -1208,4 +1240,40 @@ fn lemma_demo_example() {
     assert!(results.iter().any(|r| r.contains("Proof use-top-theorem: VALID")));
     // Tier 5: modus ponens as lemma
     assert!(results.iter().any(|r| r.contains("Lemma mp: VALID [DERIVED]")));
+}
+
+#[test]
+fn self_representation_example() {
+    let results = check_example("examples/self.omega");
+    assert!(results.iter().any(|r| r.contains("Theory OmegaSelf: registered OK")));
+    // ACT I: Checker
+    assert!(results.iter().any(|r| r.contains("Proof check-top-intro: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof check-assume: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof check-and-intro: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof check-and-elim-l: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof check-modus-ponens: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof check-and-comm: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof check-and-assoc: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof reject-and-elim-on-top: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof reject-propagation: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof reject-mp-non-imp: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof reject-mp-mismatch: VALID")));
+    // ACT II: Solver
+    assert!(results.iter().any(|r| r.contains("Proof auto-identity: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof auto-and-comm: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof auto-and-assoc: VALID")));
+    // ACT III: Soundness link
+    assert!(results.iter().any(|r| r.contains("Proof true-and-comm: VALID")));
+    // ACT IV: Arithmetic
+    assert!(results.iter().any(|r| r.contains("Theory OmegaArith: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof arith-refl-zero: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof arith-succ-cong: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof arith-one-plus-one: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof arith-two-plus-two: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof arith-two-times-three: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof arith-reject-one-neq-two: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof true-two-plus-two: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof true-three-times-three: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof true-nested-computation: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof true-two-times-three: VALID")));
 }
