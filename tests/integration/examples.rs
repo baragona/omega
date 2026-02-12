@@ -1159,6 +1159,27 @@ fn zfc_independence_example() {
 fn zfc_honest_example() {
     let results = check_example("examples/zfc-honest.omega");
     assert!(results.iter().any(|r| r.contains("Theory CH-Honest: registered OK")));
+    // Phase 9: derived from pure logic (bic-absurd) and factored axioms
+    assert!(results.iter().any(|r| r.contains("Lemma bic-absurd: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma cohen-is-poset: VALID [DERIVED]")));
+    // Phase 9: L-construction infrastructure (from Def operator)
+    assert!(results.iter().any(|r| r.contains("Lemma L-contains-empty: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma L-contains-omega: VALID [DERIVED]")));
+    // Phase 9: absoluteness from Δ₀ general principle
+    assert!(results.iter().any(|r| r.contains("Lemma abs-ext: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma abs-reg: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma abs-empty: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma abs-inf: VALID [DERIVED]")));
+    // Phase 9: satisfaction bridge (syntax/semantics separation)
+    assert!(results.iter().any(|r| r.contains("Lemma models-zfc-contains-empty: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma models-zfc-contains-omega: VALID [DERIVED]")));
+    // Phase 10: ordinal definitions (empty-ordinal, succ-ordinal from transitive-def + ordinal-def)
+    assert!(results.iter().any(|r| r.contains("Lemma empty-ordinal: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma succ-ordinal: VALID [DERIVED]")));
+    // Phase 10: DEF-CLOSURE factoring (general principle + classification facts)
+    assert!(results.iter().any(|r| r.contains("Lemma def-closed-sat-pair: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma def-closed-sat-union: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma def-closed-sat-sep: VALID [DERIVED]")));
     // Cantor lemma chain (proved from axioms via Cut)
     assert!(results.iter().any(|r| r.contains("Lemma diag-in-power: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma diag-contradiction: VALID [DERIVED]")));
@@ -1172,6 +1193,10 @@ fn zfc_honest_example() {
     assert!(results.iter().any(|r| r.contains("Lemma L-sat-inf: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma L-sat-sep: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma L-sat-reg: VALID [DERIVED]")));
+    // Decomposition lemmas: L properties from fine-grained sub-results
+    assert!(results.iter().any(|r| r.contains("Lemma L-has-condensation: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma L-has-reflection: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma L-has-definable-wellorder: VALID [DERIVED]")));
     // L-sat hard lemmas (from condensation/reflection/wellorder infrastructure)
     assert!(results.iter().any(|r| r.contains("Lemma L-sat-power: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma L-sat-rep: VALID [DERIVED]")));
@@ -1197,6 +1222,10 @@ fn zfc_honest_example() {
     assert!(results.iter().any(|r| r.contains("Lemma forcing-sat-rep: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma forcing-sat-choice: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma forcing-preserves-zfc: VALID [DERIVED]")));
+    // Decomposition lemmas: Cohen/forcing from fine-grained sub-results
+    assert!(results.iter().any(|r| r.contains("Lemma delta-system-ccc: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma rasiowa-sikorski: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma ccc-no-cardinal-collapse: VALID [DERIVED]")));
     // Cohen infrastructure lemmas
     assert!(results.iter().any(|r| r.contains("Lemma cohen-has-ccc: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma generic-existence: VALID [DERIVED]")));
