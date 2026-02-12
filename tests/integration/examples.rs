@@ -1159,12 +1159,17 @@ fn zfc_independence_example() {
 fn zfc_honest_example() {
     let results = check_example("examples/zfc-honest.omega");
     assert!(results.iter().any(|r| r.contains("Theory CH-Honest: registered OK")));
+    // Cantor lemma chain (proved from axioms via Cut)
+    assert!(results.iter().any(|r| r.contains("Lemma diag-in-power: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma diag-contradiction: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma cantor-no-surj: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma cantor: VALID [DERIVED]")));
     // Tier 1: pure axiom derivations
     assert!(results.iter().any(|r| r.contains("Proof zero-in-omega: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof empty-in-power: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof self-in-power: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof kpair-injective: VALID")));
-    // Tier 2: Cantor derived
+    // Tier 2: Cantor derived (uses lemmas as rules)
     assert!(results.iter().any(|r| r.contains("Proof cantor-theorem: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof continuum-uncountable: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof id-bij: VALID")));
