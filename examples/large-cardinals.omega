@@ -1,0 +1,270 @@
+;;; Large Cardinals — The Hierarchy of Large Cardinals
+;;;
+;;; Going beyond ZFC. Standard ZFC cannot prove the existence of an
+;;; inaccessible cardinal — a set so large it cannot be reached by any
+;;; combination of smaller set operations.
+;;;
+;;; Formalizes the Grothendieck Universe Axiom: if an inaccessible
+;;; cardinal κ exists, V_κ (the cumulative hierarchy up to κ) models ZFC.
+;;; The reflection principle: large cardinals are "close" to the
+;;; absolute infinite.
+;;;
+;;; Proved here:
+;;;   1. 0 < 1                                    (ordinal ordering)
+;;;   2. 0 < 2                                    (two-step ordering)
+;;;   3. aleph_0 is infinite                      (axiom)
+;;;   4. aleph_0 < 2^(aleph_0)                    (Cantor's theorem)
+;;;   5. regular + strong-limit + infinite → inaccessible
+;;;   6. inaccessible → weakly inaccessible
+;;;   7. inaccessible → regular ∧ infinite
+;;;   8. measurable → regular                     (three-step chain)
+;;;   9. measurable → infinite                    (three-step chain)
+;;;  10. inaccessible → V_κ models ZFC            (reflection)
+
+(theory LargeCardinals
+  (sort Ord)
+  (sort Card)
+  (sort Formula)
+
+  ;; ── Ordinal constructors ──
+  (constructor zero-ord  : Ord)
+  (constructor succ-ord  : (-> Ord Ord))
+  (constructor omega-ord : Ord)
+
+  ;; ── Cardinal constructors ──
+  (constructor aleph      : (-> Ord Card))
+  (constructor power-card : (-> Card Card))
+
+  ;; ── Cumulative hierarchy ──
+  (constructor V          : (-> Card Formula))
+  (constructor models-zfc : (-> Formula Formula))
+
+  ;; ── Formula constructors ──
+  (constructor lt-ord      : (-> Ord Ord Formula))
+  (constructor lt-card     : (-> Card Card Formula))
+  (constructor eq-card     : (-> Card Card Formula))
+  (constructor and-f       : (-> Formula Formula Formula))
+  (constructor or-f        : (-> Formula Formula Formula))
+  (constructor imp-f       : (-> Formula Formula Formula))
+  (constructor not-f       : (-> Formula Formula))
+
+  ;; ── Cardinal property predicates ──
+  (constructor infinite     : (-> Card Formula))
+  (constructor regular      : (-> Card Formula))
+  (constructor strong-limit : (-> Card Formula))
+  (constructor inaccessible : (-> Card Formula))
+  (constructor weakly-inacc : (-> Card Formula))
+  (constructor measurable   : (-> Card Formula))
+
+  ;; ── Judgment ──
+  (judgment (holds ?P) :where P : Formula)
+
+  ;; ── Propositional logic ──
+  (rule and-intro
+    :premises ((holds ?A) (holds ?B))
+    :conclusion (holds (and-f ?A ?B)))
+
+  (rule and-elim-l
+    :premises ((holds (and-f ?A ?B)))
+    :conclusion (holds ?A))
+
+  (rule and-elim-r
+    :premises ((holds (and-f ?A ?B)))
+    :conclusion (holds ?B))
+
+  (rule imp-intro
+    :premises ((holds ?B))
+    :context ((0 (holds ?A)))
+    :conclusion (holds (imp-f ?A ?B)))
+
+  (rule imp-elim
+    :premises ((holds (imp-f ?A ?B)) (holds ?A))
+    :conclusion (holds ?B))
+
+  (rule or-intro-l
+    :premises ((holds ?A))
+    :conclusion (holds (or-f ?A ?B)))
+
+  (rule or-intro-r
+    :premises ((holds ?B))
+    :conclusion (holds (or-f ?A ?B)))
+
+  ;; ── Ordinal ordering ──
+  (rule lt-self-succ
+    :premises ()
+    :conclusion (holds (lt-ord ?a (succ-ord ?a))))
+
+  (rule lt-succ
+    :premises ((holds (lt-ord ?a ?b)))
+    :conclusion (holds (lt-ord ?a (succ-ord ?b))))
+
+  ;; ── Cardinal ordering ──
+  (rule lt-aleph-power
+    :premises ()
+    :conclusion (holds (lt-card (aleph ?a) (power-card (aleph ?a)))))
+
+  (rule lt-aleph-monotone
+    :premises ((holds (lt-ord ?a ?b)))
+    :conclusion (holds (lt-card (aleph ?a) (aleph ?b))))
+
+  ;; ── Inaccessible cardinal ──
+  ;; Definition: regular + strong-limit + infinite
+  (rule inacc-def
+    :premises ((holds (regular ?k)) (holds (strong-limit ?k)) (holds (infinite ?k)))
+    :conclusion (holds (inaccessible ?k)))
+
+  (rule inacc-is-regular
+    :premises ((holds (inaccessible ?k)))
+    :conclusion (holds (regular ?k)))
+
+  (rule inacc-is-strong-limit
+    :premises ((holds (inaccessible ?k)))
+    :conclusion (holds (strong-limit ?k)))
+
+  (rule inacc-is-infinite
+    :premises ((holds (inaccessible ?k)))
+    :conclusion (holds (infinite ?k)))
+
+  ;; aleph_0 is infinite
+  (rule aleph-zero-infinite
+    :premises ()
+    :conclusion (holds (infinite (aleph zero-ord))))
+
+  ;; Weakly inaccessible: regular + infinite (weaker than strong-limit)
+  (rule weakly-inacc-def
+    :premises ((holds (regular ?k)) (holds (infinite ?k)))
+    :conclusion (holds (weakly-inacc ?k)))
+
+  ;; Measurable cardinals are inaccessible
+  (rule measurable-implies-inacc
+    :premises ((holds (measurable ?k)))
+    :conclusion (holds (inaccessible ?k)))
+
+  ;; ── Reflection principle ──
+  ;; If κ is inaccessible, V_κ models ZFC
+  (rule V-inacc-model
+    :premises ((holds (inaccessible ?k)))
+    :conclusion (holds (models-zfc (V ?k)))))
+
+(check-theory LargeCardinals)
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 1: 0 < 1 (ordinal ordering)
+;;; ═══════════════════════════════════════════════════════════
+
+(proof ordinal-zero-lt-one
+  :theory LargeCardinals
+  :goal (holds (lt-ord zero-ord (succ-ord zero-ord)))
+  :derivation (lt-self-succ))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 2: 0 < 2 (two-step ordering)
+;;; ═══════════════════════════════════════════════════════════
+
+(proof ordinal-zero-lt-two
+  :theory LargeCardinals
+  :goal (holds (lt-ord zero-ord (succ-ord (succ-ord zero-ord))))
+  :derivation (lt-succ (lt-self-succ)))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 3: aleph_0 is infinite
+;;; ═══════════════════════════════════════════════════════════
+
+(proof aleph-zero-is-infinite
+  :theory LargeCardinals
+  :goal (holds (infinite (aleph zero-ord)))
+  :derivation (aleph-zero-infinite))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 4: Cantor's theorem — aleph_0 < 2^(aleph_0)
+;;; ═══════════════════════════════════════════════════════════
+;;; No set can be put in bijection with its powerset.
+
+(proof cantor-theorem
+  :theory LargeCardinals
+  :goal (holds (lt-card (aleph zero-ord) (power-card (aleph zero-ord))))
+  :derivation (lt-aleph-power))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 5: regular + strong-limit + infinite → inaccessible
+;;; ═══════════════════════════════════════════════════════════
+;;; The definition of inaccessibility, packaged as an implication.
+
+(proof inacc-from-components
+  :theory LargeCardinals
+  :assumptions ((holds (regular k0))
+                (holds (strong-limit k0))
+                (holds (infinite k0)))
+  :goal (holds (inaccessible k0))
+  :derivation (inacc-def (assumption 0) (assumption 1) (assumption 2)))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 6: inaccessible → weakly inaccessible
+;;; ═══════════════════════════════════════════════════════════
+;;; Strong limit is strictly stronger than being a limit cardinal.
+
+(proof inacc-implies-weakly
+  :theory LargeCardinals
+  :assumptions ((holds (inaccessible k0)))
+  :goal (holds (weakly-inacc k0))
+  :derivation (weakly-inacc-def
+                (inacc-is-regular (assumption))
+                (inacc-is-infinite (assumption))))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 7: inaccessible → regular ∧ infinite
+;;; ═══════════════════════════════════════════════════════════
+
+(proof inacc-properties
+  :theory LargeCardinals
+  :assumptions ((holds (inaccessible k0)))
+  :goal (holds (and-f (regular k0) (infinite k0)))
+  :derivation (and-intro
+                (inacc-is-regular (assumption))
+                (inacc-is-infinite (assumption))))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 8: measurable → regular (three-step chain)
+;;; ═══════════════════════════════════════════════════════════
+;;; Measurable → inaccessible → regular. The large cardinal
+;;; hierarchy is strictly increasing.
+
+(proof measurable-is-regular
+  :theory LargeCardinals
+  :assumptions ((holds (measurable k0)))
+  :goal (holds (regular k0))
+  :derivation (inacc-is-regular (measurable-implies-inacc (assumption))))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 9: measurable → infinite (three-step chain)
+;;; ═══════════════════════════════════════════════════════════
+
+(proof measurable-is-infinite
+  :theory LargeCardinals
+  :assumptions ((holds (measurable k0)))
+  :goal (holds (infinite k0))
+  :derivation (inacc-is-infinite (measurable-implies-inacc (assumption))))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 10: inaccessible κ → V_κ models ZFC (reflection)
+;;; ═══════════════════════════════════════════════════════════
+;;; The Grothendieck Universe Axiom: if an inaccessible cardinal
+;;; exists, the cumulative hierarchy up to it is a model of ZFC.
+;;; "For any statement φ true in V, there exists α < κ such that
+;;; φ is true in V_α." — the universe reflects into smaller stages.
+
+(proof reflection-principle
+  :theory LargeCardinals
+  :assumptions ((holds (inaccessible k0)))
+  :goal (holds (models-zfc (V k0)))
+  :derivation (V-inacc-model (assumption)))

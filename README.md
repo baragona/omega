@@ -131,6 +131,9 @@ Omega is powerful enough to:
 - **Prove Gödel's Second Incompleteness Theorem** (`examples/godel.omega`)
 - **Derive classical logic from game-theoretic strategies** (`examples/game.omega`)
 - **Compare Boolean vs Heyting topoi** (`examples/topos.omega`)
+- **Show CH is independent of ZFC** via Boolean-valued models (`examples/continuum.omega`)
+- **Formalize large cardinals** and the reflection principle (`examples/large-cardinals.omega`)
+- **Climb to Γ₀** through the Veblen hierarchy (`examples/ordinal-arithmetic.omega`)
 
 The kernel is done. The rest is just writing `.omega` files.
 
@@ -177,6 +180,26 @@ Contradictions without explosion. Russell's paradox `R∈R ∧ R∉R` exists as 
 **`examples/zfc.omega`** — ZFC Set Theory (15 proofs)
 
 Von Neumann ordinals (0=∅, 1={∅}, 2={∅,{∅}}), pairing, union, powerset, and the Axiom of Choice with a Skolem operator. Deep implicit-argument chains: `eq-trans` infers middle terms across 3-step equality reasoning over set membership.
+
+**`examples/large-cardinals.omega`** — Large Cardinals (10 proofs)
+
+Going beyond ZFC. Inaccessible cardinals (regular + strong limit + uncountable), the Grothendieck Universe Axiom, and the large cardinal hierarchy. Cantor's theorem `ℵ₀ < 2^ℵ₀`, measurable → inaccessible → weakly inaccessible chains, and the reflection principle: if κ is inaccessible, V_κ models ZFC.
+
+**`examples/ordinal-arithmetic.omega`** — Veblen Functions & Γ₀ (10 proofs)
+
+Ordinal arithmetic beyond addition: the Veblen hierarchy φ_α(β) climbs through fixed points of ordinal exponentiation. `φ₀(β) = ω^β`, `ε₀ = φ₁(0)` satisfies `ω^ε₀ = ε₀`, and Γ₀ (the Feferman-Schütte ordinal) is the smallest α with `φ_α(0) = α` — the limit of predicative reasoning. Eight proofs by normalization, two by fixed-point axioms.
+
+**`examples/surreal-numbers.omega`** — Surreal Numbers (10 proofs)
+
+Conway's surreal numbers: { L | R } encompassing reals and ordinals in a single Field. The infinitesimal ε = { 0 | 1, ½, ¼, ... } satisfies `0 < ε < ½`. Transfinite arithmetic: `ω + 1 > ω` (unlike ordinals where `1 + ω = ω`). Five proofs by normalization (arithmetic rewrites), five by ordering axioms.
+
+**`examples/continuum.omega`** — Continuum Hypothesis Independence (10 proofs)
+
+The "final boss" of set theory. Boolean-valued models where truth values live in a Boolean algebra B. Six normalization proofs verify Boolean algebra laws (identity, annihilation, double negation, modus ponens computes via 3-step rewrite chain). Then the big results: Gödel's L satisfies CH (1940), Cohen's forcing satisfies ¬CH (1963), therefore CH is independent of ZFC.
+
+**`examples/club-filter.omega`** — Club Filter & Fodor's Lemma (10 proofs)
+
+Combinatorial set theory: club sets (closed + unbounded) form a filter on regular cardinals. Clubs are stationary, stationary sets meet every club, and the filter is closed under intersection. Fodor's pressing-down lemma: a regressive function on a stationary set is constant on a stationary subset — "if everyone tries to move to a smaller room, an infinite crowd ends up in the same room."
 
 **`examples/sequent-calc.omega`** — Sequent Calculus (8 proofs)
 

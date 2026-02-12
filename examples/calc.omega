@@ -1,0 +1,263 @@
+;;; Verified REPL Calculator — All Computation in Omega
+;;;
+;;; Every arithmetic operation, expression evaluator, and control flow
+;;; construct is defined as rewrite rules and verified with proofs.
+;;; Rust serves only as I/O boundary (parsing + printing).
+;;;
+;;; When compiled with `omega kompile`, this generates:
+;;;   - Enums: Nat, Bool, Expr
+;;;   - Trait: CalcEffects { fn eff_print(&mut self, nat: Nat) }
+;;;   - Functions: add, mul, sub, pow, fact, is_zero, lt,
+;;;               if_nat, bool_to_nat, min, max, eval, run
+;;;
+;;; 34 rewrite rules, 16 correctness proofs.
+
+(theory Calc
+
+  ;; ══════════════════════════════════════════════
+  ;; NATURAL NUMBERS (Peano)
+  ;; ══════════════════════════════════════════════
+  (sort Nat)
+  (constructor z : Nat)
+  (constructor s : (-> Nat Nat))
+
+  ;; ── Addition ──
+  (constructor add : (-> Nat Nat Nat))
+  (rewrite add-z (add z ?m) ?m)
+  (rewrite add-s (add (s ?n) ?m) (s (add ?n ?m)))
+
+  ;; ── Multiplication ──
+  (constructor mul : (-> Nat Nat Nat))
+  (rewrite mul-z (mul z ?m) z)
+  (rewrite mul-s (mul (s ?n) ?m) (add ?m (mul ?n ?m)))
+
+  ;; ── Truncated subtraction (monus) ──
+  (constructor sub : (-> Nat Nat Nat))
+  (rewrite sub-z1 (sub z ?m) z)
+  (rewrite sub-z2 (sub ?n z) ?n)
+  (rewrite sub-s  (sub (s ?n) (s ?m)) (sub ?n ?m))
+
+  ;; ── Exponentiation ──
+  (constructor pow : (-> Nat Nat Nat))
+  (rewrite pow-z (pow ?n z) (s z))
+  (rewrite pow-s (pow ?n (s ?m)) (mul ?n (pow ?n ?m)))
+
+  ;; ── Factorial ──
+  (constructor fact : (-> Nat Nat))
+  (rewrite fact-z (fact z) (s z))
+  (rewrite fact-s (fact (s ?n)) (mul (s ?n) (fact ?n)))
+
+  ;; ══════════════════════════════════════════════
+  ;; BOOLEANS + COMPARISON
+  ;; ══════════════════════════════════════════════
+  (sort Bool)
+  (constructor true  : Bool)
+  (constructor false : Bool)
+
+  ;; ── Zero test ──
+  (constructor is-zero : (-> Nat Bool))
+  (rewrite iz-z (is-zero z) true)
+  (rewrite iz-s (is-zero (s ?n)) false)
+
+  ;; ── Less-than ──
+  (constructor lt : (-> Nat Nat Bool))
+  (rewrite lt-zz (lt z z) false)
+  (rewrite lt-zs (lt z (s ?m)) true)
+  (rewrite lt-sz (lt (s ?n) z) false)
+  (rewrite lt-ss (lt (s ?n) (s ?m)) (lt ?n ?m))
+
+  ;; ══════════════════════════════════════════════
+  ;; CONTROL FLOW
+  ;; ══════════════════════════════════════════════
+
+  ;; ── Conditional ──
+  (constructor if-nat : (-> Bool Nat Nat Nat))
+  (rewrite if-t (if-nat true  ?x ?y) ?x)
+  (rewrite if-f (if-nat false ?x ?y) ?y)
+
+  ;; ── Bool → Nat (for comparison results) ──
+  (constructor bool-to-nat : (-> Bool Nat))
+  (rewrite btn-t (bool-to-nat true)  (s z))
+  (rewrite btn-f (bool-to-nat false) z)
+
+  ;; ── Min / Max (derived) ──
+  (constructor min : (-> Nat Nat Nat))
+  (rewrite min-def (min ?a ?b) (if-nat (lt ?a ?b) ?a ?b))
+
+  (constructor max : (-> Nat Nat Nat))
+  (rewrite max-def (max ?a ?b) (if-nat (lt ?a ?b) ?b ?a))
+
+  ;; ══════════════════════════════════════════════
+  ;; EXPRESSION AST + EVALUATOR
+  ;; ══════════════════════════════════════════════
+  (sort Expr)
+  (constructor lit      : (-> Nat Expr))
+  (constructor add-expr : (-> Expr Expr Expr))
+  (constructor mul-expr : (-> Expr Expr Expr))
+  (constructor sub-expr : (-> Expr Expr Expr))
+  (constructor pow-expr : (-> Expr Expr Expr))
+  (constructor fact-expr : (-> Expr Expr))
+  (constructor if-expr  : (-> Expr Expr Expr Expr))
+  (constructor lt-expr  : (-> Expr Expr Expr))
+  (constructor min-expr : (-> Expr Expr Expr))
+  (constructor max-expr : (-> Expr Expr Expr))
+
+  (constructor eval : (-> Expr Nat))
+  (rewrite ev-lit  (eval (lit ?n))           ?n)
+  (rewrite ev-add  (eval (add-expr ?a ?b))   (add (eval ?a) (eval ?b)))
+  (rewrite ev-mul  (eval (mul-expr ?a ?b))   (mul (eval ?a) (eval ?b)))
+  (rewrite ev-sub  (eval (sub-expr ?a ?b))   (sub (eval ?a) (eval ?b)))
+  (rewrite ev-pow  (eval (pow-expr ?a ?b))   (pow (eval ?a) (eval ?b)))
+  (rewrite ev-fact (eval (fact-expr ?a))      (fact (eval ?a)))
+  (rewrite ev-if   (eval (if-expr ?c ?t ?f)) (if-nat (is-zero (eval ?c)) (eval ?f) (eval ?t)))
+  (rewrite ev-lt   (eval (lt-expr ?a ?b))    (bool-to-nat (lt (eval ?a) (eval ?b))))
+  (rewrite ev-min  (eval (min-expr ?a ?b))   (min (eval ?a) (eval ?b)))
+  (rewrite ev-max  (eval (max-expr ?a ?b))   (max (eval ?a) (eval ?b)))
+
+  ;; ══════════════════════════════════════════════
+  ;; EFFECT LAYER
+  ;; ══════════════════════════════════════════════
+  (sort Effect)
+  (constructor eff-print : (-> Nat Effect))
+
+  (constructor run : (-> Expr Effect))
+  (rewrite run-def (run ?e) (eff-print (eval ?e)))
+
+  ;; ══════════════════════════════════════════════
+  ;; EQUALITY (for proofs)
+  ;; ══════════════════════════════════════════════
+  (sort Prop)
+  (constructor eq : (-> Nat Nat Prop))
+  (judgment (proves ?P) :where P : Prop)
+  (rule eq-refl :premises () :conclusion (proves (eq ?a ?a))))
+
+(check-theory Calc)
+
+;; ══════════════════════════════════════════════
+;; PROOFS — Pure Arithmetic
+;; ══════════════════════════════════════════════
+
+;; 1. 2 + 3 = 5
+(proof add-2-3
+  :theory Calc
+  :goal (proves (eq (add (s (s z)) (s (s (s z)))) (s (s (s (s (s z)))))))
+  :derivation (eq-refl))
+
+;; 2. 2 * 3 = 6
+(proof mul-2-3
+  :theory Calc
+  :goal (proves (eq (mul (s (s z)) (s (s (s z)))) (s (s (s (s (s (s z))))))))
+  :derivation (eq-refl))
+
+;; 3. 5 - 3 = 2
+(proof sub-5-3
+  :theory Calc
+  :goal (proves (eq (sub (s (s (s (s (s z))))) (s (s (s z)))) (s (s z))))
+  :derivation (eq-refl))
+
+;; 4. 3 - 5 = 0 (monus)
+(proof sub-3-5
+  :theory Calc
+  :goal (proves (eq (sub (s (s (s z))) (s (s (s (s (s z)))))) z))
+  :derivation (eq-refl))
+
+;; 5. 2^3 = 8
+(proof pow-2-3
+  :theory Calc
+  :goal (proves (eq (pow (s (s z)) (s (s (s z)))) (s (s (s (s (s (s (s (s z))))))))))
+  :derivation (eq-refl))
+
+;; 6. 4! = 24
+(proof fact-4
+  :theory Calc
+  :goal (proves (eq (fact (s (s (s (s z)))))
+    (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s z))))))))))))))))))))))))))
+  :derivation (eq-refl))
+
+;; ══════════════════════════════════════════════
+;; PROOFS — Comparison
+;; ══════════════════════════════════════════════
+
+;; 7. 2 < 5 = true
+(proof lt-true
+  :theory Calc
+  :goal (proves (eq (bool-to-nat (lt (s (s z)) (s (s (s (s (s z))))))) (s z)))
+  :derivation (eq-refl))
+
+;; 8. 5 < 2 = false
+(proof lt-false
+  :theory Calc
+  :goal (proves (eq (bool-to-nat (lt (s (s (s (s (s z))))) (s (s z)))) z))
+  :derivation (eq-refl))
+
+;; ══════════════════════════════════════════════
+;; PROOFS — Expression Evaluation
+;; ══════════════════════════════════════════════
+
+;; 9. eval(3 + 4) = 7
+(proof eval-add
+  :theory Calc
+  :goal (proves (eq
+    (eval (add-expr (lit (s (s (s z)))) (lit (s (s (s (s z)))))))
+    (s (s (s (s (s (s (s z)))))))))
+  :derivation (eq-refl))
+
+;; 10. eval(3 * 2) = 6
+(proof eval-mul
+  :theory Calc
+  :goal (proves (eq
+    (eval (mul-expr (lit (s (s (s z)))) (lit (s (s z)))))
+    (s (s (s (s (s (s z))))))))
+  :derivation (eq-refl))
+
+;; 11. eval(2 ^ 3) = 8
+(proof eval-pow
+  :theory Calc
+  :goal (proves (eq
+    (eval (pow-expr (lit (s (s z))) (lit (s (s (s z))))))
+    (s (s (s (s (s (s (s (s z))))))))))
+  :derivation (eq-refl))
+
+;; 12. eval(fact(3)) = 6
+(proof eval-fact
+  :theory Calc
+  :goal (proves (eq
+    (eval (fact-expr (lit (s (s (s z))))))
+    (s (s (s (s (s (s z))))))))
+  :derivation (eq-refl))
+
+;; 13. eval(if 1 then 10 else 20) = 10  (nonzero = truthy)
+(proof eval-if-truthy
+  :theory Calc
+  :goal (proves (eq
+    (eval (if-expr (lit (s z))
+                   (lit (s (s (s (s (s (s (s (s (s (s z)))))))))))
+                   (lit (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s z)))))))))))))))))))))))
+    (s (s (s (s (s (s (s (s (s (s z))))))))))))
+  :derivation (eq-refl))
+
+;; 14. eval(if 0 then 10 else 20) = 20  (zero = falsy)
+(proof eval-if-falsy
+  :theory Calc
+  :goal (proves (eq
+    (eval (if-expr (lit z)
+                   (lit (s (s (s (s (s (s (s (s (s (s z)))))))))))
+                   (lit (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s z)))))))))))))))))))))))
+    (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s z))))))))))))))))))))))
+  :derivation (eq-refl))
+
+;; 15. eval(min(5, 3)) = 3
+(proof eval-min
+  :theory Calc
+  :goal (proves (eq
+    (eval (min-expr (lit (s (s (s (s (s z)))))) (lit (s (s (s z))))))
+    (s (s (s z)))))
+  :derivation (eq-refl))
+
+;; 16. eval(max(5, 3)) = 5
+(proof eval-max
+  :theory Calc
+  :goal (proves (eq
+    (eval (max-expr (lit (s (s (s (s (s z)))))) (lit (s (s (s z))))))
+    (s (s (s (s (s z)))))))
+  :derivation (eq-refl))

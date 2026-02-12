@@ -1,0 +1,316 @@
+;;; Bidirectional Type Checking: One Lambda, Two Elaborations
+;;;
+;;; In simple type checking, every term carries its type.
+;;; In bidirectional type checking, types flow in TWO directions:
+;;;
+;;;   Synthesis (⇒): the term PRODUCES its type
+;;;     "What type does this expression have?"
+;;;
+;;;   Checking (⇐): the term RECEIVES its expected type
+;;;     "Does this expression have this type?"
+;;;
+;;; The magic: a SURFACE lambda λx.body has no type annotation.
+;;; In checking mode, the expected type FILLS IN the annotation,
+;;; producing a CORE lambda λ(x:T).body with the type baked in.
+;;;
+;;; The SAME surface lambda elaborates to DIFFERENT core terms
+;;; depending on the expected type:
+;;;
+;;;   check(λx.x, Nat→Nat)   ⟹  λ(x:Nat).x
+;;;   check(λx.x, Bool→Bool) ⟹  λ(x:Bool).x
+;;;
+;;; Proved here (10 proofs):
+;;;
+;;;   Synthesis (type flows out):
+;;;    1.  zero ⇒ Nat                                 (literal)
+;;;    2.  true ⇒ Bool                                (literal)
+;;;    3.  succ(zero) ⇒ Nat                           (successor)
+;;;    4.  x:Nat ∈ Γ ⊢ x ⇒ Nat                       (variable lookup)
+;;;
+;;;   Checking (type flows in):
+;;;    5.  λx.x ⇐ Nat→Nat  ⟹  λ(x:Nat).x            (annotation filled)
+;;;    6.  λx.x ⇐ Bool→Bool  ⟹  λ(x:Bool).x          (DIFFERENT annotation!)
+;;;    7.  λx.λy.x ⇐ Nat→Bool→Nat  ⟹  λ(x:Nat).λ(y:Bool).x
+;;;
+;;;   Synthesis with elaboration:
+;;;    8.  (λx.x : Nat→Nat) ⇒ Nat→Nat                (annotation triggers check)
+;;;    9.  (λx.x : Nat→Nat)(0) ⇒ Nat                  (application)
+;;;   10.  (λx.x : Bool→Bool)(true) ⇒ Bool            (same lambda, different use)
+
+(theory BiDi
+
+  ;; ══════════════════════════════════════
+  ;; TYPES
+  ;; ══════════════════════════════════════
+
+  (sort Ty)
+  (constructor t-nat : Ty)
+  (constructor t-bool : Ty)
+  (constructor t-arr : (-> Ty Ty Ty))
+
+  ;; ══════════════════════════════════════
+  ;; NAMES
+  ;; ══════════════════════════════════════
+
+  (sort Name)
+  (constructor nx : Name)
+  (constructor ny : Name)
+  (constructor nf : Name)
+
+  ;; ══════════════════════════════════════
+  ;; SURFACE TERMS (no type annotations)
+  ;; ══════════════════════════════════════
+  ;; This is what the PROGRAMMER writes.
+
+  (sort Surf)
+  (constructor s-var : (-> Name Surf))
+  (constructor s-lam : (-> Name Surf Surf))          ;; λx. body  (NO annotation)
+  (constructor s-app : (-> Surf Surf Surf))
+  (constructor s-ann : (-> Surf Ty Surf))             ;; (e : T)  explicit annotation
+  (constructor s-zero : Surf)
+  (constructor s-succ : (-> Surf Surf))
+  (constructor s-true : Surf)
+  (constructor s-false : Surf)
+
+  ;; ══════════════════════════════════════
+  ;; CORE TERMS (fully annotated)
+  ;; ══════════════════════════════════════
+  ;; This is what the COMPILER sees after elaboration.
+
+  (sort Core)
+  (constructor c-var : (-> Name Core))
+  (constructor c-lam : (-> Name Ty Core Core))       ;; λ(x:T). body  (HAS annotation)
+  (constructor c-app : (-> Core Core Core))
+  (constructor c-zero : Core)
+  (constructor c-succ : (-> Core Core))
+  (constructor c-true : Core)
+  (constructor c-false : Core)
+
+  ;; ══════════════════════════════════════
+  ;; CONTEXTS
+  ;; ══════════════════════════════════════
+
+  (sort Ctx)
+  (constructor ctx-empty : Ctx)
+  (constructor ctx-bind : (-> Name Ty Ctx Ctx))
+
+  ;; ══════════════════════════════════════
+  ;; SYNTHESIS: Γ ⊢ s ⇒ c : T
+  ;; ══════════════════════════════════════
+  ;; Given context and surface term, PRODUCE core term and type.
+
+  (sort Infers)
+  (constructor infers : (-> Ctx Surf Core Ty Infers))
+  (judgment (synth ?j) :where j : Infers)
+
+  ;; ══════════════════════════════════════
+  ;; CHECKING: Γ ⊢ s ⇐ c : T
+  ;; ══════════════════════════════════════
+  ;; Given context, surface term, and expected type, PRODUCE core term.
+
+  (sort Checks)
+  (constructor checks : (-> Ctx Surf Core Ty Checks))
+  (judgment (check ?j) :where j : Checks)
+
+  ;; ── Synthesis rules ──
+
+  ;; Variable lookup
+  (rule i-var
+    :conclusion (synth (infers (ctx-bind ?x ?T ?G) (s-var ?x) (c-var ?x) ?T)))
+  (rule i-var-skip
+    :premises ((synth (infers ?G (s-var ?x) (c-var ?x) ?T)))
+    :conclusion (synth (infers (ctx-bind ?y ?S ?G) (s-var ?x) (c-var ?x) ?T)))
+
+  ;; Annotation: (e : T) synthesizes T by checking e against T
+  (rule i-ann
+    :premises ((check (checks ?G ?e ?c ?T)))
+    :conclusion (synth (infers ?G (s-ann ?e ?T) ?c ?T)))
+
+  ;; Application: synthesize function, check argument
+  (rule i-app
+    :premises ((synth (infers ?G ?f ?cf (t-arr ?A ?B)))
+               (check (checks ?G ?a ?ca ?A)))
+    :conclusion (synth (infers ?G (s-app ?f ?a) (c-app ?cf ?ca) ?B)))
+
+  ;; Literals
+  (rule i-zero :conclusion (synth (infers ?G s-zero c-zero t-nat)))
+  (rule i-succ
+    :premises ((check (checks ?G ?e ?c t-nat)))
+    :conclusion (synth (infers ?G (s-succ ?e) (c-succ ?c) t-nat)))
+  (rule i-true :conclusion (synth (infers ?G s-true c-true t-bool)))
+  (rule i-false :conclusion (synth (infers ?G s-false c-false t-bool)))
+
+  ;; ── Checking rules ──
+
+  ;; THE KEY RULE: Lambda in check mode fills the annotation
+  ;; s-lam(x, body) checked against (A → B) produces c-lam(x, A, body')
+  ;; The type A comes from the EXPECTED type, not the surface term!
+  (rule c-lam
+    :premises ((check (checks (ctx-bind ?x ?A ?G) ?body ?cbody ?B)))
+    :conclusion (check (checks ?G (s-lam ?x ?body) (c-lam ?x ?A ?cbody) (t-arr ?A ?B))))
+
+  ;; Mode switch: check by synthesizing and comparing types
+  (rule c-infer
+    :premises ((synth (infers ?G ?e ?c ?T)))
+    :conclusion (check (checks ?G ?e ?c ?T))))
+
+(check-theory BiDi)
+
+
+;; ════════════════════════════════════════════════════════════
+;;  SYNTHESIS (type flows out)
+;; ════════════════════════════════════════════════════════════
+
+;; ─── Proof 1: zero ⇒ Nat ───
+;; Literals synthesize their type.
+
+(proof synth-zero
+  :theory BiDi
+  :goal (synth (infers ctx-empty s-zero c-zero t-nat))
+  :derivation (i-zero))
+
+
+;; ─── Proof 2: true ⇒ Bool ───
+
+(proof synth-true
+  :theory BiDi
+  :goal (synth (infers ctx-empty s-true c-true t-bool))
+  :derivation (i-true))
+
+
+;; ─── Proof 3: succ(zero) ⇒ Nat ───
+;; succ checks its argument against Nat.
+
+(proof synth-succ
+  :theory BiDi
+  :goal (synth (infers ctx-empty (s-succ s-zero) (c-succ c-zero) t-nat))
+  :derivation (i-succ (c-infer (i-zero))))
+
+
+;; ─── Proof 4: x:Nat ∈ Γ ⊢ x ⇒ Nat ───
+;; Variable lookup in context.
+
+(proof synth-var
+  :theory BiDi
+  :goal (synth (infers (ctx-bind nx t-nat ctx-empty) (s-var nx) (c-var nx) t-nat))
+  :derivation (i-var))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  CHECKING (type flows in) — THE MAGIC
+;; ════════════════════════════════════════════════════════════
+
+;; ─── Proof 5: λx.x ⇐ Nat→Nat  ⟹  λ(x:Nat).x ───
+;; The surface lambda has NO annotation.
+;; The expected type Nat→Nat fills in x:Nat.
+
+(proof check-id-nat
+  :theory BiDi
+  :goal (check (checks ctx-empty
+    (s-lam nx (s-var nx))
+    (c-lam nx t-nat (c-var nx))
+    (t-arr t-nat t-nat)))
+  :derivation (c-lam (c-infer (i-var))))
+
+
+;; ─── Proof 6: λx.x ⇐ Bool→Bool  ⟹  λ(x:Bool).x ───
+;; THE SAME surface lambda (s-lam nx (s-var nx)),
+;; but checked against Bool→Bool produces a DIFFERENT core term!
+;; The annotation is Bool, not Nat.
+;;
+;; Surface:  λx.x        (same in proofs 5 and 6)
+;; Core 5:   λ(x:Nat).x  (type flows from Nat→Nat)
+;; Core 6:   λ(x:Bool).x (type flows from Bool→Bool)
+
+(proof check-id-bool
+  :theory BiDi
+  :goal (check (checks ctx-empty
+    (s-lam nx (s-var nx))
+    (c-lam nx t-bool (c-var nx))
+    (t-arr t-bool t-bool)))
+  :derivation (c-lam (c-infer (i-var))))
+
+
+;; ─── Proof 7: λx.λy.x ⇐ Nat→Bool→Nat ───
+;; Nested lambda: both annotations filled from expected type.
+;; Surface:  λx.λy.x  (no annotations)
+;; Core:     λ(x:Nat).λ(y:Bool).x
+;; The variable x is looked up past y in the context.
+
+(proof check-const
+  :theory BiDi
+  :goal (check (checks ctx-empty
+    (s-lam nx (s-lam ny (s-var nx)))
+    (c-lam nx t-nat (c-lam ny t-bool (c-var nx)))
+    (t-arr t-nat (t-arr t-bool t-nat))))
+  :derivation (c-lam (c-lam (c-infer (i-var-skip (i-var))))))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  SYNTHESIS + ELABORATION
+;; ════════════════════════════════════════════════════════════
+
+;; ─── Proof 8: (λx.x : Nat→Nat) ⇒ Nat→Nat ───
+;; An explicit annotation triggers check mode for the lambda,
+;; then switches back to synthesis for the result type.
+
+(proof synth-annotated
+  :theory BiDi
+  :goal (synth (infers ctx-empty
+    (s-ann (s-lam nx (s-var nx)) (t-arr t-nat t-nat))
+    (c-lam nx t-nat (c-var nx))
+    (t-arr t-nat t-nat)))
+  :derivation (i-ann (c-lam (c-infer (i-var)))))
+
+
+;; ─── Proof 9: (λx.x : Nat→Nat)(0) ⇒ Nat ───
+;; Application: synthesize the function type, check the argument.
+;; The identity function applied to zero gives zero.
+
+(proof synth-app-nat
+  :theory BiDi
+  :goal (synth (infers ctx-empty
+    (s-app (s-ann (s-lam nx (s-var nx)) (t-arr t-nat t-nat)) s-zero)
+    (c-app (c-lam nx t-nat (c-var nx)) c-zero)
+    t-nat))
+  :derivation (i-app (i-ann (c-lam (c-infer (i-var)))) (c-infer (i-zero))))
+
+
+;; ─── Proof 10: (λx.x : Bool→Bool)(true) ⇒ Bool ───
+;; The SAME lambda, annotated with Bool→Bool, applied to true.
+;; Compare with proof 9: same surface lambda, different type, different core.
+
+(proof synth-app-bool
+  :theory BiDi
+  :goal (synth (infers ctx-empty
+    (s-app (s-ann (s-lam nx (s-var nx)) (t-arr t-bool t-bool)) s-true)
+    (c-app (c-lam nx t-bool (c-var nx)) c-true)
+    t-bool))
+  :derivation (i-app (i-ann (c-lam (c-infer (i-var)))) (c-infer (i-true))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; WHAT BIDIRECTIONAL ELABORATION REVEALS
+;; ════════════════════════════════════════════════════════════
+;;
+;;   Direction    Judgment         Information flow
+;;   ──────────────────────────────────────────────────────
+;;   Synthesis    Γ ⊢ e ⇒ c : T   type flows OUT of term
+;;   Checking     Γ ⊢ e ⇐ c : T   type flows INTO term
+;;
+;;   The KEY rule is c-lam:
+;;     Γ, x:A ⊢ body ⇐ cbody : B
+;;     ──────────────────────────────────
+;;     Γ ⊢ λx.body ⇐ λ(x:A).cbody : A→B
+;;
+;;   The expected type A→B DONATES the annotation A to the lambda.
+;;   Without this rule, every lambda would need an explicit annotation.
+;;
+;;   This is how real languages work:
+;;     Haskell:  \x -> x + 1  (infers x : Int from context)
+;;     Rust:     |x| x + 1    (infers x type from context)
+;;     OCaml:    fun x -> x   (infers x type from usage)
+;;
+;;   The elaboration output (core terms) makes all types explicit,
+;;   even though the programmer never wrote them.
+;; ════════════════════════════════════════════════════════════

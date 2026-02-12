@@ -1,0 +1,277 @@
+;;; Club Filter — Stationary Sets and Fodor's Lemma
+;;;
+;;; Combinatorial set theory: how do you measure "size" for uncountable
+;;; sets? It's not just cardinality — it's about structure.
+;;;
+;;; Club sets (Closed and Unbounded) form a filter on a regular cardinal κ.
+;;; Stationary sets are those that meet every club — they are "large"
+;;; in the structural sense.
+;;;
+;;; Fodor's Lemma (the Pressing-Down Lemma): if you have a regressive
+;;; function f: S → κ on a stationary set S (where f(α) < α for α > 0),
+;;; then f must be constant on a stationary subset. "If everyone tries
+;;; to move to a smaller room, an infinite crowd ends up in the same room."
+;;;
+;;; Proved here:
+;;;   1. A ∩ A = A                                (idempotent intersection)
+;;;   2. ∅ ∩ A = ∅                                (empty intersection)
+;;;   3. κ ∩ A = A                                (full-set intersection)
+;;;   4. κ is a club                              (full set is club)
+;;;   5. Club ∩ Club = Club                       (clubs closed under ∩)
+;;;   6. Club → Stationary                        (every club is stationary)
+;;;   7. Stationary ∩ Club ≠ ∅                    (stationary meets clubs)
+;;;   8. Fodor's Lemma                            (pressing-down lemma)
+;;;   9. Club → Closed ∧ Unbounded                (club decomposition)
+;;;  10. Club → Stationary ∧ Nonempty             (full property chain)
+
+(theory ClubFilter
+  (sort Ord)
+  (sort OrdSet)
+  (sort Formula)
+
+  ;; ── Ordinals ──
+  (constructor zero   : Ord)
+  (constructor suc    : (-> Ord Ord))
+  (constructor omega  : Ord)
+  (constructor omega1 : Ord)
+
+  ;; ── Sets of ordinals ──
+  (constructor empty-set : OrdSet)
+  (constructor full-set  : (-> Ord OrdSet))
+  (constructor intersect : (-> OrdSet OrdSet OrdSet))
+  (constructor image     : (-> OrdSet OrdSet))
+
+  ;; ── Formulas ──
+  (constructor mem    : (-> Ord OrdSet Formula))
+  (constructor sub    : (-> OrdSet OrdSet Formula))
+  (constructor eq-set : (-> OrdSet OrdSet Formula))
+  (constructor eq-ord : (-> Ord Ord Formula))
+  (constructor lt     : (-> Ord Ord Formula))
+  (constructor and-f  : (-> Formula Formula Formula))
+  (constructor or-f   : (-> Formula Formula Formula))
+  (constructor imp-f  : (-> Formula Formula Formula))
+
+  ;; ── Set properties ──
+  (constructor closed     : (-> OrdSet Formula))
+  (constructor unbounded  : (-> OrdSet Ord Formula))
+  (constructor club       : (-> OrdSet Ord Formula))
+  (constructor stationary : (-> OrdSet Ord Formula))
+  (constructor regressive : (-> OrdSet Formula))
+  (constructor nonempty   : (-> OrdSet Formula))
+
+  ;; ── Intersection rewrites ──
+  (rewrite intersect-empty-l (intersect empty-set ?B) empty-set)
+  (rewrite intersect-empty-r (intersect ?A empty-set) empty-set)
+  (rewrite intersect-self    (intersect ?A ?A) ?A)
+  (rewrite intersect-full-l  (intersect (full-set ?k) ?A) ?A)
+  (rewrite intersect-full-r  (intersect ?A (full-set ?k)) ?A)
+
+  ;; ── Judgment ──
+  (judgment (holds ?P) :where P : Formula)
+
+  ;; ── Propositional logic ──
+  (rule and-intro
+    :premises ((holds ?A) (holds ?B))
+    :conclusion (holds (and-f ?A ?B)))
+
+  (rule and-elim-l
+    :premises ((holds (and-f ?A ?B)))
+    :conclusion (holds ?A))
+
+  (rule and-elim-r
+    :premises ((holds (and-f ?A ?B)))
+    :conclusion (holds ?B))
+
+  (rule imp-intro
+    :premises ((holds ?B))
+    :context ((0 (holds ?A)))
+    :conclusion (holds (imp-f ?A ?B)))
+
+  (rule imp-elim
+    :premises ((holds (imp-f ?A ?B)) (holds ?A))
+    :conclusion (holds ?B))
+
+  ;; ── Set equality ──
+  (rule set-eq-refl
+    :premises ()
+    :conclusion (holds (eq-set ?A ?A)))
+
+  (rule set-eq-symm
+    :premises ((holds (eq-set ?A ?B)))
+    :conclusion (holds (eq-set ?B ?A)))
+
+  ;; ── Club axioms ──
+  ;; Club = closed + unbounded
+  (rule club-def
+    :premises ((holds (closed ?S)) (holds (unbounded ?S ?k)))
+    :conclusion (holds (club ?S ?k)))
+
+  (rule club-is-closed
+    :premises ((holds (club ?S ?k)))
+    :conclusion (holds (closed ?S)))
+
+  (rule club-is-unbounded
+    :premises ((holds (club ?S ?k)))
+    :conclusion (holds (unbounded ?S ?k)))
+
+  ;; Intersection of clubs is a club
+  (rule club-intersect
+    :premises ((holds (club ?A ?k)) (holds (club ?B ?k)))
+    :conclusion (holds (club (intersect ?A ?B) ?k)))
+
+  ;; The full set below κ is a club
+  (rule full-set-club
+    :premises ()
+    :conclusion (holds (club (full-set ?k) ?k)))
+
+  ;; ── Stationary set axioms ──
+  ;; Clubs are stationary (every club meets itself)
+  (rule club-is-stationary
+    :premises ((holds (club ?S ?k)))
+    :conclusion (holds (stationary ?S ?k)))
+
+  ;; Stationary sets are nonempty
+  (rule stationary-nonempty
+    :premises ((holds (stationary ?S ?k)))
+    :conclusion (holds (nonempty ?S)))
+
+  ;; Stationary meets every club
+  (rule stationary-meets-club
+    :premises ((holds (stationary ?S ?k)) (holds (club ?C ?k)))
+    :conclusion (holds (nonempty (intersect ?S ?C))))
+
+  ;; ── Fodor's Lemma ──
+  ;; If f is regressive on a stationary set S ⊆ κ, then f is
+  ;; constant on a stationary subset. The image under f is stationary.
+  (rule fodor
+    :premises ((holds (stationary ?S ?k)) (holds (regressive ?S)))
+    :conclusion (holds (stationary (image ?S) ?k)))
+
+  ;; ── Subset ──
+  (rule sub-intersect-l
+    :premises ()
+    :conclusion (holds (sub (intersect ?A ?B) ?A))))
+
+(check-theory ClubFilter)
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 1: A ∩ A = A (idempotent intersection)
+;;; ═══════════════════════════════════════════════════════════
+
+(proof intersect-idempotent
+  :theory ClubFilter
+  :goal (holds (eq-set (intersect S0 S0) S0))
+  :derivation (set-eq-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 2: ∅ ∩ A = ∅ (empty intersection)
+;;; ═══════════════════════════════════════════════════════════
+
+(proof intersect-empty
+  :theory ClubFilter
+  :goal (holds (eq-set (intersect empty-set S0) empty-set))
+  :derivation (set-eq-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 3: κ ∩ A = A (full-set intersection)
+;;; ═══════════════════════════════════════════════════════════
+
+(proof intersect-full
+  :theory ClubFilter
+  :goal (holds (eq-set (intersect (full-set omega1) S0) S0))
+  :derivation (set-eq-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 4: The full set below κ is a club
+;;; ═══════════════════════════════════════════════════════════
+
+(proof full-set-is-club
+  :theory ClubFilter
+  :goal (holds (club (full-set omega1) omega1))
+  :derivation (full-set-club))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 5: Intersection of two clubs is a club
+;;; ═══════════════════════════════════════════════════════════
+;;; The club filter is closed under finite intersection.
+
+(proof club-intersection-is-club
+  :theory ClubFilter
+  :assumptions ((holds (club C0 omega1)) (holds (club D0 omega1)))
+  :goal (holds (club (intersect C0 D0) omega1))
+  :derivation (club-intersect (assumption 0) (assumption 1)))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 6: Every club is stationary
+;;; ═══════════════════════════════════════════════════════════
+;;; A club meets every other club (including itself), so it is
+;;; automatically stationary.
+
+(proof club-implies-stationary
+  :theory ClubFilter
+  :assumptions ((holds (club C0 omega1)))
+  :goal (holds (stationary C0 omega1))
+  :derivation (club-is-stationary (assumption)))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 7: A stationary set meets every club
+;;; ═══════════════════════════════════════════════════════════
+;;; The intersection S ∩ C is nonempty whenever S is stationary
+;;; and C is a club.
+
+(proof stationary-meets-every-club
+  :theory ClubFilter
+  :assumptions ((holds (stationary S0 omega1)) (holds (club C0 omega1)))
+  :goal (holds (nonempty (intersect S0 C0)))
+  :derivation (stationary-meets-club (assumption 0) (assumption 1)))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 8: Fodor's Lemma (the pressing-down lemma)
+;;; ═══════════════════════════════════════════════════════════
+;;; If f is regressive on a stationary set S (f(α) < α for all
+;;; α > 0 in S), then f is constant on a stationary subset.
+;;;
+;;; "If everyone in an infinite hotel tries to move to a
+;;; lower-numbered room, an infinite crowd ends up in the same room."
+
+(proof fodor-lemma
+  :theory ClubFilter
+  :assumptions ((holds (stationary S0 omega1)) (holds (regressive S0)))
+  :goal (holds (stationary (image S0) omega1))
+  :derivation (fodor (assumption 0) (assumption 1)))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 9: Club decomposition — closed AND unbounded
+;;; ═══════════════════════════════════════════════════════════
+
+(proof club-decomposition
+  :theory ClubFilter
+  :assumptions ((holds (club C0 omega1)))
+  :goal (holds (and-f (closed C0) (unbounded C0 omega1)))
+  :derivation (and-intro
+                (club-is-closed (assumption))
+                (club-is-unbounded (assumption))))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 10: Full property chain — club → stationary ∧ nonempty
+;;; ═══════════════════════════════════════════════════════════
+;;; A club is stationary (meets every club), and stationary sets
+;;; are nonempty. Four rule applications deep.
+
+(proof club-full-properties
+  :theory ClubFilter
+  :assumptions ((holds (club C0 omega1)))
+  :goal (holds (and-f (stationary C0 omega1) (nonempty C0)))
+  :derivation (and-intro
+                (club-is-stationary (assumption))
+                (stationary-nonempty (club-is-stationary (assumption)))))

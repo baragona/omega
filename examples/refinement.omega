@@ -1,0 +1,335 @@
+;;; Refinement Types: When Types Know More Than You Think
+;;;
+;;; A refinement type is a type PLUS a predicate:
+;;;   { x : Nat | x > 0 }   — the type of positive naturals
+;;;
+;;; The type system tracks properties that plain types can't:
+;;;   - Division is safe only when the divisor is nonzero
+;;;   - Array access is safe only when the index is in bounds
+;;;   - Pointer dereference is safe only when the pointer is non-null
+;;;
+;;; The key innovation: DECISION PROCEDURES (here, rewrite rules)
+;;; automatically discharge proof obligations.  The rewrite engine
+;;; acts as an SMT solver — it COMPUTES whether a literal is positive.
+;;;
+;;; Subtyping lattice:
+;;;   Pos  ⊂  NonZero  ⊂  Nat
+;;;
+;;; Proved here (10 proofs):
+;;;
+;;;   Subtyping lattice:
+;;;    1.  Pos <: NonZero                              (direct)
+;;;    2.  Pos <: Nat                                  (transitive)
+;;;    3.  (Nat → Pos) <: (Pos → Nat)                 (arrow variance)
+;;;
+;;;   Basic typing:
+;;;    4.  succ(zero) : Pos                            (successor is positive)
+;;;    5.  succ(zero) : Nat                            (subsumption)
+;;;    6.  succ(succ(zero)) : NonZero                  (Pos → NonZero)
+;;;
+;;;   Safe division:
+;;;    7.  div(4, 2) : Nat                             (divisor is Pos <: NonZero)
+;;;    8.  add(1, 1) : Nat                             (addition preserves Nat)
+;;;
+;;;   Decision procedures (rewrite engine = SMT solver):
+;;;    9.  check-pos(succ(zero)) = true                (decision procedure computes)
+;;;   10.  succ(zero) : Pos via decision procedure     (SMT integration)
+
+(theory RefinementTypes
+
+  ;; ══════════════════════════════════════
+  ;; VALUES
+  ;; ══════════════════════════════════════
+
+  (sort Nat)
+  (constructor z : Nat)
+  (constructor s : (-> Nat Nat))
+  (constructor add : (-> Nat Nat Nat))
+
+  (rewrite add-z (add z ?n) ?n)
+  (rewrite add-s (add (s ?m) ?n) (s (add ?m ?n)))
+
+  ;; ══════════════════════════════════════
+  ;; REFINEMENT TYPES
+  ;; ══════════════════════════════════════
+  ;; Pos     = { x : Nat | x > 0 }
+  ;; NonZero = { x : Nat | x ≠ 0 }
+  ;; For naturals these coincide, but the LATTICE matters.
+
+  (sort Ty)
+  (constructor t-nat : Ty)
+  (constructor t-pos : Ty)
+  (constructor t-nonzero : Ty)
+  (constructor t-arr : (-> Ty Ty Ty))
+
+  ;; ══════════════════════════════════════
+  ;; EXPRESSIONS
+  ;; ══════════════════════════════════════
+
+  (sort Expr)
+  (constructor e-zero : Expr)
+  (constructor e-succ : (-> Expr Expr))
+  (constructor e-add : (-> Expr Expr Expr))
+  (constructor e-div : (-> Expr Expr Expr))
+
+  ;; ══════════════════════════════════════
+  ;; DECISION PROCEDURE (rewrite engine = SMT)
+  ;; ══════════════════════════════════════
+  ;; The rewrite engine COMPUTES whether a literal is positive.
+  ;; check-pos(succ(e)) → true   (any successor is positive)
+  ;; check-pos(zero)    → false  (zero is not positive)
+
+  (sort Bool)
+  (constructor btrue : Bool)
+  (constructor bfalse : Bool)
+
+  (constructor check-pos : (-> Expr Bool))
+  (rewrite check-pos-z (check-pos e-zero) bfalse)
+  (rewrite check-pos-s (check-pos (e-succ ?e)) btrue)
+
+  ;; Truth witness: bridges computation and logic
+  (sort Witness)
+  (constructor witness : (-> Bool Witness))
+  (judgment (is-true ?w) :where w : Witness)
+  (rule w-true :conclusion (is-true (witness btrue)))
+
+  ;; ══════════════════════════════════════
+  ;; SUBTYPING
+  ;; ══════════════════════════════════════
+
+  (sort SubRel)
+  (constructor sub : (-> Ty Ty SubRel))
+  (judgment (is-sub ?s) :where s : SubRel)
+
+  (rule sub-refl :conclusion (is-sub (sub ?T ?T)))
+  (rule sub-pos-nonzero :conclusion (is-sub (sub t-pos t-nonzero)))
+  (rule sub-nonzero-nat :conclusion (is-sub (sub t-nonzero t-nat)))
+
+  ;; Transitivity (Pos <: Nat follows from Pos <: NonZero <: Nat)
+  (rule sub-trans
+    :premises ((is-sub (sub ?A ?B)) (is-sub (sub ?B ?C)))
+    :conclusion (is-sub (sub ?A ?C)))
+
+  ;; Arrow: contravariant in domain, covariant in codomain
+  (rule sub-arr
+    :premises ((is-sub (sub ?S2 ?S1)) (is-sub (sub ?T1 ?T2)))
+    :conclusion (is-sub (sub (t-arr ?S1 ?T1) (t-arr ?S2 ?T2))))
+
+  ;; ══════════════════════════════════════
+  ;; TYPING
+  ;; ══════════════════════════════════════
+
+  (sort HasType)
+  (constructor has-type : (-> Expr Ty HasType))
+  (judgment (typed ?t) :where t : HasType)
+
+  ;; Zero is Nat
+  (rule t-zero :conclusion (typed (has-type e-zero t-nat)))
+
+  ;; Successor of Nat is Nat
+  (rule t-succ-nat
+    :premises ((typed (has-type ?e t-nat)))
+    :conclusion (typed (has-type (e-succ ?e) t-nat)))
+
+  ;; Successor of Nat is Pos (any successor is positive)
+  (rule t-succ-pos
+    :premises ((typed (has-type ?e t-nat)))
+    :conclusion (typed (has-type (e-succ ?e) t-pos)))
+
+  ;; Subsumption: if e : S and S <: T, then e : T
+  (rule t-sub
+    :premises ((typed (has-type ?e ?S)) (is-sub (sub ?S ?T)))
+    :conclusion (typed (has-type ?e ?T)))
+
+  ;; Addition preserves Nat
+  (rule t-add
+    :premises ((typed (has-type ?e1 t-nat)) (typed (has-type ?e2 t-nat)))
+    :conclusion (typed (has-type (e-add ?e1 ?e2) t-nat)))
+
+  ;; SAFE DIVISION: divisor must be NonZero
+  ;; This is the whole point — the type system PREVENTS division by zero.
+  (rule t-div
+    :premises ((typed (has-type ?e1 t-nat)) (typed (has-type ?e2 t-nonzero)))
+    :conclusion (typed (has-type (e-div ?e1 ?e2) t-nat)))
+
+  ;; DECISION PROCEDURE INTEGRATION
+  ;; If check-pos(e) COMPUTES to true, then e : Pos.
+  ;; The rewrite engine acts as the SMT solver.
+  (rule t-decide-pos
+    :premises ((typed (has-type ?e t-nat))
+               (is-true (witness (check-pos ?e))))
+    :conclusion (typed (has-type ?e t-pos)))
+
+  ;; Equality (for decision procedure computation proofs)
+  (sort Eq)
+  (constructor eq : (-> Bool Bool Eq))
+  (judgment (is-eq ?e) :where e : Eq)
+  (rule eq-refl :conclusion (is-eq (eq ?a ?a))))
+
+(check-theory RefinementTypes)
+
+
+;; ════════════════════════════════════════════════════════════
+;;  SUBTYPING LATTICE
+;; ════════════════════════════════════════════════════════════
+
+;; ─── Proof 1: Pos <: NonZero ───
+;; Every positive number is nonzero.  Direct rule.
+
+(proof pos-sub-nonzero
+  :theory RefinementTypes
+  :goal (is-sub (sub t-pos t-nonzero))
+  :derivation (sub-pos-nonzero))
+
+
+;; ─── Proof 2: Pos <: Nat (via transitivity) ───
+;; Pos <: NonZero <: Nat
+;; The lattice gives us Pos <: Nat for FREE.
+;; No direct rule needed — transitivity composes the chain.
+
+(proof pos-sub-nat
+  :theory RefinementTypes
+  :goal (is-sub (sub t-pos t-nat))
+  :derivation (sub-trans (sub-pos-nonzero) (sub-nonzero-nat)))
+
+
+;; ─── Proof 3: (Nat → Pos) <: (Pos → Nat) ───
+;; Arrow types are CONTRAVARIANT in domain, COVARIANT in codomain.
+;;   Domain:   Pos <: Nat   (argument type gets WIDER)
+;;   Codomain: Pos <: Nat   (return type gets WIDER)
+;; A function accepting anything and returning positive
+;; can be used where a function accepting positive and returning anything is needed.
+
+(proof arrow-subtype
+  :theory RefinementTypes
+  :goal (is-sub (sub (t-arr t-nat t-pos)
+                     (t-arr t-pos t-nat)))
+  :derivation (sub-arr
+    (sub-trans (sub-pos-nonzero) (sub-nonzero-nat))
+    (sub-trans (sub-pos-nonzero) (sub-nonzero-nat))))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  BASIC TYPING
+;; ════════════════════════════════════════════════════════════
+
+;; ─── Proof 4: succ(zero) : Pos ───
+;; Any successor is positive.  The t-succ-pos rule captures this.
+
+(proof one-is-pos
+  :theory RefinementTypes
+  :goal (typed (has-type (e-succ e-zero) t-pos))
+  :derivation (t-succ-pos (t-zero)))
+
+
+;; ─── Proof 5: succ(zero) : Nat (via subsumption) ───
+;; succ(zero) : Pos, and Pos <: NonZero <: Nat, so succ(zero) : Nat.
+;; Subsumption lets refined types flow into general contexts.
+
+(proof one-is-nat
+  :theory RefinementTypes
+  :goal (typed (has-type (e-succ e-zero) t-nat))
+  :derivation (t-sub
+    (t-succ-pos (t-zero))
+    (sub-trans (sub-pos-nonzero) (sub-nonzero-nat))))
+
+
+;; ─── Proof 6: succ(succ(zero)) : NonZero ───
+;; 2 is Pos (by t-succ-pos), and Pos <: NonZero (by sub-pos-nonzero).
+
+(proof two-is-nonzero
+  :theory RefinementTypes
+  :goal (typed (has-type (e-succ (e-succ e-zero)) t-nonzero))
+  :derivation (t-sub
+    (t-succ-pos (t-succ-nat (t-zero)))
+    (sub-pos-nonzero)))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  SAFE DIVISION
+;; ════════════════════════════════════════════════════════════
+
+;; ─── Proof 7: div(4, 2) : Nat ───
+;; Division requires the divisor to be NonZero.
+;; 2 is Pos (t-succ-pos), and Pos <: NonZero (sub-pos-nonzero).
+;; The type system GUARANTEES no division by zero.
+;;
+;; Compare: div(4, zero) would be UNTYPEABLE.
+;; There is no rule that gives zero the type NonZero.
+
+(proof safe-div
+  :theory RefinementTypes
+  :goal (typed (has-type
+    (e-div (e-succ (e-succ (e-succ (e-succ e-zero))))
+           (e-succ (e-succ e-zero)))
+    t-nat))
+  :derivation (t-div
+    (t-succ-nat (t-succ-nat (t-succ-nat (t-succ-nat (t-zero)))))
+    (t-sub (t-succ-pos (t-succ-nat (t-zero))) (sub-pos-nonzero))))
+
+
+;; ─── Proof 8: add(1, 1) : Nat ───
+;; Addition preserves the Nat type.
+
+(proof add-one-one
+  :theory RefinementTypes
+  :goal (typed (has-type (e-add (e-succ e-zero) (e-succ e-zero)) t-nat))
+  :derivation (t-add (t-succ-nat (t-zero)) (t-succ-nat (t-zero))))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  DECISION PROCEDURES (rewrite engine = SMT solver)
+;; ════════════════════════════════════════════════════════════
+
+;; ─── Proof 9: check-pos(succ(zero)) = true ───
+;; The decision procedure COMPUTES.
+;; check-pos(e-succ(e-zero)) → btrue  (by check-pos-s rewrite)
+;; The rewrite engine is the solver.
+
+(proof decision-computes
+  :theory RefinementTypes
+  :goal (is-eq (eq (check-pos (e-succ e-zero)) btrue))
+  :derivation (eq-refl))
+
+
+;; ─── Proof 10: succ(zero) : Pos via decision procedure ───
+;; The t-decide-pos rule integrates the decision procedure:
+;;   1. We know succ(zero) : Nat    (by t-succ-nat)
+;;   2. check-pos(succ(zero)) → true  (rewrite engine computes this)
+;;   3. Therefore succ(zero) : Pos   (by t-decide-pos)
+;;
+;; This is exactly how Liquid Haskell / F* work:
+;; the SMT solver (= rewrite engine) automatically discharges
+;; the refinement predicate.
+
+(proof decide-pos-typing
+  :theory RefinementTypes
+  :goal (typed (has-type (e-succ e-zero) t-pos))
+  :derivation (t-decide-pos (t-succ-nat (t-zero)) (w-true)))
+
+
+;; ════════════════════════════════════════════════════════════
+;; WHAT REFINEMENT TYPES REVEAL
+;; ════════════════════════════════════════════════════════════
+;;
+;;   Type          Meaning                  Example
+;;   ──────────────────────────────────────────────────────
+;;   Nat           any natural              0, 1, 2, ...
+;;   Pos           { x : Nat | x > 0 }     1, 2, 3, ...
+;;   NonZero       { x : Nat | x ≠ 0 }     1, 2, 3, ...
+;;
+;;   Lattice:  Pos ⊂ NonZero ⊂ Nat
+;;
+;;   The KEY insight: the type system encodes a PROOF OBLIGATION
+;;   (divisor must be nonzero) and the DECISION PROCEDURE
+;;   (rewrite engine) automatically discharges it.
+;;
+;;   In real systems:
+;;     Liquid Haskell  →  Z3 solver checks refinements
+;;     F*              →  Z3 + normalization
+;;     Omega           →  rewrite engine = solver
+;;
+;;   The rewrite rule  check-pos(succ(e)) → true
+;;   is a DECISION PROCEDURE encoded as a computation rule.
+;;   The proof is found by RUNNING the program, not searching.
+;; ════════════════════════════════════════════════════════════

@@ -1,5 +1,6 @@
 use clap::Parser;
 use omega_driver::batch;
+use omega_driver::codegen;
 use omega_driver::repl;
 use omega_driver::session::Session;
 
@@ -23,6 +24,17 @@ enum Commands {
         /// Path to the .omega file.
         file: String,
     },
+    /// Compile a verified theory to a Rust crate.
+    Kompile {
+        /// Path to the .omega file.
+        file: String,
+        /// Theory to compile (if omitted, compiles the last registered theory).
+        #[arg(long)]
+        theory: Option<String>,
+        /// Output directory for the generated Rust crate.
+        #[arg(short, long, default_value = "out")]
+        output: String,
+    },
     /// Start an interactive REPL.
     Repl,
 }
@@ -38,6 +50,49 @@ fn main() {
                     for r in results {
                         println!("{}", r);
                     }
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Some(Commands::Kompile {
+            file,
+            theory,
+            output,
+        }) => {
+            // First, process the file to register theories
+            match batch::process_file_path(&mut session, &file) {
+                Ok(results) => {
+                    if cli.verbose {
+                        for r in &results {
+                            eprintln!("{}", r);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error processing {}: {}", file, e);
+                    std::process::exit(1);
+                }
+            }
+
+            // Determine which theory to compile
+            let theory_name = theory.unwrap_or_else(|| {
+                session
+                    .kernel
+                    .theory_names()
+                    .last()
+                    .unwrap_or(&"")
+                    .to_string()
+            });
+
+            match codegen::kompile(&session, &theory_name, &output) {
+                Ok(n) => {
+                    println!(
+                        "Compiled theory {} → {} ({} files)",
+                        theory_name, output, n
+                    );
                 }
                 Err(e) => {
                     eprintln!("Error: {}", e);

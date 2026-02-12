@@ -1,0 +1,278 @@
+;;; Coinduction & Bisimulation: Reasoning About Infinite Streams
+;;;
+;;; Induction reasons about FINITE structures (lists, trees, naturals).
+;;; Coinduction reasons about INFINITE structures (streams, processes).
+;;;
+;;; A stream is defined by its OBSERVATIONS:
+;;;   hd(s) : the first element
+;;;   tl(s) : the rest (another stream)
+;;;
+;;; Two streams are BISIMILAR when:
+;;;   1. Their heads are equal
+;;;   2. Their tails are bisimilar (COINDUCTIVE hypothesis)
+;;;
+;;; The coinductive principle: to prove bisim(s, t), we may
+;;; ASSUME bisim(s, t) when proving bisim(tl(s), tl(t)).
+;;; This is sound because observations guard the recursion.
+;;;
+;;; Proved here (10 proofs):
+;;;
+;;;   Stream observations:
+;;;    1.  hd(ones) = 1                                (head of 1,1,1,...)
+;;;    2.  hd(nats-from(0)) = 0                        (head of 0,1,2,...)
+;;;    3.  hd(map-succ(zeros)) = 1                     (succ applied to head)
+;;;    4.  hd(zip-add(ones, ones)) = 2                 (pointwise addition)
+;;;    5.  hd(tl(nats-from(0))) = 1                    (second element)
+;;;
+;;;   Bisimulation (coinductive proofs):
+;;;    6.  ones ∼ ones                                 (reflexivity)
+;;;    7.  ones ∼ const(1)                             (coinduction!)
+;;;    8.  map-succ(zeros) ∼ ones                      (coinduction!)
+;;;    9.  zeros ∼ const(0)                            (coinduction!)
+;;;   10.  zip-add(ones, zeros) ∼ ones                 (coinduction!)
+
+(theory Streams
+
+  ;; ══════════════════════════════════════
+  ;; NATURALS
+  ;; ══════════════════════════════════════
+
+  (sort Nat)
+  (constructor z : Nat)
+  (constructor s : (-> Nat Nat))
+  (constructor add : (-> Nat Nat Nat))
+
+  (rewrite add-z (add z ?n) ?n)
+  (rewrite add-s (add (s ?m) ?n) (s (add ?m ?n)))
+
+  ;; ══════════════════════════════════════
+  ;; STREAMS (defined by observations)
+  ;; ══════════════════════════════════════
+
+  (sort Stream)
+
+  ;; Observations
+  (constructor hd : (-> Stream Nat))
+  (constructor tl : (-> Stream Stream))
+
+  ;; ── Named streams ──
+
+  (constructor ones : Stream)                          ;; 1, 1, 1, ...
+  (rewrite hd-ones (hd ones) (s z))
+  (rewrite tl-ones (tl ones) ones)
+
+  (constructor zeros : Stream)                         ;; 0, 0, 0, ...
+  (rewrite hd-zeros (hd zeros) z)
+  (rewrite tl-zeros (tl zeros) zeros)
+
+  (constructor nats-from : (-> Nat Stream))            ;; n, n+1, n+2, ...
+  (rewrite hd-nats (hd (nats-from ?n)) ?n)
+  (rewrite tl-nats (tl (nats-from ?n)) (nats-from (s ?n)))
+
+  (constructor const-stream : (-> Nat Stream))         ;; n, n, n, ...
+  (rewrite hd-const (hd (const-stream ?n)) ?n)
+  (rewrite tl-const (tl (const-stream ?n)) (const-stream ?n))
+
+  ;; ── Stream combinators ──
+
+  (constructor map-succ : (-> Stream Stream))          ;; map(succ, s)
+  (rewrite hd-map-succ (hd (map-succ ?s)) (s (hd ?s)))
+  (rewrite tl-map-succ (tl (map-succ ?s)) (map-succ (tl ?s)))
+
+  (constructor zip-add : (-> Stream Stream Stream))    ;; pointwise addition
+  (rewrite hd-zip (hd (zip-add ?s ?t)) (add (hd ?s) (hd ?t)))
+  (rewrite tl-zip (tl (zip-add ?s ?t)) (zip-add (tl ?s) (tl ?t)))
+
+  ;; ══════════════════════════════════════
+  ;; EQUALITY
+  ;; ══════════════════════════════════════
+
+  (sort NatEq)
+  (constructor nat-eq : (-> Nat Nat NatEq))
+  (judgment (nats-eq ?e) :where e : NatEq)
+  (rule nat-eq-refl :conclusion (nats-eq (nat-eq ?a ?a)))
+
+  ;; ══════════════════════════════════════
+  ;; BISIMULATION (coinductive relation)
+  ;; ══════════════════════════════════════
+
+  (sort Bisim)
+  (constructor bisim : (-> Stream Stream Bisim))
+  (judgment (is-bisim ?b) :where b : Bisim)
+
+  ;; Reflexivity
+  (rule bisim-refl :conclusion (is-bisim (bisim ?s ?s)))
+
+  ;; COINDUCTION PRINCIPLE
+  ;; To prove bisim(s, t):
+  ;;   1. Show hd(s) = hd(t)
+  ;;   2. Show bisim(tl(s), tl(t)), ASSUMING bisim(s, t)
+  ;;
+  ;; The context extension gives premise 2 access to the
+  ;; coinductive hypothesis bisim(s, t).
+  (rule bisim-coind
+    :premises ((nats-eq (nat-eq (hd ?s) (hd ?t)))
+               (is-bisim (bisim (tl ?s) (tl ?t))))
+    :context ((1 (is-bisim (bisim ?s ?t))))
+    :conclusion (is-bisim (bisim ?s ?t))))
+
+(check-theory Streams)
+
+
+;; ════════════════════════════════════════════════════════════
+;;  STREAM OBSERVATIONS
+;; ════════════════════════════════════════════════════════════
+
+;; ─── Proof 1: hd(ones) = 1 ───
+;; The stream 1,1,1,... starts with 1.
+
+(proof hd-ones-is-one
+  :theory Streams
+  :goal (nats-eq (nat-eq (hd ones) (s z)))
+  :derivation (nat-eq-refl))
+
+
+;; ─── Proof 2: hd(nats-from(0)) = 0 ───
+;; The stream 0,1,2,... starts with 0.
+
+(proof hd-nats-zero
+  :theory Streams
+  :goal (nats-eq (nat-eq (hd (nats-from z)) z))
+  :derivation (nat-eq-refl))
+
+
+;; ─── Proof 3: hd(map-succ(zeros)) = 1 ───
+;; map(succ, 0,0,0,...) = 1,1,1,...
+;; hd(map-succ(zeros)) → s(hd(zeros)) → s(z) = 1
+
+(proof hd-map-succ-zeros
+  :theory Streams
+  :goal (nats-eq (nat-eq (hd (map-succ zeros)) (s z)))
+  :derivation (nat-eq-refl))
+
+
+;; ─── Proof 4: hd(zip-add(ones, ones)) = 2 ───
+;; Pointwise addition: (1,1,1,...) + (1,1,1,...) = (2,2,2,...)
+;; hd(zip-add(ones, ones)) → add(hd(ones), hd(ones)) → add(1,1) → 2
+
+(proof hd-zip-ones
+  :theory Streams
+  :goal (nats-eq (nat-eq (hd (zip-add ones ones)) (s (s z))))
+  :derivation (nat-eq-refl))
+
+
+;; ─── Proof 5: hd(tl(nats-from(0))) = 1 ───
+;; The second element of 0,1,2,... is 1.
+;; tl(nats-from(0)) → nats-from(1)
+;; hd(nats-from(1)) → 1
+
+(proof second-nat
+  :theory Streams
+  :goal (nats-eq (nat-eq (hd (tl (nats-from z))) (s z)))
+  :derivation (nat-eq-refl))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  BISIMULATION (coinductive proofs)
+;; ════════════════════════════════════════════════════════════
+
+;; ─── Proof 6: ones ∼ ones ───
+;; Reflexivity: every stream is bisimilar to itself.
+
+(proof bisim-ones-self
+  :theory Streams
+  :goal (is-bisim (bisim ones ones))
+  :derivation (bisim-refl))
+
+
+;; ─── Proof 7: ones ∼ const(1) ───
+;; The stream 1,1,1,... (defined recursively) is bisimilar to
+;; const(1) (defined as constant repetition).
+;;
+;; By coinduction:
+;;   hd(ones) = 1 = hd(const(1))  ✓
+;;   tl(ones) = ones, tl(const(1)) = const(1)
+;;   bisim(ones, const(1)) — COINDUCTIVE HYPOTHESIS!
+;;
+;; The coinductive hypothesis closes the proof:
+;; we assumed bisim(ones, const(1)) and needed bisim(ones, const(1)).
+
+(proof bisim-ones-const
+  :theory Streams
+  :goal (is-bisim (bisim ones (const-stream (s z))))
+  :derivation (bisim-coind (nat-eq-refl) (assumption)))
+
+
+;; ─── Proof 8: map-succ(zeros) ∼ ones ───
+;; Mapping successor over 0,0,0,... gives 1,1,1,...
+;;
+;; By coinduction:
+;;   hd(map-succ(zeros)) = s(hd(zeros)) = s(0) = 1 = hd(ones)  ✓
+;;   tl(map-succ(zeros)) = map-succ(tl(zeros)) = map-succ(zeros)
+;;   tl(ones) = ones
+;;   bisim(map-succ(zeros), ones) — COINDUCTIVE HYPOTHESIS!
+
+(proof bisim-map-succ
+  :theory Streams
+  :goal (is-bisim (bisim (map-succ zeros) ones))
+  :derivation (bisim-coind (nat-eq-refl) (assumption)))
+
+
+;; ─── Proof 9: zeros ∼ const(0) ───
+;; The stream 0,0,0,... equals const(0).
+
+(proof bisim-zeros-const
+  :theory Streams
+  :goal (is-bisim (bisim zeros (const-stream z)))
+  :derivation (bisim-coind (nat-eq-refl) (assumption)))
+
+
+;; ─── Proof 10: zip-add(ones, zeros) ∼ ones ───
+;; Adding zeros doesn't change a stream: ones + zeros = ones.
+;;
+;; By coinduction:
+;;   hd(zip-add(ones, zeros)) = add(hd(ones), hd(zeros))
+;;     = add(s(z), z) → s(add(z, z)) → s(z)
+;;     = hd(ones)  ✓
+;;   tl(zip-add(ones, zeros)) = zip-add(tl(ones), tl(zeros))
+;;     = zip-add(ones, zeros)
+;;   tl(ones) = ones
+;;   bisim(zip-add(ones, zeros), ones) — COINDUCTIVE HYPOTHESIS!
+
+(proof bisim-add-zero
+  :theory Streams
+  :goal (is-bisim (bisim (zip-add ones zeros) ones))
+  :derivation (bisim-coind (nat-eq-refl) (assumption)))
+
+
+;; ════════════════════════════════════════════════════════════
+;; WHAT COINDUCTION REVEALS
+;; ════════════════════════════════════════════════════════════
+;;
+;;   Induction                  Coinduction
+;;   ──────────────────────────────────────────────────────
+;;   Finite structures          Infinite structures
+;;   Lists, trees, Nat          Streams, processes, servers
+;;   Base case + step           Observation + hypothesis
+;;   Prove FOR ALL elements     Prove FOR ALL observations
+;;   "Build up from nothing"    "Unfold one step, assume rest"
+;;
+;;   The bisimulation proof pattern:
+;;     To prove bisim(s, t):
+;;       1. Show hd(s) = hd(t)           (one observation)
+;;       2. ASSUME bisim(s, t)           (coinductive hypothesis)
+;;       3. Show bisim(tl(s), tl(t))     (using the hypothesis!)
+;;
+;;   This is CIRCULAR but SOUND:
+;;     The guard (step 1) ensures we make progress.
+;;     The hypothesis (step 2) lets us handle infinity.
+;;
+;;   In Omega, the coinductive hypothesis is a CONTEXT EXTENSION:
+;;     :context ((1 (is-bisim (bisim ?s ?t))))
+;;   This adds the assumption to premise 2, making it available
+;;   via (assumption) in the derivation.
+;;
+;;   Dually: induction gives you a hypothesis for SMALLER things,
+;;   coinduction gives you a hypothesis for the SAME thing
+;;   (but only usable after one observation step).
+;; ════════════════════════════════════════════════════════════

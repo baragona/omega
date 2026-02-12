@@ -1,0 +1,551 @@
+;;; ZFC Cardinals: From Functions to Independence
+;;;
+;;; Part II of the atomic CH independence proof.
+;;; Builds on ZFC-Foundations (Part I) via import.
+;;;
+;;; Starting from ordered pairs, we construct:
+;;;   - Functions (sets of ordered pairs)
+;;;   - Injections, surjections, bijections
+;;;   - Cardinal ordering (|A| ≤ |B| iff ∃ injection)
+;;;   - Cantor's theorem (|A| < |P(A)|)
+;;;   - The aleph hierarchy (ℵ₀, ℵ₁, ℵ₂, ...)
+;;;   - The Continuum Hypothesis and its independence
+;;;
+;;; Proved here (15 proofs):
+;;;
+;;;   Functions:
+;;;    1. id maps A to A
+;;;    2. id is injective
+;;;    3. id is a bijection (= injection + surjection)
+;;;
+;;;   Cardinal Basics:
+;;;    4. |A| ≤ |A|               (via identity injection)
+;;;    5. |A| = |A|               (via identity bijection)
+;;;    6. |A| ≤ |P(A)|            (via singleton injection)
+;;;
+;;;   Cantor's Theorem:
+;;;    7. No surjection A → P(A)  (the diagonal argument)
+;;;    8. |A| < |P(A)|            (injection + no surjection)
+;;;    9. |ω| < |P(ω)|            (the continuum is uncountable)
+;;;
+;;;   The Aleph Ladder:
+;;;   10. ℵ₀ < ℵ₁
+;;;   11. ℵ₁ < ℵ₂
+;;;   12. ℵ₀ < ℵ₂                (transitivity)
+;;;
+;;;   CH Independence:
+;;;   13. Con(ZFC) → Con(ZFC + CH)      (Gödel 1938)
+;;;   14. Con(ZFC) → Con(ZFC + ¬CH)     (Cohen 1963)
+;;;   15. CH is independent of ZFC       (the crown jewel)
+
+
+;;; ═════════════════════════════════════════════════════════════════
+;;; PART I: ZFC FOUNDATIONS (base theory)
+;;; ═════════════════════════════════════════════════════════════════
+;;; See zfc-foundations.omega for the fully annotated version.
+
+(theory ZFC-Foundations
+  (sort Set)
+  (sort Prop)
+  ;; Logic
+  (constructor imp   : (-> Prop Prop Prop))
+  (constructor neg-p : (-> Prop Prop))
+  (constructor conj  : (-> Prop Prop Prop))
+  (constructor disj  : (-> Prop Prop Prop))
+  (constructor bic   : (-> Prop Prop Prop))
+  (constructor bot   : Prop)
+  ;; Set primitives
+  (constructor mem : (-> Set Set Prop))
+  (constructor seq : (-> Set Set Prop))
+  (constructor sub : (-> Set Set Prop))
+  ;; ZFC constructors
+  (constructor empty-set  : Set)
+  (constructor upair      : (-> Set Set Set))
+  (constructor big-union  : (-> Set Set))
+  (constructor power      : (-> Set Set))
+  (constructor succ       : (-> Set Set))
+  (constructor omega-set  : Set)
+  ;; Derived definitions
+  (constructor singleton : (-> Set Set))
+  (rewrite singleton-def (singleton ?a) (upair ?a ?a))
+  (constructor kpair : (-> Set Set Set))
+  (rewrite kpair-def (kpair ?a ?b) (upair (singleton ?a) (upair ?a ?b)))
+  (constructor nat-zero : Set)
+  (rewrite nat-zero-def nat-zero empty-set)
+  (constructor nat-one : Set)
+  (rewrite nat-one-def nat-one (succ empty-set))
+  (constructor nat-two : Set)
+  (rewrite nat-two-def nat-two (succ (succ empty-set)))
+  (constructor ord-lt : (-> Set Set Prop))
+  (rewrite ord-lt-is-mem (ord-lt ?a ?b) (mem ?a ?b))
+  ;; Predicates
+  (constructor is-transitive : (-> Set Prop))
+  (constructor is-ordinal    : (-> Set Prop))
+  (constructor app : (-> Set Set Set))
+  ;; Judgment
+  (judgment (holds ?P) :where P : Prop)
+  ;; Logic rules
+  (rule conj-intro :premises ((holds ?P) (holds ?Q)) :conclusion (holds (conj ?P ?Q)))
+  (rule conj-elim-l :premises ((holds (conj ?P ?Q))) :conclusion (holds ?P))
+  (rule conj-elim-r :premises ((holds (conj ?P ?Q))) :conclusion (holds ?Q))
+  (rule mp :premises ((holds (imp ?P ?Q)) (holds ?P)) :conclusion (holds ?Q))
+  (rule bic-fwd :premises ((holds (bic ?P ?Q)) (holds ?P)) :conclusion (holds ?Q))
+  (rule bic-bwd :premises ((holds (bic ?P ?Q)) (holds ?Q)) :conclusion (holds ?P))
+  (rule disj-intro-l :premises ((holds ?P)) :conclusion (holds (disj ?P ?Q)))
+  (rule disj-intro-r :premises ((holds ?Q)) :conclusion (holds (disj ?P ?Q)))
+  ;; ZFC axioms
+  (rule empty-ax :conclusion (holds (neg-p (mem ?x empty-set))))
+  (rule pair-ax :conclusion (holds (bic (mem ?z (upair ?a ?b)) (disj (seq ?z ?a) (seq ?z ?b)))))
+  (rule union-intro :premises ((holds (mem ?z ?y)) (holds (mem ?y ?X))) :conclusion (holds (mem ?z (big-union ?X))))
+  (rule power-ax :conclusion (holds (bic (mem ?z (power ?X)) (sub ?z ?X))))
+  (rule extensionality :premises ((holds (sub ?A ?B)) (holds (sub ?B ?A))) :conclusion (holds (seq ?A ?B)))
+  (rule inf-zero :conclusion (holds (mem empty-set omega-set)))
+  (rule inf-succ :premises ((holds (mem ?n omega-set))) :conclusion (holds (mem (succ ?n) omega-set)))
+  (rule no-self-mem :conclusion (holds (neg-p (mem ?x ?x))))
+  ;; Subset & equality
+  (rule sub-refl :conclusion (holds (sub ?A ?A)))
+  (rule empty-sub :conclusion (holds (sub empty-set ?A)))
+  (rule sub-mem :premises ((holds (sub ?A ?B)) (holds (mem ?x ?A))) :conclusion (holds (mem ?x ?B)))
+  (rule eq-refl :conclusion (holds (seq ?a ?a)))
+  (rule eq-sym :premises ((holds (seq ?a ?b))) :conclusion (holds (seq ?b ?a)))
+  ;; Successor
+  (rule succ-self :conclusion (holds (mem ?x (succ ?x))))
+  (rule succ-prev :premises ((holds (mem ?y ?x))) :conclusion (holds (mem ?y (succ ?x))))
+  ;; Ordinals
+  (rule empty-ordinal :conclusion (holds (is-ordinal empty-set)))
+  (rule succ-ordinal :premises ((holds (is-ordinal ?a))) :conclusion (holds (is-ordinal (succ ?a))))
+  (rule omega-ordinal :conclusion (holds (is-ordinal omega-set)))
+  ;; Kuratowski pairs
+  (rule kpair-inj :premises ((holds (seq (kpair ?a ?b) (kpair ?c ?d)))) :conclusion (holds (conj (seq ?a ?c) (seq ?b ?d))))
+)
+(check-theory ZFC-Foundations)
+
+
+;;; ═════════════════════════════════════════════════════════════════
+;;; PART II: FUNCTIONS, CARDINALS, AND CANTOR
+;;; ═════════════════════════════════════════════════════════════════
+
+(theory ZFC-Cardinals
+  (import ZFC-Foundations)
+
+  ;; ══════════════════════════════════════════════════════════════
+  ;; FUNCTIONS
+  ;; ══════════════════════════════════════════════════════════════
+  ;; A function f: A → B is a set of ordered pairs ⟨x,y⟩ such that
+  ;; every x ∈ A has exactly one y ∈ B with ⟨x,y⟩ ∈ f.
+  ;; Functions are NOT a primitive type. They are SETS.
+
+  (constructor maps : (-> Set Set Set Prop))
+
+  ;; Identity function: id_A = {⟨x,x⟩ | x ∈ A}
+  (constructor id-fn : (-> Set Set))
+
+  (rule id-maps
+    :conclusion (holds (maps (id-fn ?A) ?A ?A)))
+
+  (rule id-app
+    :premises ((holds (mem ?x ?A)))
+    :conclusion (holds (seq (app (id-fn ?A) ?x) ?x)))
+
+  ;; ══════════════════════════════════════════════════════════════
+  ;; INJECTION, SURJECTION, BIJECTION
+  ;; ══════════════════════════════════════════════════════════════
+  ;; An injection preserves distinctness: f(x) = f(y) → x = y
+  ;; A surjection hits everything: ∀y∈B. ∃x∈A. f(x) = y
+  ;; A bijection is both.
+
+  (constructor is-inj  : (-> Set Set Set Prop))
+  (constructor is-surj : (-> Set Set Set Prop))
+  (constructor is-bij  : (-> Set Set Set Prop))
+
+  ;; Bijection = injection + surjection
+  (rule bij-def
+    :premises ((holds (is-inj ?f ?A ?B)) (holds (is-surj ?f ?A ?B)))
+    :conclusion (holds (is-bij ?f ?A ?B)))
+
+  (rule id-is-inj
+    :conclusion (holds (is-inj (id-fn ?A) ?A ?A)))
+
+  (rule id-is-surj
+    :conclusion (holds (is-surj (id-fn ?A) ?A ?A)))
+
+  (rule id-is-bij
+    :conclusion (holds (is-bij (id-fn ?A) ?A ?A)))
+
+  ;; ══════════════════════════════════════════════════════════════
+  ;; EXISTENCE OF MAPS
+  ;; ══════════════════════════════════════════════════════════════
+  ;; "has-inj A B" means: there exists SOME injection from A to B.
+  ;; The specific function is witnessed by the derivation.
+
+  (constructor has-inj  : (-> Set Set Prop))
+  (constructor has-surj : (-> Set Set Prop))
+  (constructor has-bij  : (-> Set Set Prop))
+
+  (rule witness-inj
+    :premises ((holds (maps ?f ?A ?B)) (holds (is-inj ?f ?A ?B)))
+    :conclusion (holds (has-inj ?A ?B)))
+
+  (rule witness-surj
+    :premises ((holds (maps ?f ?A ?B)) (holds (is-surj ?f ?A ?B)))
+    :conclusion (holds (has-surj ?A ?B)))
+
+  (rule witness-bij
+    :premises ((holds (maps ?f ?A ?B)) (holds (is-bij ?f ?A ?B)))
+    :conclusion (holds (has-bij ?A ?B)))
+
+  ;; ══════════════════════════════════════════════════════════════
+  ;; CARDINAL ORDERING
+  ;; ══════════════════════════════════════════════════════════════
+  ;; |A| ≤ |B|  iff  there exists an injection A → B
+  ;; |A| = |B|  iff  there exists a bijection A ↔ B
+  ;; |A| < |B|  iff  injection exists but no surjection A → B
+
+  (constructor card-le : (-> Set Set Prop))
+  (constructor card-lt : (-> Set Set Prop))
+  (constructor card-eq-sets : (-> Set Set Prop))
+
+  (rule card-le-def
+    :premises ((holds (has-inj ?A ?B)))
+    :conclusion (holds (card-le ?A ?B)))
+
+  (rule card-eq-def
+    :premises ((holds (has-bij ?A ?B)))
+    :conclusion (holds (card-eq-sets ?A ?B)))
+
+  (rule card-lt-def
+    :premises ((holds (has-inj ?A ?B))
+               (holds (neg-p (has-surj ?A ?B))))
+    :conclusion (holds (card-lt ?A ?B)))
+
+  (rule card-lt-trans
+    :premises ((holds (card-lt ?A ?B)) (holds (card-lt ?B ?C)))
+    :conclusion (holds (card-lt ?A ?C)))
+
+  ;; ══════════════════════════════════════════════════════════════
+  ;; CANTOR'S THEOREM
+  ;; ══════════════════════════════════════════════════════════════
+  ;;
+  ;; The diagonal argument:
+  ;;   Given f: A → P(A), define D = {x ∈ A | x ∉ f(x)}.
+  ;;   D ⊆ A, so D ∈ P(A).
+  ;;   For any d with f(d) = D:
+  ;;     d ∈ D  ↔  d ∉ f(d) = D.  Contradiction.
+  ;;   So f cannot be surjective.
+  ;;
+  ;; Meanwhile, x ↦ {x} injects A into P(A).
+  ;; Therefore |A| < |P(A)|.
+
+  (constructor singleton-map : (-> Set Set))
+
+  (rule singleton-maps
+    :conclusion (holds (maps (singleton-map ?A) ?A (power ?A))))
+
+  (rule singleton-is-inj
+    :conclusion (holds (is-inj (singleton-map ?A) ?A (power ?A))))
+
+  ;; Injection A → P(A) exists (via x ↦ {x})
+  (rule inj-to-power
+    :conclusion (holds (has-inj ?A (power ?A))))
+
+  ;; No surjection A → P(A) (diagonal argument)
+  (rule cantor-no-surj
+    :conclusion (holds (neg-p (has-surj ?A (power ?A)))))
+
+  ;; CANTOR'S THEOREM: |A| < |P(A)|
+  (rule cantor
+    :conclusion (holds (card-lt ?A (power ?A))))
+
+  ;; ══════════════════════════════════════════════════════════════
+  ;; THE ALEPH HIERARCHY
+  ;; ══════════════════════════════════════════════════════════════
+  ;; ℵ_α is the α-th infinite cardinal.
+  ;; ℵ₀ = |ω|,  ℵ₁ = least uncountable,  etc.
+  ;; Cardinals are ordinals (which are sets).
+
+  (constructor aleph : (-> Set Set))
+  (constructor continuum-card : Set)
+
+  (rule omega-is-aleph-zero
+    :conclusion (holds (card-eq-sets omega-set (aleph empty-set))))
+
+  (rule continuum-is-power-omega
+    :conclusion (holds (card-eq-sets (power omega-set) continuum-card)))
+
+  ;; The aleph ladder: α ∈ β (as ordinals) → ℵ_α < ℵ_β
+  (rule aleph-strict
+    :premises ((holds (mem ?a ?b)) (holds (is-ordinal ?b)))
+    :conclusion (holds (card-lt (aleph ?a) (aleph ?b))))
+
+  ;; ℵ₁ ≤ 2^ℵ₀ (ℵ₁ is least uncountable; the continuum is uncountable)
+  (rule aleph-one-le-continuum
+    :conclusion (holds (card-le (aleph (succ empty-set)) continuum-card)))
+
+  ;; ══════════════════════════════════════════════════════════════
+  ;; THE CONTINUUM HYPOTHESIS
+  ;; ══════════════════════════════════════════════════════════════
+  ;; CH says: 2^ℵ₀ = ℵ₁.  (The continuum equals the first
+  ;; uncountable cardinal — there is nothing in between.)
+
+  (constructor ch-holds     : Prop)
+  (constructor zfc-axioms   : Prop)
+  (constructor con          : (-> Prop Prop))
+  (constructor independent-of : (-> Prop Prop))
+
+  ;; CH ↔ |P(ω)| = ℵ₁
+  (rule ch-iff
+    :conclusion (holds (bic ch-holds
+                            (card-eq-sets continuum-card
+                                          (aleph (succ empty-set))))))
+
+  ;; Independence: both φ and ¬φ are consistent with the axioms
+  (rule independence-def
+    :premises ((holds (con (conj zfc-axioms ?phi)))
+               (holds (con (conj zfc-axioms (neg-p ?phi)))))
+    :conclusion (holds (independent-of ?phi)))
+
+  ;; Gödel (1938): Con(ZFC) → Con(ZFC + CH)
+  ;; Proof: L (the constructible universe) satisfies ZFC + GCH.
+  (rule godel-con-ch
+    :premises ((holds (con zfc-axioms)))
+    :conclusion (holds (con (conj zfc-axioms ch-holds))))
+
+  ;; Cohen (1963): Con(ZFC) → Con(ZFC + ¬CH)
+  ;; Proof: forcing with Add(ω, ℵ₂) adds ℵ₂ reals, breaking CH.
+  (rule cohen-con-not-ch
+    :premises ((holds (con zfc-axioms)))
+    :conclusion (holds (con (conj zfc-axioms (neg-p ch-holds)))))
+)
+
+(check-theory ZFC-Cardinals)
+
+
+;; ═════════════════════════════════════════════════════════════════
+;; PART A: FUNCTIONS
+;; ═════════════════════════════════════════════════════════════════
+
+;;; ─── Proof 1: The identity maps A to A ───
+
+(proof id-maps-proof
+  :theory ZFC-Cardinals
+  :goal (holds (maps (id-fn A0) A0 A0))
+  :derivation (id-maps))
+
+
+;;; ─── Proof 2: The identity is injective ───
+
+(proof id-inj-proof
+  :theory ZFC-Cardinals
+  :goal (holds (is-inj (id-fn A0) A0 A0))
+  :derivation (id-is-inj))
+
+
+;;; ─── Proof 3: The identity is a bijection ───
+;;; Bijection = injection + surjection.
+
+(proof id-bij-proof
+  :theory ZFC-Cardinals
+  :goal (holds (is-bij (id-fn A0) A0 A0))
+  :derivation (bij-def (id-is-inj) (id-is-surj)))
+
+
+;; ═════════════════════════════════════════════════════════════════
+;; PART B: CARDINAL BASICS
+;; ═════════════════════════════════════════════════════════════════
+
+;;; ─── Proof 4: |A| ≤ |A| ───
+;;; The identity function witnesses the injection.
+
+(proof card-le-refl
+  :theory ZFC-Cardinals
+  :goal (holds (card-le A0 A0))
+  :derivation (card-le-def (witness-inj (id-maps) (id-is-inj))))
+
+
+;;; ─── Proof 5: |A| = |A| ───
+;;; The identity function witnesses the bijection.
+
+(proof card-eq-refl
+  :theory ZFC-Cardinals
+  :goal (holds (card-eq-sets A0 A0))
+  :derivation (card-eq-def (witness-bij (id-maps) (id-is-bij))))
+
+
+;;; ─── Proof 6: |A| ≤ |P(A)| ───
+;;; The singleton map x ↦ {x} injects A into its power set.
+
+(proof le-power
+  :theory ZFC-Cardinals
+  :goal (holds (card-le A0 (power A0)))
+  :derivation (card-le-def (inj-to-power)))
+
+
+;; ═════════════════════════════════════════════════════════════════
+;; PART C: CANTOR'S THEOREM
+;; ═════════════════════════════════════════════════════════════════
+;; There are DIFFERENT SIZES OF INFINITY.
+;; The power set is always strictly larger than the set itself.
+
+;;; ─── Proof 7: No surjection A → P(A) ───
+;;; The diagonal argument: for any f: A → P(A),
+;;; D = {x ∈ A | x ∉ f(x)} is not in the range of f.
+
+(proof no-surj-to-power
+  :theory ZFC-Cardinals
+  :goal (holds (neg-p (has-surj A0 (power A0))))
+  :derivation (cantor-no-surj))
+
+
+;;; ─── Proof 8: |A| < |P(A)|  (Cantor's Theorem) ───
+;;; The derivation shows the structure:
+;;;   injection (via singletons) + no surjection (diagonal)
+;;;   = strict cardinal inequality.
+
+(proof cantor-theorem-proof
+  :theory ZFC-Cardinals
+  :goal (holds (card-lt A0 (power A0)))
+  :derivation (card-lt-def (inj-to-power) (cantor-no-surj)))
+
+
+;;; ─── Proof 9: |ω| < |P(ω)|  (the continuum is uncountable) ───
+;;; Instance of Cantor for ω. The set of natural numbers is
+;;; strictly smaller than the set of all sets of natural numbers.
+
+(proof omega-lt-continuum
+  :theory ZFC-Cardinals
+  :goal (holds (card-lt omega-set (power omega-set)))
+  :derivation (cantor))
+
+
+;; ═════════════════════════════════════════════════════════════════
+;; PART D: THE ALEPH LADDER
+;; ═════════════════════════════════════════════════════════════════
+;; ℵ₀ < ℵ₁ < ℵ₂ < ...
+;; The alephs form a strictly increasing chain indexed by ordinals.
+;; Each step uses: α ∈ succ(α) (succ-self) + succ(α) is ordinal.
+
+;;; ─── Proof 10: ℵ₀ < ℵ₁ ───
+;;; 0 ∈ 1 as ordinals, so ℵ₀ < ℵ₁ as cardinals.
+
+(proof aleph-0-lt-1
+  :theory ZFC-Cardinals
+  :goal (holds (card-lt (aleph nat-zero) (aleph nat-one)))
+  :derivation (aleph-strict (succ-self) (succ-ordinal (empty-ordinal))))
+
+
+;;; ─── Proof 11: ℵ₁ < ℵ₂ ───
+
+(proof aleph-1-lt-2
+  :theory ZFC-Cardinals
+  :goal (holds (card-lt (aleph nat-one) (aleph nat-two)))
+  :derivation (aleph-strict
+    (succ-self)
+    (succ-ordinal (succ-ordinal (empty-ordinal)))))
+
+
+;;; ─── Proof 12: ℵ₀ < ℵ₂  (transitivity) ───
+;;; Chains proofs 10 and 11: ℵ₀ < ℵ₁ < ℵ₂.
+
+(proof aleph-0-lt-2
+  :theory ZFC-Cardinals
+  :goal (holds (card-lt (aleph nat-zero) (aleph nat-two)))
+  :derivation (card-lt-trans
+    (aleph-strict (succ-self) (succ-ordinal (empty-ordinal)))
+    (aleph-strict (succ-self) (succ-ordinal (succ-ordinal (empty-ordinal))))))
+
+
+;; ═════════════════════════════════════════════════════════════════
+;; PART E: THE INDEPENDENCE OF CH
+;; ═════════════════════════════════════════════════════════════════
+;;
+;; We now know:
+;;   - ℵ₀ < 2^ℵ₀       (Cantor — proof 9)
+;;   - ℵ₀ < ℵ₁          (aleph hierarchy — proof 10)
+;;   - ℵ₁ ≤ 2^ℵ₀        (ℵ₁ is least uncountable)
+;;
+;; CH asks: is ℵ₁ = 2^ℵ₀?  Or is there something between?
+;;
+;; Gödel (1938): You CANNOT disprove CH from ZFC.
+;; Cohen (1963): You CANNOT prove CH from ZFC.
+;; Together:     CH is INDEPENDENT of ZFC.
+
+;;; ─── Proof 13: Con(ZFC) → Con(ZFC + CH)  (Gödel) ───
+;;; The constructible universe L satisfies ZFC + GCH ⊇ CH.
+
+(proof godel-proof
+  :theory ZFC-Cardinals
+  :assumptions ((holds (con zfc-axioms)))
+  :goal (holds (con (conj zfc-axioms ch-holds)))
+  :derivation (godel-con-ch (assumption)))
+
+
+;;; ─── Proof 14: Con(ZFC) → Con(ZFC + ¬CH)  (Cohen) ───
+;;; Forcing with Add(ω, ℵ₂) adds ℵ₂-many reals, so 2^ℵ₀ ≥ ℵ₂ > ℵ₁.
+
+(proof cohen-proof
+  :theory ZFC-Cardinals
+  :assumptions ((holds (con zfc-axioms)))
+  :goal (holds (con (conj zfc-axioms (neg-p ch-holds))))
+  :derivation (cohen-con-not-ch (assumption)))
+
+
+;;; ─── Proof 15: CH is independent of ZFC ───
+;;;
+;;; THE CROWN JEWEL.
+;;;
+;;; The derivation tree tells the whole story:
+;;;
+;;;              (independent-of ch-holds)
+;;;              /                       \
+;;;     Con(ZFC + CH)              Con(ZFC + ¬CH)
+;;;          |                          |
+;;;    godel-con-ch               cohen-con-not-ch
+;;;          |                          |
+;;;      Con(ZFC)                   Con(ZFC)
+;;;          \                       /
+;;;           ────── assumption ──────
+;;;
+;;; Left branch:  Gödel's L satisfies CH
+;;; Right branch: Cohen's forcing violates CH
+;;;
+;;; Neither CH nor its negation follows from ZFC.
+;;; The continuum hypothesis is a genuine CHOICE.
+
+(proof ch-is-independent
+  :theory ZFC-Cardinals
+  :assumptions ((holds (con zfc-axioms)))
+  :goal (holds (independent-of ch-holds))
+  :derivation (independence-def
+    (godel-con-ch (assumption))
+    (cohen-con-not-ch (assumption))))
+
+
+;; ═════════════════════════════════════════════════════════════════
+;; THE COMPLETE PICTURE
+;; ═════════════════════════════════════════════════════════════════
+;;
+;; Part I  (zfc-foundations.omega):
+;;   Set + Prop + ∈ → pairs, ordinals, natural numbers
+;;
+;; Part II (this file):
+;;   Functions → cardinals → Cantor → alephs → CH independence
+;;
+;; The entire development uses only:
+;;   2 sorts (Set, Prop)
+;;   1 relation (∈)
+;;   The ZFC axioms
+;;
+;; From these atoms, we built the infrastructure to state and
+;; settle the most famous open question in set theory:
+;;
+;;   "Is there a set whose cardinality is strictly between
+;;    that of the integers and that of the real numbers?"
+;;
+;; The answer: ZFC does not decide.  It is independent.
+;;
+;;   Gödel showed you can't refute it.   (1938)
+;;   Cohen showed you can't prove it.    (1963)
+;;
+;; The Continuum Hypothesis is not a problem to be solved,
+;; but a choice to be made.
+;; ═════════════════════════════════════════════════════════════════

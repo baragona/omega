@@ -1,0 +1,293 @@
+;;; Zero-Knowledge Circuit Satisfiability
+;;;
+;;; A zero-knowledge proof lets you prove you KNOW something
+;;; without REVEALING what you know.
+;;;
+;;; Example: "I know a factoring of 15" proves knowledge
+;;; without revealing whether you used 3×5 or 5×3 or 1×15.
+;;;
+;;; The standard formalism is R1CS (Rank-1 Constraint Systems):
+;;;   - A circuit is a list of arithmetic gates
+;;;   - Each gate asserts:  a * b = c  or  a + b = c
+;;;   - A WITNESS assigns concrete values to wires
+;;;   - The circuit is SATISFIABLE if all gates hold under the witness
+;;;
+;;; The verifier checks the arithmetic but never learns the witness.
+;;; Here, the rewrite engine IS the arithmetic verifier.
+;;;
+;;; Proved here (10 proofs):
+;;;
+;;;   Arithmetic (rewrite engine = field arithmetic):
+;;;    1.  2 × 3 = 6                                  (multiplication)
+;;;    2.  3 × 5 = 15                                 (larger multiplication)
+;;;    3.  1 + 2 = 3                                  (addition)
+;;;
+;;;   Gate satisfaction:
+;;;    4.  gate{2 × 3 = 6} holds                      (single gate)
+;;;    5.  gate{3 × 5 = 15} holds                     (single gate)
+;;;    6.  circuit{2×3=6, 1+2=3} holds                 (multi-gate)
+;;;
+;;;   Zero-knowledge: multiple witnesses, same public output:
+;;;    7.  gate{5 × 3 = 15} holds                     (witness 2 for 15)
+;;;    8.  gate{1 × 15 = 15} holds                    (witness 3 for 15)
+;;;    9.  3 × 3 = 9                                  (squaring)
+;;;   10.  circuit{3×3=9, 3×5=15} holds                (complex circuit)
+
+(theory ZKCircuit
+
+  ;; ══════════════════════════════════════
+  ;; FIELD ARITHMETIC (using naturals)
+  ;; ══════════════════════════════════════
+
+  (sort Nat)
+  (constructor z : Nat)
+  (constructor s : (-> Nat Nat))
+
+  (constructor mul : (-> Nat Nat Nat))
+  (constructor add : (-> Nat Nat Nat))
+
+  (rewrite mul-z (mul z ?n) z)
+  (rewrite mul-s (mul (s ?m) ?n) (add ?n (mul ?m ?n)))
+  (rewrite add-z (add z ?n) ?n)
+  (rewrite add-s (add (s ?m) ?n) (s (add ?m ?n)))
+
+  ;; ── Named constants for readability ──
+
+  (constructor one : Nat)
+  (rewrite def-one one (s z))
+
+  (constructor two : Nat)
+  (rewrite def-two two (s (s z)))
+
+  (constructor three : Nat)
+  (rewrite def-three three (s (s (s z))))
+
+  (constructor five : Nat)
+  (rewrite def-five five (s (s (s (s (s z))))))
+
+  (constructor six : Nat)
+  (rewrite def-six six (s (s (s (s (s (s z)))))))
+
+  (constructor nine : Nat)
+  (rewrite def-nine nine (s (s (s (s (s (s (s (s (s z))))))))))
+
+  (constructor fifteen : Nat)
+  (rewrite def-fifteen fifteen
+    (s (s (s (s (s (s (s (s (s (s (s (s (s (s (s z))))))))))))))))
+
+  ;; ══════════════════════════════════════
+  ;; EQUALITY (arithmetic verifier)
+  ;; ══════════════════════════════════════
+
+  (sort NatEq)
+  (constructor nat-eq : (-> Nat Nat NatEq))
+  (judgment (nats-eq ?e) :where e : NatEq)
+  (rule nat-eq-refl :conclusion (nats-eq (nat-eq ?a ?a)))
+
+  ;; ══════════════════════════════════════
+  ;; GATES (arithmetic constraints)
+  ;; ══════════════════════════════════════
+
+  (sort Gate)
+  (constructor gate-mul : (-> Nat Nat Nat Gate))      ;; a × b = c
+  (constructor gate-add : (-> Nat Nat Nat Gate))      ;; a + b = c
+
+  (sort GateSat)
+  (constructor gate-sat : (-> Gate GateSat))
+  (judgment (gate-holds ?g) :where g : GateSat)
+
+  ;; A multiplication gate holds if mul(a,b) normalizes to c
+  (rule mul-gate-holds
+    :premises ((nats-eq (nat-eq (mul ?a ?b) ?c)))
+    :conclusion (gate-holds (gate-sat (gate-mul ?a ?b ?c))))
+
+  ;; An addition gate holds if add(a,b) normalizes to c
+  (rule add-gate-holds
+    :premises ((nats-eq (nat-eq (add ?a ?b) ?c)))
+    :conclusion (gate-holds (gate-sat (gate-add ?a ?b ?c))))
+
+  ;; ══════════════════════════════════════
+  ;; CIRCUITS (lists of gates)
+  ;; ══════════════════════════════════════
+
+  (sort Circuit)
+  (constructor circuit-empty : Circuit)
+  (constructor circuit-gate : (-> Gate Circuit Circuit))
+
+  (sort CircSat)
+  (constructor circ-sat : (-> Circuit CircSat))
+  (judgment (circ-holds ?c) :where c : CircSat)
+
+  ;; Empty circuit is trivially satisfiable
+  (rule circ-empty
+    :conclusion (circ-holds (circ-sat circuit-empty)))
+
+  ;; A circuit holds if the first gate holds and the rest holds
+  (rule circ-step
+    :premises ((gate-holds (gate-sat ?g))
+               (circ-holds (circ-sat ?rest)))
+    :conclusion (circ-holds (circ-sat (circuit-gate ?g ?rest)))))
+
+(check-theory ZKCircuit)
+
+
+;; ════════════════════════════════════════════════════════════
+;;  ARITHMETIC (rewrite engine = field arithmetic verifier)
+;; ════════════════════════════════════════════════════════════
+
+;; ─── Proof 1: 2 × 3 = 6 ───
+;; mul(2, 3) → add(3, mul(1, 3)) → add(3, add(3, mul(0, 3)))
+;; → add(3, add(3, 0)) → add(3, 3) → 6
+
+(proof two-times-three
+  :theory ZKCircuit
+  :goal (nats-eq (nat-eq (mul two three) six))
+  :derivation (nat-eq-refl))
+
+
+;; ─── Proof 2: 3 × 5 = 15 ───
+
+(proof three-times-five
+  :theory ZKCircuit
+  :goal (nats-eq (nat-eq (mul three five) fifteen))
+  :derivation (nat-eq-refl))
+
+
+;; ─── Proof 3: 1 + 2 = 3 ───
+
+(proof one-plus-two
+  :theory ZKCircuit
+  :goal (nats-eq (nat-eq (add one two) three))
+  :derivation (nat-eq-refl))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  GATE SATISFACTION
+;; ════════════════════════════════════════════════════════════
+
+;; ─── Proof 4: gate{2 × 3 = 6} holds ───
+;; A single multiplication gate with witness (2, 3, 6).
+;; The rewrite engine verifies: mul(2,3) normalizes to 6.
+
+(proof gate-2x3
+  :theory ZKCircuit
+  :goal (gate-holds (gate-sat (gate-mul two three six)))
+  :derivation (mul-gate-holds (nat-eq-refl)))
+
+
+;; ─── Proof 5: gate{3 × 5 = 15} holds ───
+
+(proof gate-3x5
+  :theory ZKCircuit
+  :goal (gate-holds (gate-sat (gate-mul three five fifteen)))
+  :derivation (mul-gate-holds (nat-eq-refl)))
+
+
+;; ─── Proof 6: circuit{2×3=6, 1+2=3} holds ───
+;; Multi-gate circuit: BOTH constraints must hold simultaneously.
+
+(proof circuit-two-gates
+  :theory ZKCircuit
+  :goal (circ-holds (circ-sat
+    (circuit-gate (gate-mul two three six)
+      (circuit-gate (gate-add one two three)
+        circuit-empty))))
+  :derivation (circ-step
+    (mul-gate-holds (nat-eq-refl))
+    (circ-step
+      (add-gate-holds (nat-eq-refl))
+      (circ-empty))))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  ZERO KNOWLEDGE: Multiple witnesses, same public output
+;; ════════════════════════════════════════════════════════════
+;;
+;; Public value: 15
+;; The prover knows a factoring of 15.
+;; The verifier checks the arithmetic but doesn't learn WHICH factoring.
+;;
+;; Three valid witnesses:
+;;   Witness 1: (3, 5)  →  3 × 5 = 15  ✓  (proof 5 above)
+;;   Witness 2: (5, 3)  →  5 × 3 = 15  ✓  (proof 7 below)
+;;   Witness 3: (1, 15) →  1 × 15 = 15 ✓  (proof 8 below)
+;;
+;; All three prove "I know a factoring of 15" without revealing which one.
+
+;; ─── Proof 7: gate{5 × 3 = 15} holds ───
+;; DIFFERENT witness for the same public output!
+;; 5 × 3 = 15, not 3 × 5.  Same result, different knowledge.
+
+(proof gate-5x3
+  :theory ZKCircuit
+  :goal (gate-holds (gate-sat (gate-mul five three fifteen)))
+  :derivation (mul-gate-holds (nat-eq-refl)))
+
+
+;; ─── Proof 8: gate{1 × 15 = 15} holds ───
+;; The trivial factoring.  Still a valid witness!
+
+(proof gate-1x15
+  :theory ZKCircuit
+  :goal (gate-holds (gate-sat (gate-mul one fifteen fifteen)))
+  :derivation (mul-gate-holds (nat-eq-refl)))
+
+
+;; ─── Proof 9: 3 × 3 = 9 ───
+;; Squaring, used in the complex circuit below.
+
+(proof three-squared
+  :theory ZKCircuit
+  :goal (nats-eq (nat-eq (mul three three) nine))
+  :derivation (nat-eq-refl))
+
+
+;; ─── Proof 10: circuit{3×3=9, 3×5=15} holds ───
+;; A more complex circuit: the prover knows x=3
+;; such that x²=9 AND x×5=15.
+;; This is a CONJUNCTION of constraints — harder to satisfy.
+
+(proof circuit-complex
+  :theory ZKCircuit
+  :goal (circ-holds (circ-sat
+    (circuit-gate (gate-mul three three nine)
+      (circuit-gate (gate-mul three five fifteen)
+        circuit-empty))))
+  :derivation (circ-step
+    (mul-gate-holds (nat-eq-refl))
+    (circ-step
+      (mul-gate-holds (nat-eq-refl))
+      (circ-empty))))
+
+
+;; ════════════════════════════════════════════════════════════
+;; WHAT ZERO-KNOWLEDGE PROOFS REVEAL
+;; ════════════════════════════════════════════════════════════
+;;
+;;   Witness 1:  (3, 5)   proves "I know a factoring of 15"
+;;   Witness 2:  (5, 3)   proves the SAME statement
+;;   Witness 3:  (1, 15)  proves the SAME statement
+;;
+;;   The verifier accepts ALL THREE but learns NOTHING about
+;;   which factoring the prover used.  That's zero knowledge.
+;;
+;;   Component        Role
+;;   ──────────────────────────────────────────────────
+;;   Gate             Arithmetic constraint (a*b=c)
+;;   Circuit          Conjunction of constraints
+;;   Witness          Concrete values satisfying gates
+;;   Verifier         Rewrite engine (checks arithmetic)
+;;   Public input     The output value (15)
+;;   Private input    The factoring (3,5 or 5,3 or 1,15)
+;;
+;;   In real ZK systems (SNARKs, STARKs):
+;;     - Gates are over finite fields, not naturals
+;;     - Circuits encode arbitrary computations
+;;     - The proof is succinct (much smaller than the witness)
+;;     - Verification is fast (sublinear in circuit size)
+;;
+;;   Here, the rewrite engine is the verifier:
+;;   it checks that mul(a,b) normalizes to c,
+;;   confirming the constraint without "knowing" the witness
+;;   in any computational sense.
+;; ════════════════════════════════════════════════════════════

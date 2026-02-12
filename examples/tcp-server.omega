@@ -1,0 +1,148 @@
+;;; Verified TCP Server with Effect Dispatch
+;;;
+;;; This theory demonstrates the "verified protocol + effects" pattern:
+;;;   1. Pure state machine (step, can-send, is-open) — same as TcpState
+;;;   2. Effect sort — abstract I/O actions (bind-port, send-ack, etc.)
+;;;   3. on-event function — dispatches state transitions to effects
+;;;
+;;; When compiled with `omega kompile`, this generates:
+;;;   - Pure enums: State, Event, Bool
+;;;   - Pure functions: step(), can_send(), is_open()
+;;;   - Effect trait: TcpServerEffects with methods for each I/O action
+;;;   - Effectful function: on_event(effects, state, event) dispatches to trait
+;;;
+;;; The user then implements the trait with real I/O:
+;;;   impl TcpServerEffects for MyServer {
+;;;       fn eff_bind_port(&mut self) { self.socket.bind(...); }
+;;;       fn eff_send_ack(&mut self) { self.socket.write(ACK); }
+;;;       ...
+;;;   }
+;;;
+;;; Proved here:
+;;;   1. Full handshake completes                    (state machine)
+;;;   2. RST kills established connection            (state machine)
+;;;   3. can_send(Established) = true                (guard)
+;;;   4. can_send(Closed) = false                    (guard)
+;;;   5. Graceful close returns to Closed            (state machine)
+
+(theory TcpServer
+  ;; ── Connection states ──
+  (sort State)
+  (constructor closed      : State)
+  (constructor listen      : State)
+  (constructor syn-recvd   : State)
+  (constructor established : State)
+  (constructor fin-wait    : State)
+
+  ;; ── Events ──
+  (sort Event)
+  (constructor ev-listen : Event)
+  (constructor ev-syn    : Event)
+  (constructor ev-ack    : Event)
+  (constructor ev-data   : Event)
+  (constructor ev-fin    : Event)
+  (constructor ev-rst    : Event)
+
+  ;; ── Boolean (for guard predicates) ──
+  (sort Bool)
+  (constructor true  : Bool)
+  (constructor false : Bool)
+
+  ;; ── Pure transition function ──
+  (constructor step : (-> State Event State))
+  (rewrite t-listen  (step closed      ev-listen) listen)
+  (rewrite t-syn     (step listen      ev-syn)    syn-recvd)
+  (rewrite t-ack     (step syn-recvd   ev-ack)    established)
+  (rewrite t-data    (step established ev-data)   established)
+  (rewrite t-fin     (step established ev-fin)    fin-wait)
+  (rewrite t-close   (step fin-wait    ev-ack)    closed)
+  (rewrite t-rst-l   (step listen      ev-rst)    closed)
+  (rewrite t-rst-sr  (step syn-recvd   ev-rst)    closed)
+  (rewrite t-rst-e   (step established ev-rst)    closed)
+  (rewrite t-rst-fw  (step fin-wait    ev-rst)    closed)
+
+  ;; ── Guard predicates ──
+  (constructor can-send : (-> State Bool))
+  (rewrite cs-est (can-send established) true)
+  (rewrite cs-cl  (can-send closed)      false)
+  (rewrite cs-li  (can-send listen)      false)
+  (rewrite cs-sr  (can-send syn-recvd)   false)
+  (rewrite cs-fw  (can-send fin-wait)    false)
+
+  (constructor is-open : (-> State Bool))
+  (rewrite io-est (is-open established) true)
+  (rewrite io-sr  (is-open syn-recvd)   true)
+  (rewrite io-cl  (is-open closed)      false)
+  (rewrite io-li  (is-open listen)      false)
+  (rewrite io-fw  (is-open fin-wait)    false)
+
+  ;; ══════════════════════════════════════════════════════
+  ;; EFFECT LAYER — abstract I/O actions
+  ;; ══════════════════════════════════════════════════════
+
+  (sort Effect)
+
+  ;; Effect constructors — what the server can do
+  (constructor eff-bind-port    : Effect)
+  (constructor eff-send-syn-ack : Effect)
+  (constructor eff-send-data    : (-> State Effect))
+  (constructor eff-send-fin     : Effect)
+  (constructor eff-send-rst     : Effect)
+  (constructor eff-log          : (-> State Event State Effect))
+
+  ;; on-event: given current state + event, dispatch the appropriate effect
+  (constructor on-event : (-> State Event Effect))
+  (rewrite oe-listen  (on-event closed      ev-listen) eff-bind-port)
+  (rewrite oe-syn     (on-event listen      ev-syn)    eff-send-syn-ack)
+  (rewrite oe-ack     (on-event syn-recvd   ev-ack)    (eff-log syn-recvd ev-ack established))
+  (rewrite oe-data    (on-event established ev-data)   (eff-send-data established))
+  (rewrite oe-fin     (on-event established ev-fin)    eff-send-fin)
+  (rewrite oe-rst-e   (on-event established ev-rst)    eff-send-rst)
+  (rewrite oe-close   (on-event fin-wait    ev-ack)    (eff-log fin-wait ev-ack closed))
+  (rewrite oe-rst-l   (on-event listen      ev-rst)    eff-send-rst)
+  (rewrite oe-rst-sr  (on-event syn-recvd   ev-rst)    eff-send-rst)
+  (rewrite oe-rst-fw  (on-event fin-wait    ev-rst)    eff-send-rst)
+
+  ;; ── Equality (for proofs) ──
+  (sort Prop)
+  (constructor state-eq : (-> State State Prop))
+  (constructor bool-eq  : (-> Bool Bool Prop))
+  (judgment (proves ?P) :where P : Prop)
+  (rule eq-refl   :premises () :conclusion (proves (state-eq ?a ?a)))
+  (rule bool-refl :premises () :conclusion (proves (bool-eq ?a ?a))))
+
+(check-theory TcpServer)
+
+;; ── Proof 1: Full handshake completes ──
+(proof full-handshake
+  :theory TcpServer
+  :goal (proves (state-eq
+    (step (step (step closed ev-listen) ev-syn) ev-ack)
+    established))
+  :derivation (eq-refl))
+
+;; ── Proof 2: RST kills established connection ──
+(proof rst-kills
+  :theory TcpServer
+  :goal (proves (state-eq (step established ev-rst) closed))
+  :derivation (eq-refl))
+
+;; ── Proof 3: can_send(Established) = true ──
+(proof send-established
+  :theory TcpServer
+  :goal (proves (bool-eq (can-send established) true))
+  :derivation (bool-refl))
+
+;; ── Proof 4: can_send(Closed) = false ──
+(proof no-send-closed
+  :theory TcpServer
+  :goal (proves (bool-eq (can-send closed) false))
+  :derivation (bool-refl))
+
+;; ── Proof 5: Graceful close returns to Closed ──
+(proof graceful-close
+  :theory TcpServer
+  :goal (proves (state-eq
+    (step (step established ev-fin) ev-ack)
+    closed))
+  :derivation (eq-refl))

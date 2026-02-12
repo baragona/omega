@@ -1,0 +1,232 @@
+;;; Ordinal Arithmetic — Veblen Functions & Γ₀
+;;;
+;;; Beyond simple addition: the Veblen hierarchy φ_α(β) climbs through
+;;; fixed points of ordinal exponentiation to reach the Feferman-Schütte
+;;; ordinal Γ₀, the limit of predicative reasoning.
+;;;
+;;;   φ₀(β) = ω^β           (ordinal exponentiation)
+;;;   φ₁(β) = ε_β           (fixed points of ω^x)
+;;;   Γ₀ = least α with φ_α(0) = α
+;;;
+;;; Proved here:
+;;;   1. 0 + ω = ω                               (left identity)
+;;;   2. ω + 0 = ω                               (right identity)
+;;;   3. ω · 1 = ω                               (multiplicative unit)
+;;;   4. ω · 0 = 0                               (annihilation)
+;;;   5. ω^0 = 1                                 (exponentiation base)
+;;;   6. ω^1 = ω                                 (exponentiation unit)
+;;;   7. φ₀(ω) = ω^ω                             (Veblen base case)
+;;;   8. ε₀ = φ₁(0)                              (epsilon definition)
+;;;   9. ω^(ε₀) = ε₀                             (ε₀ is a fixed point)
+;;;  10. φ_(Γ₀)(0) = Γ₀ ∧ ω^(ε₀) = ε₀          (twin fixed points)
+
+(theory OrdinalArith
+  (sort Ord)
+  (sort Formula)
+
+  ;; ── Base ordinals ──
+  (constructor zero  : Ord)
+  (constructor suc   : (-> Ord Ord))
+  (constructor omega : Ord)
+
+  ;; ── Arithmetic ──
+  (constructor add  : (-> Ord Ord Ord))
+  (constructor mul  : (-> Ord Ord Ord))
+  (constructor expw : (-> Ord Ord))
+
+  ;; ── Veblen hierarchy ──
+  (constructor veb    : (-> Ord Ord Ord))
+  (constructor eps    : (-> Ord Ord))
+  (constructor gamma0 : Ord)
+
+  ;; ── Formulas ──
+  (constructor eq    : (-> Ord Ord Formula))
+  (constructor lt    : (-> Ord Ord Formula))
+  (constructor and-f : (-> Formula Formula Formula))
+  (constructor imp-f : (-> Formula Formula Formula))
+
+  ;; ── Addition rewrites ──
+  (rewrite add-zero-l (add zero ?b) ?b)
+  (rewrite add-zero-r (add ?a zero) ?a)
+  (rewrite add-suc    (add ?a (suc ?b)) (suc (add ?a ?b)))
+
+  ;; ── Multiplication rewrites ──
+  (rewrite mul-zero-l (mul zero ?b) zero)
+  (rewrite mul-zero-r (mul ?a zero) zero)
+  (rewrite mul-one    (mul ?a (suc zero)) ?a)
+
+  ;; ── Exponentiation rewrites ──
+  (rewrite expw-zero (expw zero) (suc zero))
+  (rewrite expw-one  (expw (suc zero)) omega)
+
+  ;; ── Veblen rewrites ──
+  (rewrite veb-zero (veb zero ?b) (expw ?b))
+  (rewrite eps-def  (eps ?a) (veb (suc zero) ?a))
+
+  ;; ── Judgment ──
+  (judgment (holds ?P) :where P : Formula)
+
+  ;; ── Equational reasoning ──
+  (rule eq-refl
+    :premises ()
+    :conclusion (holds (eq ?a ?a)))
+
+  (rule eq-symm
+    :premises ((holds (eq ?a ?b)))
+    :conclusion (holds (eq ?b ?a)))
+
+  (rule eq-trans
+    :premises ((holds (eq ?a ?b)) (holds (eq ?b ?c)))
+    :conclusion (holds (eq ?a ?c))
+    :implicit (?b))
+
+  ;; ── Congruence ──
+  (rule eq-suc-cong
+    :premises ((holds (eq ?a ?b)))
+    :conclusion (holds (eq (suc ?a) (suc ?b))))
+
+  (rule eq-add-cong-l
+    :premises ((holds (eq ?a ?b)))
+    :conclusion (holds (eq (add ?a ?c) (add ?b ?c))))
+
+  (rule eq-add-cong-r
+    :premises ((holds (eq ?a ?b)))
+    :conclusion (holds (eq (add ?c ?a) (add ?c ?b))))
+
+  ;; ── Ordering ──
+  (rule lt-self-suc
+    :premises ()
+    :conclusion (holds (lt ?a (suc ?a))))
+
+  ;; ── Fixed point axioms ──
+  ;; ε₀ = φ₁(0) is a fixed point of ω^x: ω^(φ₁(0)) = φ₁(0)
+  ;; Must use veb directly since eps-def normalizes eps(0) → veb(1,0)
+  (rule eps-zero-fixpoint
+    :premises ()
+    :conclusion (holds (eq (expw (veb (suc zero) zero)) (veb (suc zero) zero))))
+
+  (rule gamma0-fixpoint
+    :premises ()
+    :conclusion (holds (eq (veb gamma0 zero) gamma0)))
+
+  ;; ── Propositional ──
+  (rule and-intro
+    :premises ((holds ?A) (holds ?B))
+    :conclusion (holds (and-f ?A ?B)))
+
+  (rule imp-intro
+    :premises ((holds ?B))
+    :context ((0 (holds ?A)))
+    :conclusion (holds (imp-f ?A ?B))))
+
+(check-theory OrdinalArith)
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 1: 0 + ω = ω (left identity of addition)
+;;; ═══════════════════════════════════════════════════════════
+
+(proof add-zero-left
+  :theory OrdinalArith
+  :goal (holds (eq (add zero omega) omega))
+  :derivation (eq-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 2: ω + 0 = ω (right identity of addition)
+;;; ═══════════════════════════════════════════════════════════
+
+(proof add-zero-right
+  :theory OrdinalArith
+  :goal (holds (eq (add omega zero) omega))
+  :derivation (eq-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 3: ω · 1 = ω (multiplicative unit)
+;;; ═══════════════════════════════════════════════════════════
+
+(proof mul-one-right
+  :theory OrdinalArith
+  :goal (holds (eq (mul omega (suc zero)) omega))
+  :derivation (eq-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 4: ω · 0 = 0 (annihilation)
+;;; ═══════════════════════════════════════════════════════════
+
+(proof mul-zero-annihilates
+  :theory OrdinalArith
+  :goal (holds (eq (mul omega zero) zero))
+  :derivation (eq-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 5: ω^0 = 1 (exponentiation base)
+;;; ═══════════════════════════════════════════════════════════
+
+(proof expw-zero-is-one
+  :theory OrdinalArith
+  :goal (holds (eq (expw zero) (suc zero)))
+  :derivation (eq-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 6: ω^1 = ω (exponentiation unit)
+;;; ═══════════════════════════════════════════════════════════
+
+(proof expw-one-is-omega
+  :theory OrdinalArith
+  :goal (holds (eq (expw (suc zero)) omega))
+  :derivation (eq-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 7: φ₀(ω) = ω^ω (Veblen base case)
+;;; ═══════════════════════════════════════════════════════════
+;;; The zeroth Veblen function is just ordinal exponentiation.
+
+(proof veb-zero-is-expw
+  :theory OrdinalArith
+  :goal (holds (eq (veb zero omega) (expw omega)))
+  :derivation (eq-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 8: ε₀ = φ₁(0) (epsilon as Veblen)
+;;; ═══════════════════════════════════════════════════════════
+;;; Epsilon numbers are the first Veblen function: the fixed
+;;; points of α ↦ ω^α.
+
+(proof eps-is-veb-one
+  :theory OrdinalArith
+  :goal (holds (eq (eps zero) (veb (suc zero) zero)))
+  :derivation (eq-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 9: ω^(ε₀) = ε₀ (ε₀ is a fixed point of ω^x)
+;;; ═══════════════════════════════════════════════════════════
+;;; The defining property of ε₀: it satisfies ω^α = α.
+;;; This cannot be proved by finite computation — it requires
+;;; the fixed-point axiom.
+
+(proof eps-zero-fixed-point
+  :theory OrdinalArith
+  :goal (holds (eq (expw (eps zero)) (eps zero)))
+  :derivation (eps-zero-fixpoint))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 10: Twin fixed points — Γ₀ and ε₀
+;;; ═══════════════════════════════════════════════════════════
+;;; φ_(Γ₀)(0) = Γ₀ AND ω^(ε₀) = ε₀.
+;;; Γ₀ is the Feferman-Schütte ordinal, the limit of predicative
+;;; reasoning: the smallest ordinal that is a fixed point of the
+;;; Veblen hierarchy itself.
+
+(proof twin-fixed-points
+  :theory OrdinalArith
+  :goal (holds (and-f (eq (veb gamma0 zero) gamma0) (eq (expw (eps zero)) (eps zero))))
+  :derivation (and-intro (gamma0-fixpoint) (eps-zero-fixpoint)))

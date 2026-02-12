@@ -1,0 +1,315 @@
+;;; Nominal Logic: Names, Swapping, and Alpha-Equivalence
+;;;
+;;; In the lambda calculus, λx.x and λy.y are "the same" function.
+;;; But they're syntactically DIFFERENT — they use different names.
+;;; ALPHA-EQUIVALENCE is the relation that identifies them.
+;;;
+;;; Nominal logic makes names FIRST-CLASS:
+;;;
+;;;   Swapping:    swap(a,b,t) exchanges names a and b in term t
+;;;   Freshness:   a # t means "a does not appear free in t"
+;;;   Alpha:       lam(a,s) ≡α lam(b,t) when b # s and swap(a,b,s) = t
+;;;
+;;; The key insight: alpha-equivalence is COMPUTED by swapping.
+;;; No need for de Bruijn indices or substitution — just swap and compare.
+;;;
+;;; Proved here (10 proofs):
+;;;
+;;;   Swapping (computed by rewrite rules):
+;;;    1.  swap(a,b,var(a)) = var(b)                   (hit: a becomes b)
+;;;    2.  swap(a,b,var(c)) = var(c)                   (miss: c unchanged)
+;;;    3.  swap(a,b,lam(a,var(a))) = lam(b,var(b))     (through binder)
+;;;
+;;;   Freshness:
+;;;    4.  a # var(b)                                   (different name)
+;;;    5.  a # lam(a, var(a))                           (bound name is fresh)
+;;;    6.  a # lam(b, var(b))                           (a not in body)
+;;;    7.  a # app(var(b), var(c))                      (fresh in both parts)
+;;;
+;;;   Alpha-equivalence (the payoff):
+;;;    8.  lam(a, var(a)) ≡α lam(b, var(b))            (THE classic alpha)
+;;;    9.  lam(a, var(a)) ≡α lam(a, var(a))            (reflexivity)
+;;;   10.  lam(a, app(var(a), var(c)))                  (alpha under app)
+;;;          ≡α lam(b, app(var(b), var(c)))
+
+(theory NominalLogic
+
+  ;; ══════════════════════════════════════
+  ;; NAMES (concrete, finite set)
+  ;; ══════════════════════════════════════
+
+  (sort Name)
+  (constructor name-a : Name)
+  (constructor name-b : Name)
+  (constructor name-c : Name)
+
+  ;; ══════════════════════════════════════
+  ;; LAMBDA CALCULUS TERMS
+  ;; ══════════════════════════════════════
+
+  (sort Term)
+  (constructor var : (-> Name Term))
+  (constructor lam : (-> Name Term Term))
+  (constructor app : (-> Term Term Term))
+
+  ;; ══════════════════════════════════════
+  ;; NAME SWAPPING
+  ;; ══════════════════════════════════════
+  ;; swap-name(x, y, z) exchanges x↔y in name z.
+  ;; 9 rules for all combinations of 3 names.
+
+  (constructor swap-name : (-> Name Name Name Name))
+
+  ;; swap(a, b, _)
+  (rewrite swn-a-b-a (swap-name name-a name-b name-a) name-b)
+  (rewrite swn-a-b-b (swap-name name-a name-b name-b) name-a)
+  (rewrite swn-a-b-c (swap-name name-a name-b name-c) name-c)
+
+  ;; swap(a, c, _)
+  (rewrite swn-a-c-a (swap-name name-a name-c name-a) name-c)
+  (rewrite swn-a-c-c (swap-name name-a name-c name-c) name-a)
+  (rewrite swn-a-c-b (swap-name name-a name-c name-b) name-b)
+
+  ;; swap(b, c, _)
+  (rewrite swn-b-c-b (swap-name name-b name-c name-b) name-c)
+  (rewrite swn-b-c-c (swap-name name-b name-c name-c) name-b)
+  (rewrite swn-b-c-a (swap-name name-b name-c name-a) name-a)
+
+  ;; ── Term swapping (structural, using swap-name) ──
+
+  (constructor swap : (-> Name Name Term Term))
+
+  (rewrite swap-var (swap ?x ?y (var ?z))
+    (var (swap-name ?x ?y ?z)))
+
+  (rewrite swap-lam (swap ?x ?y (lam ?z ?body))
+    (lam (swap-name ?x ?y ?z) (swap ?x ?y ?body)))
+
+  (rewrite swap-app (swap ?x ?y (app ?t1 ?t2))
+    (app (swap ?x ?y ?t1) (swap ?x ?y ?t2)))
+
+  ;; ══════════════════════════════════════
+  ;; FRESHNESS
+  ;; ══════════════════════════════════════
+  ;; a # t means "a does not appear free in t."
+
+  (sort Fresh)
+  (constructor fresh : (-> Name Term Fresh))
+  (judgment (is-fresh ?f) :where f : Fresh)
+
+  ;; a # var(b) when a ≠ b (6 rules for 3×2 pairs)
+  (rule fresh-var-ab :conclusion (is-fresh (fresh name-a (var name-b))))
+  (rule fresh-var-ac :conclusion (is-fresh (fresh name-a (var name-c))))
+  (rule fresh-var-ba :conclusion (is-fresh (fresh name-b (var name-a))))
+  (rule fresh-var-bc :conclusion (is-fresh (fresh name-b (var name-c))))
+  (rule fresh-var-ca :conclusion (is-fresh (fresh name-c (var name-a))))
+  (rule fresh-var-cb :conclusion (is-fresh (fresh name-c (var name-b))))
+
+  ;; a # lam(a, body) — bound names are always fresh
+  (rule fresh-lam-bind
+    :conclusion (is-fresh (fresh ?a (lam ?a ?body))))
+
+  ;; a # lam(b, body) when a # body (a is not bound, check body)
+  (rule fresh-lam-other
+    :premises ((is-fresh (fresh ?a ?body)))
+    :conclusion (is-fresh (fresh ?a (lam ?b ?body))))
+
+  ;; a # app(t1, t2) when a # t1 and a # t2
+  (rule fresh-app
+    :premises ((is-fresh (fresh ?a ?t1)) (is-fresh (fresh ?a ?t2)))
+    :conclusion (is-fresh (fresh ?a (app ?t1 ?t2))))
+
+  ;; ══════════════════════════════════════
+  ;; TERM EQUALITY (via normalization)
+  ;; ══════════════════════════════════════
+
+  (sort TermEq)
+  (constructor term-eq : (-> Term Term TermEq))
+  (judgment (terms-eq ?e) :where e : TermEq)
+  (rule term-eq-refl :conclusion (terms-eq (term-eq ?a ?a)))
+
+  ;; ══════════════════════════════════════
+  ;; ALPHA-EQUIVALENCE
+  ;; ══════════════════════════════════════
+  ;; lam(a, s) ≡α lam(b, t) when:
+  ;;   1. b # s  (b does not appear free in s)
+  ;;   2. swap(a, b, s) normalizes to t
+
+  (sort AlphaEq)
+  (constructor alpha : (-> Term Term AlphaEq))
+  (judgment (is-alpha ?a) :where a : AlphaEq)
+
+  ;; Reflexivity
+  (rule alpha-refl :conclusion (is-alpha (alpha ?t ?t)))
+
+  ;; Alpha for lambda: swap and compare
+  (rule alpha-lam
+    :premises ((is-fresh (fresh ?b ?s))
+               (terms-eq (term-eq (swap ?a ?b ?s) ?t)))
+    :conclusion (is-alpha (alpha (lam ?a ?s) (lam ?b ?t))))
+
+  ;; Alpha under application
+  (rule alpha-app
+    :premises ((is-alpha (alpha ?s1 ?t1)) (is-alpha (alpha ?s2 ?t2)))
+    :conclusion (is-alpha (alpha (app ?s1 ?s2) (app ?t1 ?t2)))))
+
+(check-theory NominalLogic)
+
+
+;; ════════════════════════════════════════════════════════════
+;;  SWAPPING (computed by rewrites)
+;; ════════════════════════════════════════════════════════════
+
+;; ─── Proof 1: swap(a, b, var(a)) = var(b) ───
+;; The name a becomes b.
+;; swap(a, b, var(a)) → var(swap-name(a, b, a)) → var(b)
+
+(proof swap-hit
+  :theory NominalLogic
+  :goal (terms-eq (term-eq (swap name-a name-b (var name-a)) (var name-b)))
+  :derivation (term-eq-refl))
+
+
+;; ─── Proof 2: swap(a, b, var(c)) = var(c) ───
+;; The name c is unaffected by swapping a and b.
+
+(proof swap-miss
+  :theory NominalLogic
+  :goal (terms-eq (term-eq (swap name-a name-b (var name-c)) (var name-c)))
+  :derivation (term-eq-refl))
+
+
+;; ─── Proof 3: swap(a, b, lam(a, var(a))) = lam(b, var(b)) ───
+;; Swapping goes through the binder AND the body.
+;; swap(a, b, lam(a, var(a)))
+;;   → lam(swap-name(a,b,a), swap(a,b,var(a)))
+;;   → lam(b, var(swap-name(a,b,a)))
+;;   → lam(b, var(b))
+
+(proof swap-through-binder
+  :theory NominalLogic
+  :goal (terms-eq (term-eq
+    (swap name-a name-b (lam name-a (var name-a)))
+    (lam name-b (var name-b))))
+  :derivation (term-eq-refl))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  FRESHNESS
+;; ════════════════════════════════════════════════════════════
+
+;; ─── Proof 4: a # var(b) ───
+;; a does not appear free in var(b) because a ≠ b.
+
+(proof fresh-different
+  :theory NominalLogic
+  :goal (is-fresh (fresh name-a (var name-b)))
+  :derivation (fresh-var-ab))
+
+
+;; ─── Proof 5: a # lam(a, var(a)) ───
+;; a is BOUND by the lambda, so it's not free.
+;; This is the fresh-lam-bind rule: bound names are always fresh.
+
+(proof fresh-bound
+  :theory NominalLogic
+  :goal (is-fresh (fresh name-a (lam name-a (var name-a))))
+  :derivation (fresh-lam-bind))
+
+
+;; ─── Proof 6: a # lam(b, var(b)) ───
+;; a doesn't appear in the body var(b) either.
+;; fresh-lam-other requires a # var(b), which is fresh-var-ab.
+
+(proof fresh-other-binder
+  :theory NominalLogic
+  :goal (is-fresh (fresh name-a (lam name-b (var name-b))))
+  :derivation (fresh-lam-other (fresh-var-ab)))
+
+
+;; ─── Proof 7: a # app(var(b), var(c)) ───
+;; a is fresh in both subterms: a # var(b) and a # var(c).
+
+(proof fresh-in-app
+  :theory NominalLogic
+  :goal (is-fresh (fresh name-a (app (var name-b) (var name-c))))
+  :derivation (fresh-app (fresh-var-ab) (fresh-var-ac)))
+
+
+;; ════════════════════════════════════════════════════════════
+;;  ALPHA-EQUIVALENCE
+;; ════════════════════════════════════════════════════════════
+
+;; ─── Proof 8: lam(a, var(a)) ≡α lam(b, var(b)) ───
+;; THE classic alpha-equivalence.
+;; λa.a and λb.b are the same function — they just use different names.
+;;
+;; Proof by alpha-lam:
+;;   1. b # var(a)  ✓  (b ≠ a, by fresh-var-ba)
+;;   2. swap(a, b, var(a)) = var(b)  ✓  (normalizes by swap rewrites)
+
+(proof alpha-identity
+  :theory NominalLogic
+  :goal (is-alpha (alpha
+    (lam name-a (var name-a))
+    (lam name-b (var name-b))))
+  :derivation (alpha-lam (fresh-var-ba) (term-eq-refl)))
+
+
+;; ─── Proof 9: lam(a, var(a)) ≡α lam(a, var(a)) ───
+;; Reflexivity: every term is alpha-equivalent to itself.
+
+(proof alpha-self
+  :theory NominalLogic
+  :goal (is-alpha (alpha
+    (lam name-a (var name-a))
+    (lam name-a (var name-a))))
+  :derivation (alpha-refl))
+
+
+;; ─── Proof 10: lam(a, app(var(a), var(c))) ≡α lam(b, app(var(b), var(c))) ───
+;; Alpha-equivalence under application.
+;; The bound variable a/b changes, but the free variable c stays.
+;;
+;; Proof:
+;;   1. b # app(var(a), var(c))  ✓  (b # var(a) ∧ b # var(c))
+;;   2. swap(a, b, app(var(a), var(c)))
+;;      → app(var(swap-name(a,b,a)), var(swap-name(a,b,c)))
+;;      → app(var(b), var(c))  ✓
+
+(proof alpha-under-app
+  :theory NominalLogic
+  :goal (is-alpha (alpha
+    (lam name-a (app (var name-a) (var name-c)))
+    (lam name-b (app (var name-b) (var name-c)))))
+  :derivation (alpha-lam
+    (fresh-app (fresh-var-ba) (fresh-var-bc))
+    (term-eq-refl)))
+
+
+;; ════════════════════════════════════════════════════════════
+;; WHAT NOMINAL LOGIC REVEALS
+;; ════════════════════════════════════════════════════════════
+;;
+;;   Traditional approaches to binding:
+;;     de Bruijn indices:   λ.0 ≡ λ.0  (no names at all)
+;;     Explicit subst:      λx.x[y/x] = λx.y  (substitution is primitive)
+;;     Higher-order:        λf. f  (binding via meta-language)
+;;
+;;   Nominal approach:
+;;     Names are REAL, swapping is PRIMITIVE.
+;;     α-equivalence is COMPUTED: swap + compare.
+;;
+;;   The key rule:
+;;     lam(a, s) ≡α lam(b, t)  iff  b # s  ∧  (a b)·s = t
+;;
+;;   "To check if two lambdas are alpha-equivalent,
+;;    swap their binder names and see if the bodies match."
+;;
+;;   Freshness is the guard: b must not appear free in s,
+;;   otherwise swapping would capture it.
+;;
+;;   This is Andrew Pitts' nominal sets (2003):
+;;   the mathematical foundation for names and binding
+;;   that treats names as first-class mathematical objects.
+;; ════════════════════════════════════════════════════════════
