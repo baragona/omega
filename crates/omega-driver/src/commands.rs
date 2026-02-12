@@ -1,6 +1,7 @@
 /// Command dispatch: process top-level forms from the parser.
 use omega_core::derivation::{normalize_expr, Context};
 use omega_core::expr::Expr;
+use omega_core::judgment::Rule;
 use omega_core::reflection;
 use omega_elaborate::elaborate::elaborate;
 use omega_elaborate::tactic::Tactic;
@@ -159,6 +160,103 @@ pub fn process_command(session: &mut Session, cmd: Command) -> Result<String, St
                 "Reflected {} as {} in theory {}",
                 metatheorem, rule_name, theory
             ))
+        }
+
+        Command::Lemma {
+            name,
+            theory,
+            premises,
+            conclusion,
+            derivation,
+        } => {
+            // Cut rule: verify the proof, then add conclusion as a derived rule.
+            // Premises become assumptions in the proof context.
+            let ctx = Context::with_assumptions(premises.clone());
+            session
+                .kernel
+                .check_derivation(&theory, &conclusion, &derivation, &ctx)
+                .map_err(|e| format!("Lemma {} INVALID: {}", name, e))?;
+
+            // Build the derived rule and add it to the theory
+            let rule = Rule {
+                name: name.clone(),
+                premises,
+                conclusion: conclusion.clone(),
+                reflected: false,
+                provenance: Some(format!("lemma:{}", name)),
+                implicit_args: vec![],
+                context_extensions: vec![],
+            };
+            session
+                .kernel
+                .add_rule(&theory, rule)
+                .map_err(|e| format!("Lemma {} failed to register rule: {}", name, e))?;
+
+            session.proven.push(ProvenTheorem {
+                name: name.clone(),
+                theory: theory.clone(),
+                goal: conclusion,
+            });
+
+            Ok(format!("Lemma {}: VALID [DERIVED]", name))
+        }
+
+        Command::TacticLemma {
+            name,
+            theory: theory_name,
+            premises,
+            conclusion,
+            tactics,
+        } => {
+            let theory = session
+                .kernel
+                .get_theory(&theory_name)
+                .ok_or_else(|| format!("Unknown theory: {}", theory_name))?
+                .clone();
+
+            let ctx = Context::with_assumptions(premises.clone());
+
+            let tactics: Vec<Tactic> = tactics
+                .into_iter()
+                .map(|tc| convert_tactic(tc))
+                .collect::<Result<Vec<_>, _>>()?;
+
+            let derivation = elaborate(&tactics, conclusion.clone(), ctx.clone(), &theory)
+                .map_err(|e| format!("Tactic elaboration failed for lemma {}: {}", name, e))?;
+
+            if session.verbose {
+                eprintln!(
+                    "  Elaborated derivation: {}",
+                    printer::print_derivation(&derivation)
+                );
+            }
+
+            session
+                .kernel
+                .check_derivation(&theory_name, &conclusion, &derivation, &ctx)
+                .map_err(|e| format!("Lemma {} INVALID (after elaboration): {}", name, e))?;
+
+            let rule = Rule {
+                name: name.clone(),
+                premises,
+                conclusion: conclusion.clone(),
+                reflected: false,
+                provenance: Some(format!("lemma:{}", name)),
+                implicit_args: vec![],
+                context_extensions: vec![],
+            };
+            session
+                .kernel
+                .add_rule(&theory_name, rule)
+                .map_err(|e| format!("Lemma {} failed to register rule: {}", name, e))?;
+
+            session.proven.push(ProvenTheorem {
+                name: name.clone(),
+                theory: theory_name.clone(),
+                goal: conclusion,
+            });
+
+            Ok(format!("Lemma {}: VALID [DERIVED] (via tactics)", name))
         }
 
         Command::Emit { theory, expr } => {

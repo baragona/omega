@@ -60,6 +60,22 @@ pub enum Command {
         theory: String,
         expr: Expr,
     },
+    /// A lemma: prove a theorem and add conclusion as a derived rule (Cut).
+    Lemma {
+        name: String,
+        theory: String,
+        premises: Vec<Expr>,
+        conclusion: Expr,
+        derivation: Derivation,
+    },
+    /// A lemma proved with tactics.
+    TacticLemma {
+        name: String,
+        theory: String,
+        premises: Vec<Expr>,
+        conclusion: Expr,
+        tactics: Vec<TacticCmd>,
+    },
 }
 
 /// A tactic command (parsed from S-expressions).
@@ -118,6 +134,7 @@ fn desugar_command(sexp: &Sexp) -> Result<Command> {
             Ok(Command::CheckTheory(name.to_string()))
         }
         "proof" => desugar_proof(items, sexp.span()),
+        "lemma" => desugar_lemma(items, sexp.span()),
         "meta-theorem" => desugar_metatheorem(items, sexp.span()),
         "reflect" => desugar_reflect(items, sexp.span()),
         "emit" => desugar_emit(items, sexp.span()),
@@ -715,6 +732,84 @@ fn desugar_proof(items: &[Sexp], span: Span) -> Result<Command> {
             goal,
             derivation,
             assumptions,
+        })
+    }
+}
+
+fn desugar_lemma(items: &[Sexp], span: Span) -> Result<Command> {
+    // (lemma name :theory T :premises (...) :conclusion C :derivation D)
+    // (lemma name :theory T :conclusion C :derivation D)
+    // (lemma name :theory T :premises (...) :conclusion C :tactics ...)
+    let name = expect_atom(&items[1])?;
+    let mut theory = None;
+    let mut premises = Vec::new();
+    let mut conclusion = None;
+    let mut derivation = None;
+    let mut tactics = Vec::new();
+    let mut is_tactic = false;
+
+    let mut i = 2;
+    while i < items.len() {
+        if items[i].is_keyword(":theory") {
+            i += 1;
+            theory = Some(expect_atom(&items[i])?.to_string());
+            i += 1;
+        } else if items[i].is_keyword(":premises") {
+            i += 1;
+            if let Some(plist) = items[i].as_list() {
+                for p in plist {
+                    premises.push(desugar_expr(p)?);
+                }
+            }
+            i += 1;
+        } else if items[i].is_keyword(":conclusion") {
+            i += 1;
+            conclusion = Some(desugar_expr(&items[i])?);
+            i += 1;
+        } else if items[i].is_keyword(":derivation") {
+            i += 1;
+            derivation = Some(desugar_derivation(&items[i])?);
+            i += 1;
+        } else if items[i].is_keyword(":tactics") {
+            is_tactic = true;
+            i += 1;
+            while i < items.len() {
+                tactics.push(desugar_tactic(&items[i])?);
+                i += 1;
+            }
+        } else {
+            i += 1;
+        }
+    }
+
+    let theory = theory.ok_or_else(|| DesugarError {
+        message: "lemma requires :theory".to_string(),
+        span,
+    })?;
+    let conclusion = conclusion.ok_or_else(|| DesugarError {
+        message: "lemma requires :conclusion".to_string(),
+        span,
+    })?;
+
+    if is_tactic {
+        Ok(Command::TacticLemma {
+            name: name.to_string(),
+            theory,
+            premises,
+            conclusion,
+            tactics,
+        })
+    } else {
+        let derivation = derivation.ok_or_else(|| DesugarError {
+            message: "lemma requires :derivation or :tactics".to_string(),
+            span,
+        })?;
+        Ok(Command::Lemma {
+            name: name.to_string(),
+            theory,
+            premises,
+            conclusion,
+            derivation,
         })
     }
 }
@@ -1384,6 +1479,59 @@ mod tests {
             assert_eq!(theory, "PropLogic");
         } else {
             panic!("expected Reflect");
+        }
+    }
+
+    #[test]
+    fn desugar_lemma_form() {
+        let input = r#"
+(lemma and-comm
+  :theory PropLogic
+  :premises ((proves (and ?A ?B)))
+  :conclusion (proves (and ?B ?A))
+  :derivation (and-intro (and-elim-r (assumption)) (and-elim-l (assumption))))
+"#;
+        let sexps = parser::parse(input).unwrap();
+        let cmds = desugar_program(&sexps).unwrap();
+        assert_eq!(cmds.len(), 1);
+
+        if let Command::Lemma {
+            name,
+            theory,
+            premises,
+            conclusion,
+            ..
+        } = &cmds[0]
+        {
+            assert_eq!(name, "and-comm");
+            assert_eq!(theory, "PropLogic");
+            assert_eq!(premises.len(), 1);
+            assert!(matches!(&conclusion, Expr::App(_)));
+        } else {
+            panic!("expected Lemma");
+        }
+    }
+
+    #[test]
+    fn desugar_lemma_no_premises() {
+        let input = r#"
+(lemma top-thm
+  :theory PropLogic
+  :conclusion (proves top)
+  :derivation (top-intro))
+"#;
+        let sexps = parser::parse(input).unwrap();
+        let cmds = desugar_program(&sexps).unwrap();
+        assert_eq!(cmds.len(), 1);
+
+        if let Command::Lemma {
+            name, premises, ..
+        } = &cmds[0]
+        {
+            assert_eq!(name, "top-thm");
+            assert!(premises.is_empty());
+        } else {
+            panic!("expected Lemma");
         }
     }
 }

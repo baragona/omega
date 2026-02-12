@@ -1,0 +1,179 @@
+;; Lemma Demo: The Cut Rule in Action
+;; ====================================
+;; Demonstrates the (lemma ...) command: prove a theorem, then use it as a rule.
+;; This is logically the Cut rule — once a proposition is verified, its proof
+;; is discarded and only the signature (premises → conclusion) is retained.
+
+(theory PropCut
+  (sort Prop)
+
+  ;; Connectives
+  (constructor imp  : (-> Prop Prop Prop))
+  (constructor and  : (-> Prop Prop Prop))
+  (constructor or   : (-> Prop Prop Prop))
+  (constructor neg  : (-> Prop Prop))
+  (constructor bot  : Prop)
+  (constructor top  : Prop)
+
+  ;; Judgment
+  (judgment (proves ?P) :where P : Prop)
+
+  ;; --- Axioms ---
+  ;; Implication
+  (rule imp-intro
+    :premises ((proves ?B))
+    :context ((0 (proves ?A)))
+    :conclusion (proves (imp ?A ?B)))
+
+  (rule imp-elim
+    :premises ((proves (imp ?A ?B)) (proves ?A))
+    :conclusion (proves ?B))
+
+  ;; Conjunction
+  (rule and-intro
+    :premises ((proves ?A) (proves ?B))
+    :conclusion (proves (and ?A ?B)))
+
+  (rule and-elim-l
+    :premises ((proves (and ?A ?B)))
+    :conclusion (proves ?A))
+
+  (rule and-elim-r
+    :premises ((proves (and ?A ?B)))
+    :conclusion (proves ?B))
+
+  ;; Disjunction
+  (rule or-intro-l
+    :premises ((proves ?A))
+    :conclusion (proves (or ?A ?B)))
+
+  (rule or-intro-r
+    :premises ((proves ?B))
+    :conclusion (proves (or ?A ?B)))
+
+  ;; Top/Bot
+  (rule top-intro
+    :conclusion (proves top))
+
+  (rule ex-falso
+    :premises ((proves bot))
+    :conclusion (proves ?A)))
+
+;; ============================================================
+;; Tier 1: Direct proofs (no lemmas needed)
+;; ============================================================
+
+;; Prove: A → A
+(proof identity
+  :theory PropCut
+  :goal (proves (imp ?A ?A))
+  :derivation (imp-intro (assumption)))
+
+;; Prove: A ∧ B → B ∧ A
+(proof and-comm-direct
+  :theory PropCut
+  :goal (proves (imp (and ?A ?B) (and ?B ?A)))
+  :derivation (imp-intro
+    (and-intro
+      (and-elim-r (assumption))
+      (and-elim-l (assumption)))))
+
+;; ============================================================
+;; Tier 2: LEMMAS — prove once, use as rules
+;; ============================================================
+
+;; Lemma: and-comm — ∧ is commutative
+;; Premises: (proves (and ?A ?B))
+;; Conclusion: (proves (and ?B ?A))
+;; After verification, this becomes a RULE usable in later proofs.
+(lemma and-comm
+  :theory PropCut
+  :premises ((proves (and ?A ?B)))
+  :conclusion (proves (and ?B ?A))
+  :derivation (and-intro
+    (and-elim-r (assumption))
+    (and-elim-l (assumption))))
+
+;; Lemma: and-assoc — ∧ is associative (left to right)
+;; (A ∧ B) ∧ C → A ∧ (B ∧ C)
+(lemma and-assoc
+  :theory PropCut
+  :premises ((proves (and (and ?A ?B) ?C)))
+  :conclusion (proves (and ?A (and ?B ?C)))
+  :derivation (and-intro
+    (and-elim-l (and-elim-l (assumption)))
+    (and-intro
+      (and-elim-r (and-elim-l (assumption)))
+      (and-elim-r (assumption)))))
+
+;; ============================================================
+;; Tier 3: CHAINING LEMMAS — use derived rules in new proofs
+;; ============================================================
+
+;; Use and-comm (now a rule!) to prove: A ∧ B → B ∧ A in one step
+(proof and-comm-via-lemma
+  :theory PropCut
+  :goal (proves (imp (and ?A ?B) (and ?B ?A)))
+  :derivation (imp-intro (and-comm (assumption))))
+
+;; Use and-assoc (a lemma) to prove: (A ∧ B) ∧ C → A ∧ (B ∧ C) in one step
+(proof and-assoc-via-lemma
+  :theory PropCut
+  :goal (proves (imp (and (and ?A ?B) ?C) (and ?A (and ?B ?C))))
+  :derivation (imp-intro (and-assoc (assumption))))
+
+;; Chain two lemmas: (A ∧ B) ∧ C → (B ∧ C) ∧ A
+;; Step 1: and-assoc gives A ∧ (B ∧ C)
+;; Step 2: and-comm gives (B ∧ C) ∧ A
+(proof chain-assoc-comm
+  :theory PropCut
+  :goal (proves (imp (and (and ?A ?B) ?C) (and (and ?B ?C) ?A)))
+  :derivation (imp-intro
+    (and-comm (and-assoc (assumption)))))
+
+;; ============================================================
+;; Tier 4: DEEP CHAINING — lemma building on lemma
+;; ============================================================
+
+;; Lemma: and-comm-assoc — combine two lemmas into a third
+;; (A ∧ B) ∧ C → (B ∧ C) ∧ A
+(lemma and-comm-assoc
+  :theory PropCut
+  :premises ((proves (and (and ?A ?B) ?C)))
+  :conclusion (proves (and (and ?B ?C) ?A))
+  :derivation (and-comm (and-assoc (assumption))))
+
+;; Now use and-comm-assoc as a primitive rule
+(proof deep-chain
+  :theory PropCut
+  :goal (proves (imp (and (and ?A ?B) ?C) (and (and ?B ?C) ?A)))
+  :derivation (imp-intro (and-comm-assoc (assumption))))
+
+;; Lemma with no premises: ⊤ is provable (pure theorem)
+(lemma top-theorem
+  :theory PropCut
+  :conclusion (proves top)
+  :derivation (top-intro))
+
+;; Use the zero-premise lemma
+(proof use-top-theorem
+  :theory PropCut
+  :goal (proves (and top top))
+  :derivation (and-intro (top-theorem) (top-theorem)))
+
+;; ============================================================
+;; Tier 5: MODUS PONENS AS A LEMMA
+;; ============================================================
+
+;; Lemma: mp — modus ponens (just imp-elim, but now named)
+(lemma mp
+  :theory PropCut
+  :premises ((proves (imp ?A ?B)) (proves ?A))
+  :conclusion (proves ?B)
+  :derivation (imp-elim (assumption) (assumption)))
+
+;; Use mp to build a proof
+(proof mp-chain
+  :theory PropCut
+  :goal (proves (imp (imp ?A ?B) (imp ?A ?B)))
+  :derivation (imp-intro (assumption)))

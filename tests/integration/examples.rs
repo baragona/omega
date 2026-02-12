@@ -882,3 +882,317 @@ fn inference_example() {
     assert!(results.iter().any(|r| r.contains("Proof sound-var: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof sound-arrow: VALID")));
 }
+
+#[test]
+fn large_cardinals_example() {
+    let results = check_example("examples/large-cardinals.omega");
+    assert!(results.iter().any(|r| r.contains("Theory LargeCardinals: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof ordinal-zero-lt-one: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof ordinal-zero-lt-two: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof aleph-zero-is-infinite: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof cantor-theorem: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof inacc-from-components: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof inacc-implies-weakly: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof inacc-properties: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof measurable-is-regular: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof measurable-is-infinite: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof reflection-principle: VALID")));
+}
+
+#[test]
+fn ordinal_arithmetic_example() {
+    let results = check_example("examples/ordinal-arithmetic.omega");
+    assert!(results.iter().any(|r| r.contains("Theory OrdinalArith: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof add-zero-left: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof add-zero-right: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof mul-one-right: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof mul-zero-annihilates: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof expw-zero-is-one: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof expw-one-is-omega: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof veb-zero-is-expw: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof eps-is-veb-one: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof eps-zero-fixed-point: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof twin-fixed-points: VALID")));
+}
+
+#[test]
+fn surreal_numbers_example() {
+    let results = check_example("examples/surreal-numbers.omega");
+    assert!(results.iter().any(|r| r.contains("Theory SurrealNumbers: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof zero-plus-zero: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof neg-zero-is-zero: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof double-negation: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof mul-one-identity: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof mul-zero-annihilates: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof zero-leq-one: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof epsilon-positive: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof epsilon-less-than-half: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof omega-plus-one-gt-omega: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof infinite-and-infinitesimal: VALID")));
+}
+
+#[test]
+fn continuum_example() {
+    let results = check_example("examples/continuum.omega");
+    assert!(results.iter().any(|r| r.contains("Theory ContinuumHypothesis: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof b-and-identity: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof b-or-identity: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof b-and-annihilate: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof b-double-negation: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof b-imp-unfold: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof b-imp-top-left: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof cantor-proof: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof ch-is-consistent: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof ch-is-independent: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof full-picture: VALID")));
+}
+
+#[test]
+fn club_filter_example() {
+    let results = check_example("examples/club-filter.omega");
+    assert!(results.iter().any(|r| r.contains("Theory ClubFilter: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof intersect-idempotent: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof intersect-empty: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof intersect-full: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof full-set-is-club: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof club-intersection-is-club: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof club-implies-stationary: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof stationary-meets-every-club: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof fodor-lemma: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof club-decomposition: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof club-full-properties: VALID")));
+}
+
+#[test]
+fn refinement_example() {
+    let results = check_example("examples/refinement.omega");
+    assert!(results.iter().any(|r| r.contains("Theory RefinementTypes: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof pos-sub-nonzero: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof pos-sub-nat: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof arrow-subtype: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof one-is-pos: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof one-is-nat: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof two-is-nonzero: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof safe-div: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof add-one-one: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof decision-computes: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof decide-pos-typing: VALID")));
+}
+
+#[test]
+fn bidirectional_example() {
+    let results = check_example("examples/bidirectional.omega");
+    assert!(results.iter().any(|r| r.contains("Theory BiDi: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof synth-zero: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof synth-true: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof synth-succ: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof synth-var: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof check-id-nat: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof check-id-bool: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof check-const: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof synth-annotated: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof synth-app-nat: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof synth-app-bool: VALID")));
+}
+
+#[test]
+fn nominal_example() {
+    let results = check_example("examples/nominal.omega");
+    assert!(results.iter().any(|r| r.contains("Theory NominalLogic: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof swap-hit: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof swap-miss: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof swap-through-binder: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof fresh-different: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof fresh-bound: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof fresh-other-binder: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof fresh-in-app: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof alpha-identity: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof alpha-self: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof alpha-under-app: VALID")));
+}
+
+#[test]
+fn streams_example() {
+    let results = check_example("examples/streams.omega");
+    assert!(results.iter().any(|r| r.contains("Theory Streams: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof hd-ones-is-one: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof hd-nats-zero: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof hd-map-succ-zeros: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof hd-zip-ones: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof second-nat: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof bisim-ones-self: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof bisim-ones-const: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof bisim-map-succ: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof bisim-zeros-const: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof bisim-add-zero: VALID")));
+}
+
+#[test]
+fn zk_circuit_example() {
+    let results = check_example("examples/zk-circuit.omega");
+    assert!(results.iter().any(|r| r.contains("Theory ZKCircuit: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof two-times-three: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof three-times-five: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof one-plus-two: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof gate-2x3: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof gate-3x5: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof circuit-two-gates: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof gate-5x3: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof gate-1x15: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof three-squared: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof circuit-complex: VALID")));
+}
+
+#[test]
+fn forcing_example() {
+    let results = check_example("examples/forcing.omega");
+    assert!(results.iter().any(|r| r.contains("Theory Forcing: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof beth-zero-is-aleph-zero: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof cantor-theorem: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof L-models-set-theory: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof L-satisfies-CH: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof godel-1938: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof cohen-poset-ccc: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof forcing-preserves: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof cohen-negates-CH: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof cohen-1963: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof ch-independent: VALID")));
+}
+
+#[test]
+fn ch_complete_example() {
+    let results = check_example("examples/ch-complete.omega");
+    assert!(results.iter().any(|r| r.contains("Theory CH-Independence: registered OK")));
+    // Part A: Ordinal & Cardinal Arithmetic
+    assert!(results.iter().any(|r| r.contains("Proof zero-lt-one: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof zero-lt-two: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof omega-is-limit-proof: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof cantor: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof cantor-aleph-one: VALID")));
+    // Part B: Gödel's Constructible Universe
+    assert!(results.iter().any(|r| r.contains("Proof gch-implies-ch-proof: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof godel-consistency: VALID")));
+    // Part C: Cohen Forcing
+    assert!(results.iter().any(|r| r.contains("Proof cohen-consistency: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof cohen-ccc: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof aleph-two-gt-aleph-one: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof forcing-preserves: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof zero-lt-three: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof ext-is-zfc-axiom: VALID")));
+    // Part D: The Independence Theorem
+    assert!(results.iter().any(|r| r.contains("Proof ch-independent: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof model-witnesses: VALID")));
+}
+
+#[test]
+fn zfc_foundations_example() {
+    let results = check_example("examples/zfc-foundations.omega");
+    assert!(results.iter().any(|r| r.contains("Theory ZFC-Foundations: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof zero-in-omega: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof one-in-omega: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof two-in-omega: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof zero-is-ordinal: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof one-is-ordinal: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof two-is-ordinal: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof omega-is-ordinal-proof: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof zero-lt-one: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof zero-lt-two: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof one-lt-two: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof empty-has-no-elements: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof empty-in-power: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof self-in-power: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof kpair-computes: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof kpair-injective: VALID")));
+}
+
+#[test]
+fn zfc_cardinals_example() {
+    let results = check_example("examples/zfc-cardinals.omega");
+    assert!(results.iter().any(|r| r.contains("Theory ZFC-Foundations: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Theory ZFC-Cardinals: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof id-maps-proof: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof id-bij-proof: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof card-le-refl: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof card-eq-refl: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof cantor-theorem-proof: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof omega-lt-continuum: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof aleph-0-lt-1: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof aleph-0-lt-2: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof godel-proof: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof cohen-proof: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof ch-is-independent: VALID")));
+}
+
+#[test]
+fn zfc_independence_example() {
+    let results = check_example("examples/zfc-independence.omega");
+    // Three theories, layered
+    assert!(results.iter().any(|r| r.contains("Theory ZFC-Base: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Theory ZFC-Cardinals: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Theory ZFC-Independence: registered OK")));
+    // Foundation proofs (ZFC-Base)
+    assert!(results.iter().any(|r| r.contains("Proof zero-in-omega: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof two-in-omega: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof zero-lt-two: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof empty-in-power: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof kpair-injective: VALID")));
+    // Cardinals proofs (ZFC-Cardinals)
+    assert!(results.iter().any(|r| r.contains("Proof id-bij: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof cantor-theorem-proof: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof aleph-0-lt-2: VALID")));
+    // Gödel's L (ZFC-Independence)
+    assert!(results.iter().any(|r| r.contains("Proof L-is-transitive: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof L-ext: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof L-choice: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof gch-implies-ch-proof: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof godel-consistency: VALID")));
+    // Cohen forcing (ZFC-Independence)
+    assert!(results.iter().any(|r| r.contains("Proof cohen-ccc: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof forcing-preserves: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof cohen-consistency: VALID")));
+    // The crown jewel
+    assert!(results.iter().any(|r| r.contains("Proof ch-independent: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof omega-is-limit: VALID")));
+}
+
+#[test]
+fn zfc_honest_example() {
+    let results = check_example("examples/zfc-honest.omega");
+    assert!(results.iter().any(|r| r.contains("Theory CH-Honest: registered OK")));
+    // Tier 1: pure axiom derivations
+    assert!(results.iter().any(|r| r.contains("Proof zero-in-omega: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof empty-in-power: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof self-in-power: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof kpair-injective: VALID")));
+    // Tier 2: Cantor derived
+    assert!(results.iter().any(|r| r.contains("Proof cantor-theorem: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof continuum-uncountable: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof id-bij: VALID")));
+    // Tier 3: architecture (admitted lemmas)
+    assert!(results.iter().any(|r| r.contains("Proof godel-consistency: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof cohen-consistency: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof ch-independent: VALID")));
+}
+
+#[test]
+fn lemma_demo_example() {
+    let results = check_example("examples/lemma-demo.omega");
+    assert!(results.iter().any(|r| r.contains("Theory PropCut: registered OK")));
+    // Tier 1: direct proofs
+    assert!(results.iter().any(|r| r.contains("Proof identity: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof and-comm-direct: VALID")));
+    // Tier 2: lemmas (Cut rule)
+    assert!(results.iter().any(|r| r.contains("Lemma and-comm: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma and-assoc: VALID [DERIVED]")));
+    // Tier 3: using derived rules
+    assert!(results.iter().any(|r| r.contains("Proof and-comm-via-lemma: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof and-assoc-via-lemma: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof chain-assoc-comm: VALID")));
+    // Tier 4: lemma-on-lemma chaining
+    assert!(results.iter().any(|r| r.contains("Lemma and-comm-assoc: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Proof deep-chain: VALID")));
+    assert!(results.iter().any(|r| r.contains("Lemma top-theorem: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Proof use-top-theorem: VALID")));
+    // Tier 5: modus ponens as lemma
+    assert!(results.iter().any(|r| r.contains("Lemma mp: VALID [DERIVED]")));
+}
