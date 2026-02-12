@@ -1164,6 +1164,14 @@ fn zfc_honest_example() {
     assert!(results.iter().any(|r| r.contains("Lemma diag-contradiction: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma cantor-no-surj: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma cantor: VALID [DERIVED]")));
+    // Infrastructure lemmas (formula induction + L ⊨ ZFC + Gödel)
+    assert!(results.iter().any(|r| r.contains("Lemma L-models-zfc: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma godel-theorem: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma all-well-formed: VALID [DERIVED]")));
+    // Truth Lemma + Forcing (decomposed into per-case/per-axiom + induction/chain)
+    assert!(results.iter().any(|r| r.contains("Lemma truth-lemma-induction: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma truth-lemma: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma forcing-preserves-zfc: VALID [DERIVED]")));
     // Tier 1: pure axiom derivations
     assert!(results.iter().any(|r| r.contains("Proof zero-in-omega: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof empty-in-power: VALID")));
