@@ -1180,6 +1180,11 @@ fn zfc_honest_example() {
     assert!(results.iter().any(|r| r.contains("Lemma def-closed-sat-pair: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma def-closed-sat-union: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma def-closed-sat-sep: VALID [DERIVED]")));
+    // Phase 11: omega ordinals (via induction) + function infrastructure (composition)
+    assert!(results.iter().any(|r| r.contains("Lemma omega-ordinal: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma omega-is-limit: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma inj-to-power: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma id-is-bij: VALID [DERIVED]")));
     // Cantor lemma chain (proved from axioms via Cut)
     assert!(results.iter().any(|r| r.contains("Lemma diag-in-power: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma diag-contradiction: VALID [DERIVED]")));
