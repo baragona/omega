@@ -1,0 +1,336 @@
+;;; Hyperfinite Analysis — Nonstandard Numbers and Infinitesimals
+;;;
+;;; Nonstandard analysis (Robinson, 1960s) extends the natural numbers
+;;; and reals with "ideal" elements: infinitely large hypernaturals
+;;; and infinitely small infinitesimals. A hyperfinite set has
+;;; cardinality H (an infinite hypernatural) yet is "internally finite" —
+;;; every internal property of finite sets applies to it.
+;;;
+;;; The key principles:
+;;;   TRANSFER: Every first-order property true of standard numbers
+;;;             is true of ALL hypernaturals (including nonstandard ones).
+;;;   OVERFLOW: If P(n) holds for every standard n, then P(H) for
+;;;             some infinite hypernatural H.
+;;;
+;;; This theory uses a single number sort with a "standard" predicate —
+;;; standard numbers are z, s(z), s(s(z)), ... while H is a fixed
+;;; infinite (nonstandard) hypernatural living in the same domain.
+;;;
+;;; Proved here:
+;;;   1.  1 + 1 = 2                           (standard computation)
+;;;   2.  hsum(3) = 6                          (triangular number T_3)
+;;;   3.  hsum(4) = 10                         (triangular number T_4)
+;;;   4.  0 is standard                        (base case)
+;;;   5.  3 is standard                        (direct construction)
+;;;   6.  H is infinite                        (the nonstandard element)
+;;;   7.  H is not standard                    (infinite => not standard)
+;;;   8.  3 < H                                (every standard < H)
+;;;   9.  0 < epsilon                          (infinitesimal is positive)
+;;;  10.  0 < epsilon < 1                      (between zero and one)
+;;;  11.  H + 0 = H                            (TRANSFER from induction!)
+;;;  12.  H < H + 1                            (TRANSFER from successor)
+
+(theory HyperfiniteAnalysis
+  ;; ── A single number domain containing both standard and nonstandard ──
+  (sort Num)
+  (sort HReal)     ; Hyperreals (for infinitesimals)
+  (sort Prop)
+
+  ;; ── Numbers: standard constructors + the infinite hypernatural H ──
+  (constructor z : Num)
+  (constructor s : (-> Num Num))
+  (constructor add : (-> Num Num Num))
+  (constructor H : Num)                     ; THE infinite hypernatural
+
+  ;; ── Arithmetic ──
+  (rewrite add-z (add z ?n) ?n)
+  (rewrite add-s (add (s ?n) ?m) (s (add ?n ?m)))
+
+  ;; ── Hyperfinite sums: hsum(n) = 1 + 2 + ... + n ──
+  ;; These compute for standard n. By transfer, hsum(H) is a
+  ;; well-defined hyperfinite sum of H terms — internally finite,
+  ;; externally infinite.
+  (constructor hsum : (-> Num Num))
+  (rewrite hsum-z (hsum z) z)
+  (rewrite hsum-s (hsum (s ?n)) (add (s ?n) (hsum ?n)))
+
+  ;; ── Hyperreals (for infinitesimals) ──
+  (constructor r-zero : HReal)
+  (constructor r-from-num : (-> Num HReal))
+  (constructor r-inv : (-> HReal HReal))    ; multiplicative inverse
+  (constructor epsilon : HReal)             ; the canonical infinitesimal 1/H
+  ;; epsilon is kept opaque — we reason about it via axioms, not rewriting.
+
+  ;; ── Propositions ──
+  (constructor eq-n : (-> Num Num Prop))
+  (constructor eq-r : (-> HReal HReal Prop))
+  (constructor lt-n : (-> Num Num Prop))
+  (constructor lt-r : (-> HReal HReal Prop))
+  (constructor std : (-> Num Prop))              ; "n is standard"
+  (constructor infinite : (-> Num Prop))          ; "n is infinite"
+  (constructor infinitesimal : (-> HReal Prop))   ; "x is infinitely small"
+  (constructor and-p : (-> Prop Prop Prop))
+  (constructor imp-p : (-> Prop Prop Prop))
+  (constructor not-p : (-> Prop Prop))
+
+  ;; ── Judgment ──
+  (judgment (holds ?P) :where P : Prop)
+
+  ;; ── Equational reasoning ──
+  (rule eq-refl
+    :premises ()
+    :conclusion (holds (eq-n ?a ?a)))
+
+  (rule eq-succ
+    :premises ((holds (eq-n ?a ?b)))
+    :conclusion (holds (eq-n (s ?a) (s ?b))))
+
+  (rule eq-r-refl
+    :premises ()
+    :conclusion (holds (eq-r ?a ?a)))
+
+  ;; ── Propositional logic ──
+  (rule and-intro
+    :premises ((holds ?A) (holds ?B))
+    :conclusion (holds (and-p ?A ?B)))
+
+  (rule imp-intro
+    :premises ((holds ?B))
+    :context ((0 (holds ?A)))
+    :conclusion (holds (imp-p ?A ?B)))
+
+  ;; ── Natural number induction ──
+  ;; This works for standard numbers (z/s structure). Transfer
+  ;; extends inductive results to nonstandard elements like H.
+  (rule nat-ind
+    :premises ((holds (?P z)) (holds (?P (s ?n))))
+    :context ((1 (holds (?P ?n))))
+    :conclusion (holds (?P ?n)))
+
+  ;; ═══════════════════════════════════════════════════════
+  ;; STANDARDNESS — tracking which numbers come from z/s
+  ;; ═══════════════════════════════════════════════════════
+
+  (rule std-z
+    :premises ()
+    :conclusion (holds (std z)))
+
+  (rule std-s
+    :premises ((holds (std ?n)))
+    :conclusion (holds (std (s ?n))))
+
+  ;; ═══════════════════════════════════════════════════════
+  ;; THE INFINITE HYPERNATURAL H
+  ;; ═══════════════════════════════════════════════════════
+
+  (rule H-infinite
+    :premises ()
+    :conclusion (holds (infinite H)))
+
+  ;; Infinite implies not standard
+  (rule infinite-not-std
+    :premises ((holds (infinite ?n)))
+    :conclusion (holds (not-p (std ?n))))
+
+  ;; Every standard number is less than H
+  (rule std-lt-H
+    :premises ((holds (std ?n)))
+    :conclusion (holds (lt-n ?n H)))
+
+  ;; ═══════════════════════════════════════════════════════
+  ;; TRANSFER PRINCIPLE
+  ;; ═══════════════════════════════════════════════════════
+  ;;
+  ;; If P(n) is provable for arbitrary n (with n as a free
+  ;; meta-variable), then P(H) holds. This captures Robinson's
+  ;; transfer: first-order truths extend to the nonstandard world.
+  ;;
+  ;; Sound for INTERNAL properties (those not mentioning "std",
+  ;; "infinite", or H itself). We trust the user to respect this.
+  (rule transfer
+    :premises ((holds (?P ?n)))
+    :conclusion (holds (?P H)))
+
+  ;; ═══════════════════════════════════════════════════════
+  ;; INFINITESIMALS
+  ;; ═══════════════════════════════════════════════════════
+
+  ;; epsilon = 1/H is infinitesimal (positive but smaller than every standard)
+  (rule eps-infinitesimal
+    :premises ()
+    :conclusion (holds (infinitesimal epsilon)))
+
+  (rule eps-positive
+    :premises ()
+    :conclusion (holds (lt-r r-zero epsilon)))
+
+  ;; Every infinitesimal is less than every standard positive
+  (rule infinitesimal-lt-std
+    :premises ((holds (infinitesimal ?x)) (holds (std ?n)))
+    :conclusion (holds (lt-r ?x (r-from-num (s ?n)))))
+
+  ;; ── Basic ordering ──
+  (rule lt-succ
+    :premises ()
+    :conclusion (holds (lt-n ?n (s ?n)))))
+
+(check-theory HyperfiniteAnalysis)
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 1: 1 + 1 = 2  (standard arithmetic still works)
+;;; ═══════════════════════════════════════════════════════════
+
+(proof one-plus-one
+  :theory HyperfiniteAnalysis
+  :goal (holds (eq-n (add (s z) (s z)) (s (s z))))
+  :derivation (eq-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 2: hsum(3) = 6    (triangular number T_3 = 1+2+3)
+;;; ═══════════════════════════════════════════════════════════
+;;; hsum(3) = 3 + hsum(2) = 3 + (2 + hsum(1)) = 3 + (2 + (1 + 0))
+;;;         = 3 + (2 + 1) = 3 + 3 = 6
+
+(proof triangular-three
+  :theory HyperfiniteAnalysis
+  :goal (holds (eq-n
+    (hsum (s (s (s z))))
+    (s (s (s (s (s (s z))))))))
+  :derivation (eq-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 3: hsum(4) = 10   (triangular number T_4 = 1+2+3+4)
+;;; ═══════════════════════════════════════════════════════════
+;;; hsum(4) = 4 + hsum(3) = 4 + 6 = 10
+
+(proof triangular-four
+  :theory HyperfiniteAnalysis
+  :goal (holds (eq-n
+    (hsum (s (s (s (s z)))))
+    (s (s (s (s (s (s (s (s (s (s z))))))))))))
+  :derivation (eq-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 4: 0 is standard
+;;; ═══════════════════════════════════════════════════════════
+
+(proof zero-standard
+  :theory HyperfiniteAnalysis
+  :goal (holds (std z))
+  :derivation (std-z))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 5: 3 is standard
+;;; ═══════════════════════════════════════════════════════════
+
+(proof three-standard
+  :theory HyperfiniteAnalysis
+  :goal (holds (std (s (s (s z)))))
+  :derivation (std-s (std-s (std-s (std-z)))))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 6: H is infinite
+;;; ═══════════════════════════════════════════════════════════
+
+(proof H-is-infinite
+  :theory HyperfiniteAnalysis
+  :goal (holds (infinite H))
+  :derivation (H-infinite))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 7: H is not standard
+;;; ═══════════════════════════════════════════════════════════
+;;; Infinite numbers live outside the range of z/s(z)/s(s(z))/...
+
+(proof H-not-standard
+  :theory HyperfiniteAnalysis
+  :goal (holds (not-p (std H)))
+  :derivation (infinite-not-std (H-infinite)))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 8: 3 < H    (every standard number is less than H)
+;;; ═══════════════════════════════════════════════════════════
+
+(proof three-lt-H
+  :theory HyperfiniteAnalysis
+  :goal (holds (lt-n (s (s (s z))) H))
+  :derivation (std-lt-H (std-s (std-s (std-s (std-z))))))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 9: 0 < epsilon    (the infinitesimal is positive)
+;;; ═══════════════════════════════════════════════════════════
+;;; epsilon = 1/H is positive: smaller than every standard positive
+;;; number, yet strictly greater than zero. This is the number that
+;;; makes calculus rigorous without limits.
+
+(proof epsilon-positive
+  :theory HyperfiniteAnalysis
+  :goal (holds (lt-r r-zero epsilon))
+  :derivation (eps-positive))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 10: 0 < epsilon AND epsilon < 1
+;;; ═══════════════════════════════════════════════════════════
+;;; The infinitesimal lives strictly between 0 and 1.
+;;; Here "1" is r-from-num(s(z)).
+
+(proof epsilon-between-zero-and-one
+  :theory HyperfiniteAnalysis
+  :goal (holds (and-p
+    (lt-r r-zero epsilon)
+    (lt-r epsilon (r-from-num (s z)))))
+  :derivation
+    (and-intro
+      (eps-positive)
+      (infinitesimal-lt-std (eps-infinitesimal) (std-z))))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 11: H + 0 = H        (TRANSFER from standard induction)
+;;; ═══════════════════════════════════════════════════════════
+;;;
+;;; THE SHOWCASE PROOF. In standard arithmetic, n + 0 = n is proved
+;;; by induction. But add(H, z) CANNOT be computed — H is neither z
+;;; nor s(...), so the rewrite rules add-z and add-s don't fire.
+;;;
+;;; Transfer saves us: the inner nat-ind proof establishes
+;;; add(?n, z) = ?n for arbitrary ?n (a universal statement).
+;;; Transfer instantiates ?n ↦ H, yielding add(H, z) = H.
+;;;
+;;; This is Robinson's key insight: we never need to "compute" with
+;;; infinite numbers. We prove properties in the standard world
+;;; (where induction works) and transfer them wholesale.
+
+(proof H-plus-zero
+  :theory HyperfiniteAnalysis
+  :goal (holds (eq-n (add H z) H))
+  :derivation
+    (transfer
+      (nat-ind
+        (eq-refl)
+        (eq-succ (assumption)))))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 12: H < H + 1        (TRANSFER from successor ordering)
+;;; ═══════════════════════════════════════════════════════════
+;;; For every n, n < s(n) (lt-succ). This is an internal property:
+;;; it doesn't mention "standard" or H. Transfer extends it to H.
+;;;
+;;; The infinite hypernatural is NOT a maximum — there's always
+;;; room for one more, even beyond infinity.
+
+(proof H-lt-successor
+  :theory HyperfiniteAnalysis
+  :goal (holds (lt-n H (s H)))
+  :derivation (transfer (lt-succ)))

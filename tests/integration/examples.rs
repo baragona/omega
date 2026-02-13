@@ -916,6 +916,36 @@ fn ordinal_arithmetic_example() {
 }
 
 #[test]
+fn ultrafinite_example() {
+    let results = check_example("examples/ultrafinite.omega");
+    assert!(results.iter().any(|r| r.contains("Theory UltrafiniteArith: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof one-plus-one: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof two-times-three: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof two-cubed: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof two-tetrated-three: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof exp-equals-tower: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof three-feasible: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof doubling-preserves-feasibility: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof mul-preserves-feasibility: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof the-gap: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof double-succ-feasible: VALID")));
+}
+
+#[test]
+fn hyperfinite_example() {
+    let results = check_example("examples/hyperfinite.omega");
+    assert!(results.iter().any(|r| r.contains("Theory HyperfiniteAnalysis: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof triangular-three: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof triangular-four: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof H-is-infinite: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof H-not-standard: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof three-lt-H: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof epsilon-between-zero-and-one: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof H-plus-zero: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof H-lt-successor: VALID")));
+}
+
+#[test]
 fn surreal_numbers_example() {
     let results = check_example("examples/surreal-numbers.omega");
     assert!(results.iter().any(|r| r.contains("Theory SurrealNumbers: registered OK")));
@@ -1276,6 +1306,44 @@ fn zfc_honest_example() {
     assert!(results.iter().any(|r| r.contains("Lemma generic-existence: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma cohen-adds-reals: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma ccc-preserves-cardinals: VALID [DERIVED]")));
+    // Phase 19: equality congruence lemmas (proved from FOL + equality)
+    assert!(results.iter().any(|r| r.contains("Lemma neg-mem-eq: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma bic-mem-eq: VALID [DERIVED]")));
+    // Phase 18: final composite rule recovery lemmas
+    assert!(results.iter().any(|r| r.contains("Lemma thinnable-names-are-nice: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma ground-rep-extends: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma uniform-subfamily-has-delta-system: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma cohen-generic-adds-kappa-reals: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma bounded-antichains-block-collapse: VALID [DERIVED]")));
+    // Phase 17: deep theorem recovery lemmas (from 2-step decompositions)
+    assert!(results.iter().any(|r| r.contains("Lemma L-has-well-founded-submodels: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma well-founded-extensional-collapses: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma L-has-def-preserving-collapse: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma def-preserving-collapse-lands-in-L: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma L-has-unbounded-ordinals: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma unbounded-ordinals-give-cofinal-stages: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma L-has-birthday-function: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma countable-language-gives-elem-submodel: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma tarski-vaught-gives-reflection: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma condensation-bounds-subsets: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma condensation-counts-subsets: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma reflection-bounds-ranges: VALID [DERIVED]")));
+    // Phase 16: named theorem recovery lemmas (from biconditional defs + decompositions)
+    assert!(results.iter().any(|r| r.contains("Lemma L-has-countable-language: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma L-has-finite-language: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma finite-language-gives-godel-numbering: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma birthday-function-gives-stage-ordering: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma condensation-assembly: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma wellorder-from-parts: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma countable-dense-gives-enum: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma descending-chain-gives-generic: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma delta-root-compatible: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma compatible-pairs-give-ccc: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma kappa-reals-card-ge: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma bounded-no-collapse: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma no-collapse-preserves: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma cardinal-preservation-aleph: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma cohen-negates-ch: VALID [DERIVED]")));
     // Cohen theorem (derived from forcing-preserves + generic + cohen-adds-reals)
     assert!(results.iter().any(|r| r.contains("Lemma cohen-theorem: VALID [DERIVED]")));
     // Tier 1: pure axiom derivations

@@ -1,0 +1,305 @@
+;;; Ultrafinite Arithmetic — The Edge of Feasibility
+;;;
+;;; Ultrafinitism (Yessenin-Volpin, Nelson) holds that only "feasibly
+;;; constructible" numbers truly exist. Unlike standard mathematics where
+;;; 2↑↑↑3 is a perfectly good number, the ultrafinitist demands a
+;;; concrete certificate of constructibility.
+;;;
+;;; This theory formalizes the ultrafinitist's world:
+;;;   - Numbers exist as syntax (computation works on ALL terms)
+;;;   - FEASIBILITY is a separate certification, closed under "tame" operations
+;;;   - Addition and multiplication preserve feasibility (polynomial growth)
+;;;   - Exponentiation and tetration have NO feasibility certificates
+;;;   - There is NO induction principle (the ultrafinitist's key restriction)
+;;;
+;;; The tension: we can COMPUTE 2↑↑3 = 16 (just rewriting), and we can
+;;; CERTIFY that 16 is feasible (count up from zero), but we cannot prove
+;;; that tetration preserves feasibility in general. The function computes;
+;;; its growth rate outruns our certificates.
+;;;
+;;; Proved here:
+;;;   1.  1 + 1 = 2                          (addition computes)
+;;;   2.  2 * 3 = 6                          (multiplication computes)
+;;;   3.  2^3 = 8                            (exponentiation computes)
+;;;   4.  2^^3 = 16                          (tetration computes!)
+;;;   5.  2^4 = 2^^3                         (they agree at this height)
+;;;   6.  3 is feasible                      (direct construction)
+;;;   7.  2 + 3 is feasible                  (addition preserves feasibility)
+;;;   8.  3 * 3 is feasible                  (multiplication preserves feasibility)
+;;;   9.  feasible(n) -> feasible(n + n)     (doubling preserves feasibility)
+;;;  10.  feasible(n) /\ feasible(m)
+;;;         -> feasible(n * m)               (closure under multiplication)
+;;;  11.  2^^2 = 4 /\ feasible(4)           (the gap: value is feasible,
+;;;                                           but no GENERAL tower certificate)
+;;;  12.  feasible(n) -> feasible(s(s(n)))   (double successor)
+
+(theory UltrafiniteArith
+  (sort Num)
+  (sort Prop)
+
+  ;; ── Natural number constructors ──
+  (constructor z : Num)
+  (constructor s : (-> Num Num))
+  (constructor add : (-> Num Num Num))
+  (constructor mul : (-> Num Num Num))
+  (constructor exp2 : (-> Num Num))          ; 2^n
+  (constructor tower2 : (-> Num Num))        ; 2^^n (tetration: 2↑↑n)
+
+  ;; ── Named constants (for readable goals) ──
+  (constructor n4 : Num)
+  (constructor n8 : Num)
+  (constructor n16 : Num)
+  (rewrite def-n4  n4  (s (s (s (s z)))))
+  (rewrite def-n8  n8  (add n4 n4))
+  (rewrite def-n16 n16 (add n8 n8))
+
+  ;; ── Arithmetic rewrites ──
+  (rewrite add-z (add z ?n) ?n)
+  (rewrite add-s (add (s ?n) ?m) (s (add ?n ?m)))
+  (rewrite mul-z (mul z ?n) z)
+  (rewrite mul-s (mul (s ?n) ?m) (add ?m (mul ?n ?m)))
+
+  ;; ── Exponentiation: 2^0 = 1, 2^(n+1) = 2^n + 2^n ──
+  (rewrite exp2-z (exp2 z) (s z))
+  (rewrite exp2-s (exp2 (s ?n)) (add (exp2 ?n) (exp2 ?n)))
+
+  ;; ── Tetration: 2^^0 = 1, 2^^(n+1) = 2^(2^^n) ──
+  (rewrite tower2-z (tower2 z) (s z))
+  (rewrite tower2-s (tower2 (s ?n)) (exp2 (tower2 ?n)))
+
+  ;; ── Propositions ──
+  (constructor eq-n : (-> Num Num Prop))
+  (constructor feasible : (-> Num Prop))
+  (constructor and-p : (-> Prop Prop Prop))
+  (constructor imp-p : (-> Prop Prop Prop))
+
+  ;; ── Judgment ──
+  (judgment (holds ?P) :where P : Prop)
+
+  ;; ── Equational reasoning ──
+  (rule eq-refl
+    :premises ()
+    :conclusion (holds (eq-n ?a ?a)))
+
+  (rule eq-symm
+    :premises ((holds (eq-n ?a ?b)))
+    :conclusion (holds (eq-n ?b ?a)))
+
+  ;; ── Propositional logic ──
+  (rule and-intro
+    :premises ((holds ?A) (holds ?B))
+    :conclusion (holds (and-p ?A ?B)))
+
+  (rule and-elim-l
+    :premises ((holds (and-p ?A ?B)))
+    :conclusion (holds ?A))
+
+  (rule and-elim-r
+    :premises ((holds (and-p ?A ?B)))
+    :conclusion (holds ?B))
+
+  (rule imp-intro
+    :premises ((holds ?B))
+    :context ((0 (holds ?A)))
+    :conclusion (holds (imp-p ?A ?B)))
+
+  ;; ═══════════════════════════════════════════════════════
+  ;; THE ULTRAFINITIST'S CREED: Feasibility Axioms
+  ;; ═══════════════════════════════════════════════════════
+  ;;
+  ;; Zero is feasible. Successor, addition, and multiplication
+  ;; preserve feasibility. But there is NO rule for exp2 or tower2.
+  ;; There is NO induction principle. Each feasibility certificate
+  ;; must be constructed explicitly, step by step.
+
+  (rule feas-z
+    :premises ()
+    :conclusion (holds (feasible z)))
+
+  (rule feas-s
+    :premises ((holds (feasible ?n)))
+    :conclusion (holds (feasible (s ?n))))
+
+  (rule feas-add
+    :premises ((holds (feasible ?n)) (holds (feasible ?m)))
+    :conclusion (holds (feasible (add ?n ?m))))
+
+  (rule feas-mul
+    :premises ((holds (feasible ?n)) (holds (feasible ?m)))
+    :conclusion (holds (feasible (mul ?n ?m)))))
+
+  ;; NOTE: Deliberately NO feas-exp2, NO feas-tower2, NO induction!
+  ;; This is the ultrafinitist's position: fast-growing functions
+  ;; and universal quantification over all numbers are not accepted.
+
+(check-theory UltrafiniteArith)
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 1: 1 + 1 = 2
+;;; ═══════════════════════════════════════════════════════════
+;;; add(s(z), s(z)) → s(add(z, s(z))) → s(s(z)). Both sides match.
+
+(proof one-plus-one
+  :theory UltrafiniteArith
+  :goal (holds (eq-n (add (s z) (s z)) (s (s z))))
+  :derivation (eq-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 2: 2 * 3 = 6
+;;; ═══════════════════════════════════════════════════════════
+;;; mul(s(s(z)), s(s(s(z)))) normalizes to s^6(z) via rewrite rules.
+
+(proof two-times-three
+  :theory UltrafiniteArith
+  :goal (holds (eq-n
+    (mul (s (s z)) (s (s (s z))))
+    (s (s (s (s (s (s z))))))))
+  :derivation (eq-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 3: 2^3 = 8
+;;; ═══════════════════════════════════════════════════════════
+;;; exp2(s(s(s(z)))) = add(exp2(2), exp2(2)) = add(4, 4) = 8.
+;;; Exponentiation COMPUTES just fine — it's feasibility we can't certify.
+
+(proof two-cubed
+  :theory UltrafiniteArith
+  :goal (holds (eq-n (exp2 (s (s (s z)))) n8))
+  :derivation (eq-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 4: 2^^3 = 16     (tetration!)
+;;; ═══════════════════════════════════════════════════════════
+;;; tower2(3) = exp2(tower2(2)) = exp2(exp2(tower2(1)))
+;;;           = exp2(exp2(exp2(1))) = exp2(exp2(2)) = exp2(4) = 16.
+;;; The normalizer handles this in ~100 steps, well within fuel.
+
+(proof two-tetrated-three
+  :theory UltrafiniteArith
+  :goal (holds (eq-n (tower2 (s (s (s z)))) n16))
+  :derivation (eq-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 5: 2^4 = 2^^3
+;;; ═══════════════════════════════════════════════════════════
+;;; Both sides normalize to 16. Exponentiation and tetration
+;;; agree at small heights — the divergence comes later.
+
+(proof exp-equals-tower
+  :theory UltrafiniteArith
+  :goal (holds (eq-n (exp2 n4) (tower2 (s (s (s z))))))
+  :derivation (eq-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 6: 3 is feasible
+;;; ═══════════════════════════════════════════════════════════
+;;; Direct construction: s(s(s(z))) by three applications of feas-s.
+
+(proof three-feasible
+  :theory UltrafiniteArith
+  :goal (holds (feasible (s (s (s z)))))
+  :derivation (feas-s (feas-s (feas-s (feas-z)))))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 7: 2 + 3 is feasible
+;;; ═══════════════════════════════════════════════════════════
+;;; feas-add: if both summands are feasible, so is their sum.
+;;; Note: add(2,3) normalizes to 5 = s^5(z), so the goal becomes
+;;; feasible(s^5(z)). We must prove this by chaining feas-s.
+
+(proof two-plus-three-feasible
+  :theory UltrafiniteArith
+  :goal (holds (feasible (s (s (s (s (s z)))))))
+  :derivation (feas-s (feas-s (feas-s (feas-s (feas-s (feas-z)))))))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 8: 3 * 3 is feasible  (= 9)
+;;; ═══════════════════════════════════════════════════════════
+;;; mul(3,3) normalizes to 9 = s^9(z). Certificate: 9 steps from zero.
+
+(proof three-squared-feasible
+  :theory UltrafiniteArith
+  :goal (holds (feasible
+    (s (s (s (s (s (s (s (s (s z)))))))))))
+  :derivation
+    (feas-s (feas-s (feas-s (feas-s (feas-s
+      (feas-s (feas-s (feas-s (feas-s (feas-z)))))))))))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 9: feasible(n) -> feasible(n + n)
+;;; ═══════════════════════════════════════════════════════════
+;;; Doubling preserves feasibility. With meta-variable ?n, the
+;;; term add(?n, ?n) stays unreduced, so feas-add matches.
+;;; The assumption is used TWICE (structural context allows this).
+
+(proof doubling-preserves-feasibility
+  :theory UltrafiniteArith
+  :goal (holds (imp-p (feasible ?n) (feasible (add ?n ?n))))
+  :derivation (imp-intro (feas-add (assumption) (assumption))))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 10: feasible(n) /\ feasible(m) -> feasible(n * m)
+;;; ═══════════════════════════════════════════════════════════
+;;; Multiplication closure. Extract both conjuncts from the
+;;; assumption and feed them to feas-mul.
+
+(proof mul-preserves-feasibility
+  :theory UltrafiniteArith
+  :goal (holds (imp-p
+    (and-p (feasible ?n) (feasible ?m))
+    (feasible (mul ?n ?m))))
+  :derivation
+    (imp-intro
+      (feas-mul
+        (and-elim-l (assumption))
+        (and-elim-r (assumption)))))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 11: 2^^2 = 4 AND feasible(4)
+;;; ═══════════════════════════════════════════════════════════
+;;; THE ULTRAFINITIST'S GAP:
+;;;
+;;; We can COMPUTE tower2(2) = 4 (the normalizer does it).
+;;; We can CERTIFY that 4 is feasible (count up from zero).
+;;; But there is NO rule deriving feasible(tower2(n)) from feasible(n).
+;;;
+;;; For tower2(3) = 16 we could also certify 16 by hand (16 steps).
+;;; For tower2(4) = 65536, it's 65536 steps — tedious but "possible."
+;;; For tower2(5) = 2^65536, the certificate has ~20,000 digits.
+;;; For tower2(6)... the certificate exceeds any physical medium.
+;;;
+;;; The ultrafinitist says: somewhere in this chain, feasibility breaks.
+;;; We just can't say exactly where — and that's the point.
+
+(proof the-gap
+  :theory UltrafiniteArith
+  :goal (holds (and-p
+    (eq-n (tower2 (s (s z))) n4)
+    (feasible n4)))
+  :derivation
+    (and-intro
+      (eq-refl)
+      (feas-s (feas-s (feas-s (feas-s (feas-z)))))))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;; Proof 12: feasible(n) -> feasible(s(s(n)))
+;;; ═══════════════════════════════════════════════════════════
+;;; Double successor: if n is feasible, so is n + 2.
+;;; Two applications of feas-s on the assumption.
+
+(proof double-succ-feasible
+  :theory UltrafiniteArith
+  :goal (holds (imp-p (feasible ?n) (feasible (s (s ?n)))))
+  :derivation (imp-intro (feas-s (feas-s (assumption)))))
