@@ -1165,6 +1165,9 @@ fn zfc_honest_example() {
     // Phase 9: L-construction infrastructure (from Def operator)
     assert!(results.iter().any(|r| r.contains("Lemma L-contains-empty: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma L-contains-omega: VALID [DERIVED]")));
+    // Phase 13: L-hierarchy decomposition (L-transitive, L-def-closed from sub-results)
+    assert!(results.iter().any(|r| r.contains("Lemma L-transitive: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma L-def-closed: VALID [DERIVED]")));
     // Phase 9: absoluteness from Δ₀ general principle
     assert!(results.iter().any(|r| r.contains("Lemma abs-ext: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma abs-reg: VALID [DERIVED]")));
@@ -1185,6 +1188,24 @@ fn zfc_honest_example() {
     assert!(results.iter().any(|r| r.contains("Lemma omega-is-limit: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma inj-to-power: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma id-is-bij: VALID [DERIVED]")));
+    // Phase 12: subset definition + eq-trans
+    assert!(results.iter().any(|r| r.contains("Lemma eq-trans: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma sub-refl: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma empty-sub: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma sub-mem: VALID [DERIVED]")));
+    // Phase 12: function infrastructure from biconditional definitions
+    assert!(results.iter().any(|r| r.contains("Lemma id-maps: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma id-is-inj: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma id-is-surj: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma singleton-maps: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma surj-preimage-in-dom: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma surj-preimage-hits: VALID [DERIVED]")));
+    // Phase 12: Kuratowski pair injectivity from first principles
+    assert!(results.iter().any(|r| r.contains("Lemma singleton-eq: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma singleton-is-inj: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma kpair-fst: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma kpair-snd: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma kpair-inj: VALID [DERIVED]")));
     // Cantor lemma chain (proved from axioms via Cut)
     assert!(results.iter().any(|r| r.contains("Lemma diag-in-power: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma diag-contradiction: VALID [DERIVED]")));
@@ -1198,10 +1219,22 @@ fn zfc_honest_example() {
     assert!(results.iter().any(|r| r.contains("Lemma L-sat-inf: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma L-sat-sep: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma L-sat-reg: VALID [DERIVED]")));
+    // Phase 14: primitive recovery lemmas (each from 2-step decomposition)
+    assert!(results.iter().any(|r| r.contains("Lemma L-has-elem-submodels: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma L-has-collapse: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma L-has-stage-collapse: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma L-has-cofinal-stages: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma L-has-godel-numbering: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma L-has-stage-ordering: VALID [DERIVED]")));
     // Decomposition lemmas: L properties from fine-grained sub-results
     assert!(results.iter().any(|r| r.contains("Lemma L-has-condensation: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma L-has-reflection: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma L-has-definable-wellorder: VALID [DERIVED]")));
+    // Phase 14: application recovery lemmas (each from 2-step decomposition)
+    assert!(results.iter().any(|r| r.contains("Lemma condensation-gives-power: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma reflection-gives-rep: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma wellorder-gives-choice: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma condensation-gives-gch: VALID [DERIVED]")));
     // L-sat hard lemmas (from condensation/reflection/wellorder infrastructure)
     assert!(results.iter().any(|r| r.contains("Lemma L-sat-power: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma L-sat-rep: VALID [DERIVED]")));
@@ -1214,6 +1247,13 @@ fn zfc_honest_example() {
     // Truth Lemma + Forcing (decomposed into per-case/per-axiom + induction/chain)
     assert!(results.iter().any(|r| r.contains("Lemma truth-lemma-induction: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma truth-lemma: VALID [DERIVED]")));
+    // Phase 15: forcing recovery lemmas (each from 2-step decomposition)
+    assert!(results.iter().any(|r| r.contains("Lemma truth-holds-for-means: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma forcing-def-closed: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma ccc-gives-nice-names: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma nice-names-give-power: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma rep-transfers: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma choice-transfers: VALID [DERIVED]")));
     // Forcing-sat lemmas (from model-theoretic infrastructure)
     assert!(results.iter().any(|r| r.contains("Lemma forcing-sat-ext: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma forcing-sat-empty: VALID [DERIVED]")));
