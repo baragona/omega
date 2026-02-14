@@ -33,7 +33,7 @@ pub struct BindingSpec {
     pub arity: usize,
     /// Which positions in the constructor are "body" positions
     /// (where the bound variables are in scope).
-    /// Indices refer to positions in the `params` list of UserBind.
+    /// Indices refer to positions in the constructor parameter list.
     pub body_positions: Vec<usize>,
     /// Whether this binding is linear (each bound var used exactly once).
     pub linear: bool,
@@ -91,23 +91,6 @@ impl BindingSpec {
             display: None,
         }
     }
-}
-
-/// Binding mode: how the kernel should handle scope for a particular
-/// binding form.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BindingMode {
-    /// Standard lexical scoping (the default for most logics).
-    Lexical,
-    /// Linear: each bound variable must be used exactly once.
-    Linear,
-    /// Affine: each bound variable may be used at most once.
-    Affine,
-    /// Relevant: each bound variable must be used at least once.
-    Relevant,
-    /// No scope: the binder form exists but doesn't actually capture variables.
-    /// Useful for defining "let" in certain logics where it's just sugar.
-    NoCapture,
 }
 
 /// Check that a binding form is used correctly according to its spec.

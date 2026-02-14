@@ -5,10 +5,10 @@
 /// that each step is valid.
 use std::collections::{HashMap, HashSet};
 
-use crate::binding::{apply_meta_subst, abstract_over, abstractable_vars, beta_normalize, whnf};
+use crate::binding::{apply_meta_subst, abstract_over, abstractable_vars, beta_normalize_with, whnf, whnf_with};
 use crate::error::{OmegaError, Result};
 use crate::expr::{Expr, Name};
-use crate::judgment::RewriteRule;
+use crate::judgment::{RewriteRule, Rule};
 use crate::pattern::{match_expr, Substitution};
 use crate::theory::{ContextMode, Theory};
 
@@ -160,18 +160,18 @@ fn freshen_rule(rule: &crate::judgment::Rule, counter: &mut usize) -> crate::jud
         rename.insert(m.clone(), Expr::Meta(format!("{}{}", m, suffix)));
     }
 
-    crate::judgment::Rule {
-        name: rule.name.clone(),
-        premises: rule.premises.iter().map(|p| apply_meta_subst(p, &rename)).collect(),
-        conclusion: apply_meta_subst(&rule.conclusion, &rename),
-        reflected: rule.reflected,
-        provenance: rule.provenance.clone(),
-        implicit_args: rule.implicit_args.iter().map(|a| format!("{}{}", a, suffix)).collect(),
-        context_extensions: rule.context_extensions.iter()
-            .map(|(idx, expr)| (*idx, apply_meta_subst(expr, &rename)))
-            .collect(),
-
-    }
+    let mut freshened = Rule::new(
+        rule.name.clone(),
+        rule.premises.iter().map(|p| apply_meta_subst(p, &rename)).collect(),
+        apply_meta_subst(&rule.conclusion, &rename),
+    );
+    freshened.reflected = rule.reflected;
+    freshened.provenance = rule.provenance.clone();
+    freshened.implicit_args = rule.implicit_args.iter().map(|a| format!("{}{}", a, suffix)).collect();
+    freshened.context_extensions = rule.context_extensions.iter()
+        .map(|(idx, expr)| (*idx, apply_meta_subst(expr, &rename)))
+        .collect();
+    freshened
 }
 
 /// Simple bidirectional unification: try to make `a` and `b` equal by
@@ -488,7 +488,7 @@ fn check_derivation_inner(
             // Look up the rule
             let rule_orig = theory
                 .get_rule(rule_name)
-                .ok_or_else(|| OmegaError::UnknownRule(rule_name.clone()))?;
+                .ok_or_else(|| OmegaError::UnknownName { kind: "rule".into(), name: rule_name.clone() })?;
 
             // Freshen the rule's meta-variables to avoid collisions
             // when the same rule is used multiple times (e.g., nested eq-trans)
@@ -544,7 +544,7 @@ fn check_derivation_inner(
                 premise_goal = apply_meta_subst(&premise_goal, global_subst);
                 // Beta-normalize premise goals to reduce any beta-redexes
                 // created by meta substitution (e.g., (?B ?e2) → ((λx.T) e2) → T[e2/x])
-                premise_goal = beta_normalize(&premise_goal);
+                premise_goal = beta_normalize_with(&premise_goal, &theory.substitutive_binders, &mut fuel);
 
                 // If the premise goal has unsolved metas, infer the derivation's
                 // conclusion first, then unify it with the goal to solve metas,
@@ -559,7 +559,7 @@ fn check_derivation_inner(
                                 global_subst.insert(k.clone(), v.clone());
                             }
                             premise_goal = apply_meta_subst(&premise_goal, &s);
-                            premise_goal = beta_normalize(&premise_goal);
+                            premise_goal = beta_normalize_with(&premise_goal, &theory.substitutive_binders, &mut fuel);
                         }
                     }
                 }
@@ -578,7 +578,7 @@ fn check_derivation_inner(
                         for ext in extensions {
                             let mut resolved = apply_meta_subst(ext, &local_subst);
                             resolved = apply_meta_subst(&resolved, global_subst);
-                            resolved = whnf(&resolved);
+                            resolved = whnf_with(&resolved, &theory.substitutive_binders);
                             new_assumptions.push(resolved);
                         }
                         ext_ctx = Context::with_assumptions(new_assumptions);
@@ -666,86 +666,56 @@ mod tests {
             constraints: vec![("P".to_string(), "Prop".to_string())],
         });
 
-        theory.rules.push(Rule {
-            name: "and-intro".to_string(),
-            premises: vec![
+        theory.rules.push(Rule::new(
+            "and-intro",
+            vec![
                 Expr::app(vec![Expr::sym("proves"), Expr::meta("A")]),
                 Expr::app(vec![Expr::sym("proves"), Expr::meta("B")]),
             ],
-            conclusion: Expr::app(vec![
+            Expr::app(vec![
                 Expr::sym("proves"),
                 Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
             ]),
-            reflected: false,
-            provenance: None,
-            implicit_args: vec![],
-            context_extensions: vec![],
+        ));
 
-        });
-
-        theory.rules.push(Rule {
-            name: "and-elim-l".to_string(),
-            premises: vec![Expr::app(vec![
+        theory.rules.push(Rule::new(
+            "and-elim-l",
+            vec![Expr::app(vec![
                 Expr::sym("proves"),
                 Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
             ])],
-            conclusion: Expr::app(vec![Expr::sym("proves"), Expr::meta("A")]),
-            reflected: false,
-            provenance: None,
-            implicit_args: vec![],
-            context_extensions: vec![],
+            Expr::app(vec![Expr::sym("proves"), Expr::meta("A")]),
+        ));
 
-        });
-
-        theory.rules.push(Rule {
-            name: "and-elim-r".to_string(),
-            premises: vec![Expr::app(vec![
+        theory.rules.push(Rule::new(
+            "and-elim-r",
+            vec![Expr::app(vec![
                 Expr::sym("proves"),
                 Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
             ])],
-            conclusion: Expr::app(vec![Expr::sym("proves"), Expr::meta("B")]),
-            reflected: false,
-            provenance: None,
-            implicit_args: vec![],
-            context_extensions: vec![],
+            Expr::app(vec![Expr::sym("proves"), Expr::meta("B")]),
+        ));
 
-        });
-
-        theory.rules.push(Rule {
-            name: "imp-intro".to_string(),
-            premises: vec![
-                // For imp-intro: if assuming A we can prove B, then we prove A -> B.
-                // This rule uses a contextual premise represented as:
-                // we add (proves ?A) to context and must derive (proves ?B)
-                Expr::app(vec![Expr::sym("proves"), Expr::meta("B")]),
-            ],
-            conclusion: Expr::app(vec![
+        theory.rules.push(Rule::new(
+            "imp-intro",
+            vec![Expr::app(vec![Expr::sym("proves"), Expr::meta("B")])],
+            Expr::app(vec![
                 Expr::sym("proves"),
                 Expr::app(vec![Expr::sym("imp"), Expr::meta("A"), Expr::meta("B")]),
             ]),
-            reflected: false,
-            provenance: None,
-            implicit_args: vec![],
-            context_extensions: vec![],
+        ));
 
-        });
-
-        theory.rules.push(Rule {
-            name: "imp-elim".to_string(),
-            premises: vec![
+        theory.rules.push(Rule::new(
+            "imp-elim",
+            vec![
                 Expr::app(vec![
                     Expr::sym("proves"),
                     Expr::app(vec![Expr::sym("imp"), Expr::meta("A"), Expr::meta("B")]),
                 ]),
                 Expr::app(vec![Expr::sym("proves"), Expr::meta("A")]),
             ],
-            conclusion: Expr::app(vec![Expr::sym("proves"), Expr::meta("B")]),
-            reflected: false,
-            provenance: None,
-            implicit_args: vec![],
-            context_extensions: vec![],
-
-        });
+            Expr::app(vec![Expr::sym("proves"), Expr::meta("B")]),
+        ));
 
         theory.compute_hash();
         theory

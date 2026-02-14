@@ -169,35 +169,12 @@ pub fn process_command(session: &mut Session, cmd: Command) -> Result<String, St
             conclusion,
             derivation,
         } => {
-            // Cut rule: verify the proof, then add conclusion as a derived rule.
-            // Premises become assumptions in the proof context.
             let ctx = Context::with_assumptions(premises.clone());
             session
                 .kernel
                 .check_derivation(&theory, &conclusion, &derivation, &ctx)
                 .map_err(|e| format!("Lemma {} INVALID: {}", name, e))?;
-
-            // Build the derived rule and add it to the theory
-            let rule = Rule {
-                name: name.clone(),
-                premises,
-                conclusion: conclusion.clone(),
-                reflected: false,
-                provenance: Some(format!("lemma:{}", name)),
-                implicit_args: vec![],
-                context_extensions: vec![],
-            };
-            session
-                .kernel
-                .add_rule(&theory, rule)
-                .map_err(|e| format!("Lemma {} failed to register rule: {}", name, e))?;
-
-            session.proven.push(ProvenTheorem {
-                name: name.clone(),
-                theory: theory.clone(),
-                goal: conclusion,
-            });
-
+            finish_lemma(session, &name, &theory, premises, conclusion)?;
             Ok(format!("Lemma {}: VALID [DERIVED]", name))
         }
 
@@ -235,27 +212,7 @@ pub fn process_command(session: &mut Session, cmd: Command) -> Result<String, St
                 .kernel
                 .check_derivation(&theory_name, &conclusion, &derivation, &ctx)
                 .map_err(|e| format!("Lemma {} INVALID (after elaboration): {}", name, e))?;
-
-            let rule = Rule {
-                name: name.clone(),
-                premises,
-                conclusion: conclusion.clone(),
-                reflected: false,
-                provenance: Some(format!("lemma:{}", name)),
-                implicit_args: vec![],
-                context_extensions: vec![],
-            };
-            session
-                .kernel
-                .add_rule(&theory_name, rule)
-                .map_err(|e| format!("Lemma {} failed to register rule: {}", name, e))?;
-
-            session.proven.push(ProvenTheorem {
-                name: name.clone(),
-                theory: theory_name.clone(),
-                goal: conclusion,
-            });
-
+            finish_lemma(session, &name, &theory_name, premises, conclusion)?;
             Ok(format!("Lemma {}: VALID [DERIVED] (via tactics)", name))
         }
 
@@ -278,6 +235,28 @@ pub fn process_command(session: &mut Session, cmd: Command) -> Result<String, St
     }
 }
 
+/// Shared logic for finishing a lemma: register derived rule + record as proven.
+fn finish_lemma(
+    session: &mut Session,
+    name: &str,
+    theory_name: &str,
+    premises: Vec<Expr>,
+    conclusion: Expr,
+) -> Result<(), String> {
+    let mut rule = Rule::new(name.to_string(), premises, conclusion.clone());
+    rule.provenance = Some(format!("lemma:{}", name));
+    session
+        .kernel
+        .add_rule(theory_name, rule)
+        .map_err(|e| format!("Lemma {} failed to register rule: {}", name, e))?;
+    session.proven.push(ProvenTheorem {
+        name: name.to_string(),
+        theory: theory_name.to_string(),
+        goal: conclusion,
+    });
+    Ok(())
+}
+
 /// Flatten a rope expression tree into a string buffer.
 /// Recognizes: cat(a, b), empty, newline, and Sym(s) as literal text.
 fn flatten_rope(expr: &Expr, buf: &mut String) {
@@ -287,7 +266,7 @@ fn flatten_rope(expr: &Expr, buf: &mut String) {
             "newline" => buf.push('\n'),
             _ => buf.push_str(s),
         },
-        Expr::App(args) if args.len() == 3 && args[0] == Expr::Sym("cat".to_string()) => {
+        Expr::App(args) if args.len() == 3 && matches!(&args[0], Expr::Sym(s) if s == "cat") => {
             flatten_rope(&args[1], buf);
             flatten_rope(&args[2], buf);
         }

@@ -25,7 +25,7 @@ pub struct Kernel {
     /// Verified metatheorems, keyed by name.
     verified_metatheorems: HashMap<Name, MetaTheorem>,
     /// Use the interned (hash-consed) derivation checker for O(1) equality.
-    pub use_interned: bool,
+    use_interned: bool,
     /// Cached interned theories for O(1) equality during proof checking.
     interned_cache: HashMap<Name, interned_check::InternedTheory>,
 }
@@ -39,6 +39,11 @@ impl Kernel {
             use_interned: true,
             interned_cache: HashMap::new(),
         }
+    }
+
+    /// Set whether to use the interned (hash-consed) derivation checker.
+    pub fn set_use_interned(&mut self, value: bool) {
+        self.use_interned = value;
     }
 
     /// Operation 1: Register and validate a theory.
@@ -65,7 +70,7 @@ impl Kernel {
         let theory = self
             .theories
             .get(theory_name)
-            .ok_or_else(|| OmegaError::UnknownTheory(theory_name.to_string()))?;
+            .ok_or_else(|| OmegaError::UnknownName { kind: "theory".into(), name: theory_name.to_string() })?;
 
         if self.use_interned {
             // Use cached InternedTheory for amortized O(1) rule interning
@@ -85,7 +90,7 @@ impl Kernel {
         let theory = self
             .theories
             .get(&mt.theory_name)
-            .ok_or_else(|| OmegaError::UnknownTheory(mt.theory_name.clone()))?;
+            .ok_or_else(|| OmegaError::UnknownName { kind: "theory".into(), name: mt.theory_name.clone() })?;
 
         // Check no self-strengthening
         reflection::check_no_self_strengthening(&mt, theory)?;
@@ -104,7 +109,7 @@ impl Kernel {
         let theory = self
             .theories
             .get_mut(theory_name)
-            .ok_or_else(|| OmegaError::UnknownTheory(theory_name.to_string()))?;
+            .ok_or_else(|| OmegaError::UnknownName { kind: "theory".into(), name: theory_name.to_string() })?;
 
         if self.use_interned {
             if let Some(cached) = self.interned_cache.get_mut(theory_name) {
@@ -193,81 +198,56 @@ mod tests {
             constraints: vec![("P".to_string(), "Prop".to_string())],
         });
 
-        theory.rules.push(Rule {
-            name: "and-intro".to_string(),
-            premises: vec![
+        theory.rules.push(Rule::new(
+            "and-intro",
+            vec![
                 Expr::app(vec![Expr::sym("proves"), Expr::meta("A")]),
                 Expr::app(vec![Expr::sym("proves"), Expr::meta("B")]),
             ],
-            conclusion: Expr::app(vec![
+            Expr::app(vec![
                 Expr::sym("proves"),
                 Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
             ]),
-            reflected: false,
-            provenance: None,
-            implicit_args: vec![],
-            context_extensions: vec![],
+        ));
 
-        });
-
-        theory.rules.push(Rule {
-            name: "and-elim-l".to_string(),
-            premises: vec![Expr::app(vec![
+        theory.rules.push(Rule::new(
+            "and-elim-l",
+            vec![Expr::app(vec![
                 Expr::sym("proves"),
                 Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
             ])],
-            conclusion: Expr::app(vec![Expr::sym("proves"), Expr::meta("A")]),
-            reflected: false,
-            provenance: None,
-            implicit_args: vec![],
-            context_extensions: vec![],
+            Expr::app(vec![Expr::sym("proves"), Expr::meta("A")]),
+        ));
 
-        });
-
-        theory.rules.push(Rule {
-            name: "and-elim-r".to_string(),
-            premises: vec![Expr::app(vec![
+        theory.rules.push(Rule::new(
+            "and-elim-r",
+            vec![Expr::app(vec![
                 Expr::sym("proves"),
                 Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
             ])],
-            conclusion: Expr::app(vec![Expr::sym("proves"), Expr::meta("B")]),
-            reflected: false,
-            provenance: None,
-            implicit_args: vec![],
-            context_extensions: vec![],
+            Expr::app(vec![Expr::sym("proves"), Expr::meta("B")]),
+        ));
 
-        });
-
-        theory.rules.push(Rule {
-            name: "imp-intro".to_string(),
-            premises: vec![Expr::app(vec![Expr::sym("proves"), Expr::meta("B")])],
-            conclusion: Expr::app(vec![
+        theory.rules.push(Rule::new(
+            "imp-intro",
+            vec![Expr::app(vec![Expr::sym("proves"), Expr::meta("B")])],
+            Expr::app(vec![
                 Expr::sym("proves"),
                 Expr::app(vec![Expr::sym("imp"), Expr::meta("A"), Expr::meta("B")]),
             ]),
-            reflected: false,
-            provenance: None,
-            implicit_args: vec![],
-            context_extensions: vec![],
+        ));
 
-        });
-
-        theory.rules.push(Rule {
-            name: "imp-elim".to_string(),
-            premises: vec![
+        theory.rules.push(Rule::new(
+            "imp-elim",
+            vec![
                 Expr::app(vec![
                     Expr::sym("proves"),
                     Expr::app(vec![Expr::sym("imp"), Expr::meta("A"), Expr::meta("B")]),
                 ]),
                 Expr::app(vec![Expr::sym("proves"), Expr::meta("A")]),
             ],
-            conclusion: Expr::app(vec![Expr::sym("proves"), Expr::meta("B")]),
-            reflected: false,
-            provenance: None,
-            implicit_args: vec![],
-            context_extensions: vec![],
-
-        });
+            Expr::app(vec![Expr::sym("proves"), Expr::meta("B")]),
+        ));
 
         theory.compute_hash();
         theory
@@ -367,7 +347,7 @@ mod tests {
         let ctx = Context::new();
         assert!(matches!(
             kernel.check_derivation("Nonexistent", &goal, &deriv, &ctx),
-            Err(OmegaError::UnknownTheory(_))
+            Err(OmegaError::UnknownName { kind, .. }) if kind == "theory"
         ));
     }
 }

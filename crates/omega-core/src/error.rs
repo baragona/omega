@@ -8,24 +8,10 @@ use crate::pattern::MatchError;
 #[derive(Debug, Clone)]
 pub enum OmegaError {
     // --- Theory errors ---
-    /// A sort was declared more than once.
-    DuplicateSort(Name),
-    /// A constructor was declared more than once.
-    DuplicateConstructor(Name),
-    /// A rule was declared more than once.
-    DuplicateRule(Name),
-    /// A judgment form was declared more than once.
-    DuplicateJudgment(Name),
-    /// Referenced sort does not exist.
-    UnknownSort(Name),
-    /// Referenced constructor does not exist.
-    UnknownConstructor(Name),
-    /// Referenced rule does not exist.
-    UnknownRule(Name),
-    /// Referenced theory does not exist.
-    UnknownTheory(Name),
-    /// Referenced judgment form does not exist.
-    UnknownJudgment(Name),
+    /// A named declaration was duplicated.
+    DuplicateName { kind: String, name: Name },
+    /// A named declaration was not found.
+    UnknownName { kind: String, name: Name },
     /// Theory has no rules.
     EmptyTheory(Name),
 
@@ -84,9 +70,6 @@ pub enum OmegaError {
         theory: Name,
     },
 
-    /// A named declaration was duplicated (generic).
-    DuplicateName { kind: String, name: Name },
-
     // --- General ---
     /// Internal error (should never happen in correct code).
     Internal(String),
@@ -95,15 +78,12 @@ pub enum OmegaError {
 impl fmt::Display for OmegaError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            OmegaError::DuplicateSort(n) => write!(f, "duplicate sort: {}", n),
-            OmegaError::DuplicateConstructor(n) => write!(f, "duplicate constructor: {}", n),
-            OmegaError::DuplicateRule(n) => write!(f, "duplicate rule: {}", n),
-            OmegaError::DuplicateJudgment(n) => write!(f, "duplicate judgment form: {}", n),
-            OmegaError::UnknownSort(n) => write!(f, "unknown sort: {}", n),
-            OmegaError::UnknownConstructor(n) => write!(f, "unknown constructor: {}", n),
-            OmegaError::UnknownRule(n) => write!(f, "unknown rule: {}", n),
-            OmegaError::UnknownTheory(n) => write!(f, "unknown theory: {}", n),
-            OmegaError::UnknownJudgment(n) => write!(f, "unknown judgment form: {}", n),
+            OmegaError::DuplicateName { kind, name } => {
+                write!(f, "duplicate {}: {}", kind, name)
+            }
+            OmegaError::UnknownName { kind, name } => {
+                write!(f, "unknown {}: {}", kind, name)
+            }
             OmegaError::EmptyTheory(n) => write!(f, "theory {} has no rules", n),
             OmegaError::MalformedDerivation(s) => write!(f, "malformed derivation: {}", s),
             OmegaError::PatternMatchFailed {
@@ -195,9 +175,6 @@ impl fmt::Display for OmegaError {
                     "stale reflection: theory {} modified since metatheorem {} was proven",
                     theory, metatheorem
                 )
-            }
-            OmegaError::DuplicateName { kind, name } => {
-                write!(f, "duplicate {}: {}", kind, name)
             }
             OmegaError::Internal(s) => write!(f, "internal error: {}", s),
         }

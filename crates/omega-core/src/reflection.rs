@@ -44,7 +44,7 @@ pub fn reflect(
 
     // Check that the rule name doesn't already exist
     if theory.get_rule(rule_name).is_some() {
-        return Err(OmegaError::DuplicateRule(rule_name.to_string()));
+        return Err(OmegaError::DuplicateName { kind: "rule".into(), name: rule_name.to_string() });
     }
 
     // Build the rule from the metatheorem's forall/exists
@@ -61,16 +61,9 @@ pub fn reflect(
         metatheorem.exists[0].1.clone()
     };
 
-    let rule = Rule {
-        name: rule_name.to_string(),
-        premises,
-        conclusion,
-        reflected: true,
-        provenance: Some(metatheorem.name.clone()),
-        implicit_args: vec![],
-        context_extensions: vec![],
-
-    };
+    let mut rule = Rule::new(rule_name, premises, conclusion);
+    rule.reflected = true;
+    rule.provenance = Some(metatheorem.name.clone());
 
     let record = ReflectionRecord {
         metatheorem_name: metatheorem.name.clone(),
@@ -176,22 +169,17 @@ mod tests {
             pattern: Expr::app(vec![Expr::sym("proves"), Expr::meta("P")]),
             constraints: vec![("P".to_string(), "Prop".to_string())],
         });
-        theory.rules.push(Rule {
-            name: "and-intro".to_string(),
-            premises: vec![
+        theory.rules.push(Rule::new(
+            "and-intro",
+            vec![
                 Expr::app(vec![Expr::sym("proves"), Expr::meta("A")]),
                 Expr::app(vec![Expr::sym("proves"), Expr::meta("B")]),
             ],
-            conclusion: Expr::app(vec![
+            Expr::app(vec![
                 Expr::sym("proves"),
                 Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
             ]),
-            reflected: false,
-            provenance: None,
-            implicit_args: vec![],
-            context_extensions: vec![],
-    
-        });
+        ));
         theory.compute_hash();
         theory
     }
@@ -256,16 +244,11 @@ mod tests {
         assert!(check_reflection_validity(&record, &theory).is_ok());
 
         // Modify the theory
-        theory.add_rule(Rule {
-            name: "new-rule".to_string(),
-            premises: vec![],
-            conclusion: Expr::sym("whatever"),
-            reflected: false,
-            provenance: None,
-            implicit_args: vec![],
-            context_extensions: vec![],
-    
-        }).unwrap();
+        theory.add_rule(Rule::new(
+            "new-rule",
+            vec![],
+            Expr::sym("whatever"),
+        )).unwrap();
 
         // After modification: should be stale
         assert!(matches!(

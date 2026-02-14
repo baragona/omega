@@ -145,6 +145,107 @@ fn desugar_command(sexp: &Sexp) -> Result<Command> {
     }
 }
 
+/// Parse a single sort/constructor/judgment/rule/rewrite declaration and push it onto the theory.
+/// Shared between the main theory loop and mutual blocks.
+fn parse_single_declaration(theory: &mut Theory, decl: &[Sexp]) -> Result<()> {
+    let kind = expect_atom(&decl[0])?;
+    match kind {
+        "sort" => {
+            let sort_name = expect_atom(&decl[1])?;
+            theory.sorts.push(SortDecl {
+                name: sort_name.to_string(),
+            });
+        }
+        "constructor" => {
+            let ctor_name = expect_atom(&decl[1])?;
+            // (constructor name : type)
+            if decl.len() >= 4 && expect_atom(&decl[2]).ok() == Some(":") {
+                let ty = desugar_expr(&decl[3])?;
+                theory.constructors.push(ConstructorDecl {
+                    name: ctor_name.to_string(),
+                    ty,
+                });
+            } else {
+                // Just a name, no explicit type
+                theory.constructors.push(ConstructorDecl {
+                    name: ctor_name.to_string(),
+                    ty: Expr::sym("_"),
+                });
+            }
+        }
+        "judgment" => {
+            let pattern_sexp = &decl[1];
+            let pattern = desugar_expr(pattern_sexp)?;
+
+            // Extract judgment name from pattern
+            let jname = match &pattern {
+                Expr::App(args) if !args.is_empty() => match &args[0] {
+                    Expr::Sym(n) => n.clone(),
+                    _ => "unnamed".to_string(),
+                },
+                Expr::Sym(n) => n.clone(),
+                _ => "unnamed".to_string(),
+            };
+
+            // Parse :where constraints
+            let mut constraints = Vec::new();
+            let mut i = 2;
+            while i < decl.len() {
+                if decl[i].is_keyword(":where") {
+                    i += 1;
+                    // Parse pairs: name : sort
+                    while i + 2 < decl.len() {
+                        let var = expect_atom(&decl[i])?;
+                        let colon = expect_atom(&decl[i + 1])?;
+                        if colon != ":" {
+                            break;
+                        }
+                        let sort = expect_atom(&decl[i + 2])?;
+                        constraints.push((var.to_string(), sort.to_string()));
+                        i += 3;
+                    }
+                } else {
+                    i += 1;
+                }
+            }
+
+            theory.judgments.push(JudgmentForm {
+                name: jname,
+                pattern,
+                constraints,
+            });
+        }
+        "rule" => {
+            let rule = desugar_rule(decl)?;
+            theory.rules.push(rule);
+        }
+        "rewrite" => {
+            // (rewrite name lhs rhs)
+            if decl.len() != 4 {
+                return Err(DesugarError {
+                    message: "rewrite expects name, lhs, and rhs".to_string(),
+                    span: decl[0].span(),
+                });
+            }
+            let rw_name = expect_atom(&decl[1])?;
+            let lhs = desugar_expr(&decl[2])?;
+            let rhs = desugar_expr(&decl[3])?;
+            theory.rewrites.push(RewriteRule {
+                name: rw_name.to_string(),
+                lhs,
+                rhs,
+            });
+        }
+        _ => {
+            return Err(DesugarError {
+                message: format!("unsupported declaration: {}", kind),
+                span: decl[0].span(),
+            });
+        }
+    }
+    Ok(())
+}
+
 fn desugar_theory(items: &[Sexp], span: Span) -> Result<Command> {
     if items.len() < 3 {
         return Err(DesugarError {
@@ -196,74 +297,8 @@ fn desugar_theory(items: &[Sexp], span: Span) -> Result<Command> {
 
         let kind = expect_atom(&decl[0])?;
         match kind {
-            "sort" => {
-                let sort_name = expect_atom(&decl[1])?;
-                theory.sorts.push(SortDecl {
-                    name: sort_name.to_string(),
-                });
-            }
-            "constructor" => {
-                let ctor_name = expect_atom(&decl[1])?;
-                // (constructor name : type)
-                if decl.len() >= 4 && expect_atom(&decl[2]).ok() == Some(":") {
-                    let ty = desugar_expr(&decl[3])?;
-                    theory.constructors.push(ConstructorDecl {
-                        name: ctor_name.to_string(),
-                        ty,
-                    });
-                } else {
-                    // Just a name, no explicit type
-                    theory.constructors.push(ConstructorDecl {
-                        name: ctor_name.to_string(),
-                        ty: Expr::sym("_"),
-                    });
-                }
-            }
-            "judgment" => {
-                let pattern_sexp = &decl[1];
-                let pattern = desugar_expr(pattern_sexp)?;
-
-                // Extract judgment name from pattern
-                let jname = match &pattern {
-                    Expr::App(args) if !args.is_empty() => match &args[0] {
-                        Expr::Sym(n) => n.clone(),
-                        _ => "unnamed".to_string(),
-                    },
-                    Expr::Sym(n) => n.clone(),
-                    _ => "unnamed".to_string(),
-                };
-
-                // Parse :where constraints
-                let mut constraints = Vec::new();
-                let mut i = 2;
-                while i < decl.len() {
-                    if decl[i].is_keyword(":where") {
-                        i += 1;
-                        // Parse pairs: name : sort
-                        while i + 2 < decl.len() {
-                            let var = expect_atom(&decl[i])?;
-                            let colon = expect_atom(&decl[i + 1])?;
-                            if colon != ":" {
-                                break;
-                            }
-                            let sort = expect_atom(&decl[i + 2])?;
-                            constraints.push((var.to_string(), sort.to_string()));
-                            i += 3;
-                        }
-                    } else {
-                        i += 1;
-                    }
-                }
-
-                theory.judgments.push(JudgmentForm {
-                    name: jname,
-                    pattern,
-                    constraints,
-                });
-            }
-            "rule" => {
-                let rule = desugar_rule(decl)?;
-                theory.rules.push(rule);
+            "sort" | "constructor" | "judgment" | "rule" | "rewrite" => {
+                parse_single_declaration(&mut theory, decl)?;
             }
             "binding-spec" => {
                 let bs = desugar_binding_spec(decl)?;
@@ -289,23 +324,6 @@ fn desugar_theory(items: &[Sexp], span: Span) -> Result<Command> {
                     }
                 }
             }
-            "rewrite" => {
-                // (rewrite name lhs rhs)
-                if decl.len() != 4 {
-                    return Err(DesugarError {
-                        message: "rewrite expects name, lhs, and rhs".to_string(),
-                        span: decl[0].span(),
-                    });
-                }
-                let rw_name = expect_atom(&decl[1])?;
-                let lhs = desugar_expr(&decl[2])?;
-                let rhs = desugar_expr(&decl[3])?;
-                theory.rewrites.push(RewriteRule {
-                    name: rw_name.to_string(),
-                    lhs,
-                    rhs,
-                });
-            }
             "mutual" => {
                 // (mutual (constructor ...) (rule ...) (rewrite ...) ...)
                 // Syntactic grouping: flatten sub-declarations into the theory
@@ -317,90 +335,7 @@ fn desugar_theory(items: &[Sexp], span: Span) -> Result<Command> {
                     if sub_decl.is_empty() {
                         continue;
                     }
-                    let sub_kind = expect_atom(&sub_decl[0])?;
-                    match sub_kind {
-                        "sort" => {
-                            let sort_name = expect_atom(&sub_decl[1])?;
-                            theory.sorts.push(SortDecl {
-                                name: sort_name.to_string(),
-                            });
-                        }
-                        "constructor" => {
-                            let ctor_name = expect_atom(&sub_decl[1])?;
-                            if sub_decl.len() >= 4 && expect_atom(&sub_decl[2]).ok() == Some(":") {
-                                let ty = desugar_expr(&sub_decl[3])?;
-                                theory.constructors.push(ConstructorDecl {
-                                    name: ctor_name.to_string(),
-                                    ty,
-                                });
-                            } else {
-                                theory.constructors.push(ConstructorDecl {
-                                    name: ctor_name.to_string(),
-                                    ty: Expr::sym("_"),
-                                });
-                            }
-                        }
-                        "judgment" => {
-                            let pattern_sexp = &sub_decl[1];
-                            let pattern = desugar_expr(pattern_sexp)?;
-                            let jname = match &pattern {
-                                Expr::App(args) if !args.is_empty() => match &args[0] {
-                                    Expr::Sym(n) => n.clone(),
-                                    _ => "unnamed".to_string(),
-                                },
-                                Expr::Sym(n) => n.clone(),
-                                _ => "unnamed".to_string(),
-                            };
-                            let mut constraints = Vec::new();
-                            let mut ci = 2;
-                            while ci < sub_decl.len() {
-                                if sub_decl[ci].is_keyword(":where") {
-                                    ci += 1;
-                                    while ci + 2 < sub_decl.len() {
-                                        let var = expect_atom(&sub_decl[ci])?;
-                                        let colon = expect_atom(&sub_decl[ci + 1])?;
-                                        if colon != ":" { break; }
-                                        let sort = expect_atom(&sub_decl[ci + 2])?;
-                                        constraints.push((var.to_string(), sort.to_string()));
-                                        ci += 3;
-                                    }
-                                } else {
-                                    ci += 1;
-                                }
-                            }
-                            theory.judgments.push(JudgmentForm {
-                                name: jname,
-                                pattern,
-                                constraints,
-                            });
-                        }
-                        "rule" => {
-                            let rule = desugar_rule(sub_decl)?;
-                            theory.rules.push(rule);
-                        }
-                        "rewrite" => {
-                            if sub_decl.len() != 4 {
-                                return Err(DesugarError {
-                                    message: "rewrite expects name, lhs, and rhs".to_string(),
-                                    span: sub_decl[0].span(),
-                                });
-                            }
-                            let rw_name = expect_atom(&sub_decl[1])?;
-                            let lhs = desugar_expr(&sub_decl[2])?;
-                            let rhs = desugar_expr(&sub_decl[3])?;
-                            theory.rewrites.push(RewriteRule {
-                                name: rw_name.to_string(),
-                                lhs,
-                                rhs,
-                            });
-                        }
-                        _ => {
-                            return Err(DesugarError {
-                                message: format!("unsupported declaration in mutual block: {}", sub_kind),
-                                span: sub_decl[0].span(),
-                            });
-                        }
-                    }
+                    parse_single_declaration(&mut theory, sub_decl)?;
                 }
             }
             "import" => {
@@ -508,20 +443,16 @@ fn desugar_theory(items: &[Sexp], span: Span) -> Result<Command> {
 }
 
 fn desugar_rule(items: &[Sexp]) -> Result<Rule> {
-    // (rule name :premises (...) :conclusion ...)
+    // (rule name :premises (...) :conclusion ... [:implicit (...)] [:context (...)])
     let name = expect_atom(&items[1])?;
     let mut premises = Vec::new();
     let mut conclusion = None;
+    let mut implicit_args = Vec::new();
+    let mut context_extensions = Vec::new();
 
     let mut i = 2;
     while i < items.len() {
-        if items[i].is_keyword(":levels") {
-            // Skip :levels for backwards compatibility (ignored)
-            i += 1;
-            if i < items.len() && items[i].as_list().is_some() {
-                i += 1;
-            }
-        } else if items[i].is_keyword(":premises") {
+        if items[i].is_keyword(":premises") {
             i += 1;
             if let Some(plist) = items[i].as_list() {
                 for p in plist {
@@ -533,34 +464,19 @@ fn desugar_rule(items: &[Sexp]) -> Result<Rule> {
             i += 1;
             conclusion = Some(desugar_expr(&items[i])?);
             i += 1;
-        } else {
+        } else if items[i].is_keyword(":implicit") {
             i += 1;
-        }
-    }
-
-    let conclusion = conclusion.ok_or_else(|| DesugarError {
-        message: format!("rule {} has no conclusion", name),
-        span: items[0].span(),
-    })?;
-
-    // Parse optional :implicit and :context
-    let mut implicit_args = Vec::new();
-    let mut context_extensions = Vec::new();
-    let mut j = 2;
-    while j < items.len() {
-        if items[j].is_keyword(":implicit") {
-            j += 1;
-            if let Some(ilist) = items[j].as_list() {
+            if let Some(ilist) = items[i].as_list() {
                 for item in ilist {
                     if let Some(a) = item.as_atom() {
                         implicit_args.push(a.to_string());
                     }
                 }
             }
-            j += 1;
-        } else if items[j].is_keyword(":context") {
-            j += 1;
-            if let Some(clist) = items[j].as_list() {
+            i += 1;
+        } else if items[i].is_keyword(":context") {
+            i += 1;
+            if let Some(clist) = items[i].as_list() {
                 for item in clist {
                     if let Some(pair) = item.as_list() {
                         if pair.len() >= 2 {
@@ -575,21 +491,20 @@ fn desugar_rule(items: &[Sexp]) -> Result<Rule> {
                     }
                 }
             }
-            j += 1;
+            i += 1;
         } else {
-            j += 1;
+            i += 1;
         }
     }
 
-    Ok(Rule {
-        name: name.to_string(),
-        premises,
-        conclusion,
-        reflected: false,
-        provenance: None,
-        implicit_args,
-        context_extensions,
-    })
+    let conclusion = conclusion.ok_or_else(|| DesugarError {
+        message: format!("rule {} has no conclusion", name),
+        span: items[0].span(),
+    })?;
+
+    Ok(Rule::new(name, premises, conclusion)
+        .with_implicit(implicit_args)
+        .with_context(context_extensions))
 }
 
 fn desugar_binding_spec(items: &[Sexp]) -> Result<BindingSpec> {
@@ -1253,21 +1168,14 @@ pub fn desugar_expr(sexp: &Sexp) -> Result<Expr> {
     }
 }
 
-fn desugar_binder(items: &[Sexp], span: Span) -> Result<Expr> {
-    // (lambda (x : T) body) or (forall (x : T) body)
+/// Shared binder desugaring for lambda, forall, and custom binder kinds.
+fn desugar_binder_impl(items: &[Sexp], kind: String, span: Span) -> Result<Expr> {
     if items.len() != 3 {
         return Err(DesugarError {
             message: "binder needs exactly a binding and a body".to_string(),
             span,
         });
     }
-
-    let kind_str = expect_atom(&items[0])?;
-    let kind = match kind_str {
-        "lambda" => omega_core::expr::LAMBDA.to_string(),
-        "forall" => omega_core::expr::FORALL.to_string(),
-        _ => unreachable!(),
-    };
 
     let binding = items[1].as_list().ok_or_else(|| DesugarError {
         message: "binding must be a list (x : T)".to_string(),
@@ -1295,41 +1203,19 @@ fn desugar_binder(items: &[Sexp], span: Span) -> Result<Expr> {
     })
 }
 
-fn desugar_custom_binder(items: &[Sexp], span: Span) -> Result<Expr> {
-    // (kind (x : T) body) — custom binder kind
-    if items.len() != 3 {
-        return Err(DesugarError {
-            message: "custom binder needs exactly a binding and a body".to_string(),
-            span,
-        });
-    }
-
-    let kind = expect_atom(&items[0])?.to_string();
-
-    let binding = items[1].as_list().ok_or_else(|| DesugarError {
-        message: "binding must be a list (x : T)".to_string(),
-        span: items[1].span(),
-    })?;
-
-    let (hint, ty) = if binding.len() == 3 && binding[1].is_keyword(":") {
-        (expect_atom(&binding[0])?.to_string(), desugar_expr(&binding[2])?)
-    } else if binding.len() == 1 {
-        (expect_atom(&binding[0])?.to_string(), Expr::sym("_"))
-    } else {
-        return Err(DesugarError {
-            message: "binding must be (x : T) or (x)".to_string(),
-            span: items[1].span(),
-        });
+fn desugar_binder(items: &[Sexp], span: Span) -> Result<Expr> {
+    let kind_str = expect_atom(&items[0])?;
+    let kind = match kind_str {
+        "lambda" => omega_core::expr::LAMBDA.to_string(),
+        "forall" => omega_core::expr::FORALL.to_string(),
+        _ => unreachable!(),
     };
+    desugar_binder_impl(items, kind, span)
+}
 
-    let body = desugar_expr(&items[2])?;
-
-    Ok(Expr::Binder {
-        kind,
-        hint,
-        ty: Box::new(ty),
-        body: Box::new(body),
-    })
+fn desugar_custom_binder(items: &[Sexp], span: Span) -> Result<Expr> {
+    let kind = expect_atom(&items[0])?.to_string();
+    desugar_binder_impl(items, kind, span)
 }
 
 fn desugar_arrow(items: &[Sexp], span: Span) -> Result<Expr> {

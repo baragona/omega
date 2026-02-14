@@ -168,22 +168,28 @@ pub fn abstract_over(expr: &Expr, target: &Expr, depth: usize) -> Expr {
 /// Weak Head Normal Form: reduce head beta-redexes only.
 /// `(lambda (x : T) body)(arg)(rest...)` → `body[#0 := arg](rest...)`
 /// Stops when head is not a lambda application. Used in the unifier/matcher.
+/// Defaults to treating only `lambda` as substitutive.
 pub fn whnf(expr: &Expr) -> Expr {
+    use std::collections::HashSet;
+    let default: HashSet<Name> = [crate::expr::LAMBDA.to_string()].into();
+    whnf_with(expr, &default)
+}
+
+/// Configurable WHNF with custom substitutive binders.
+pub fn whnf_with(expr: &Expr, substitutive_binders: &std::collections::HashSet<Name>) -> Expr {
     match expr {
         Expr::App(args) if args.len() >= 2 => {
-            // Check if head is a lambda (substitutive binder)
-            let head = whnf(&args[0]);
-            let is_lambda = matches!(&head, Expr::Binder { kind, .. } if kind == crate::expr::LAMBDA);
-            if is_lambda {
+            let head = whnf_with(&args[0], substitutive_binders);
+            let is_sub = matches!(&head, Expr::Binder { kind, .. } if substitutive_binders.contains(kind));
+            if is_sub {
                 if let Expr::Binder { body, .. } = &head {
-                    // Beta-reduce: open body with first argument
                     let reduced = open(body, 0, &args[1]);
                     if args.len() == 2 {
-                        whnf(&reduced)
+                        whnf_with(&reduced, substitutive_binders)
                     } else {
                         let mut new_args = vec![reduced];
                         new_args.extend_from_slice(&args[2..]);
-                        whnf(&Expr::App(new_args))
+                        whnf_with(&Expr::App(new_args), substitutive_binders)
                     }
                 } else {
                     unreachable!()
@@ -203,31 +209,33 @@ pub fn whnf(expr: &Expr) -> Expr {
 /// Full beta-normalize: reduce ALL beta-redexes everywhere (innermost strategy).
 /// Only used for definitional equality and display, NOT in the unifier.
 /// Fuel-limited to prevent non-termination.
+/// Defaults to treating only `lambda` as substitutive, with 10,000 fuel.
 pub fn beta_normalize(expr: &Expr) -> Expr {
-    beta_normalize_fuel(expr, &mut 1000)
+    use std::collections::HashSet;
+    let default: HashSet<Name> = [crate::expr::LAMBDA.to_string()].into();
+    beta_normalize_with(expr, &default, &mut 10_000)
 }
 
-fn beta_normalize_fuel(expr: &Expr, fuel: &mut usize) -> Expr {
+/// Configurable beta-normalize with custom substitutive binders and fuel.
+pub fn beta_normalize_with(expr: &Expr, substitutive_binders: &std::collections::HashSet<Name>, fuel: &mut usize) -> Expr {
     if *fuel == 0 {
         return expr.clone();
     }
     match expr {
         Expr::Free(_) | Expr::Bound(_) | Expr::Meta(_) | Expr::Sym(_) => expr.clone(),
         Expr::App(args) => {
-            // First, normalize all children
-            let normalized: Vec<Expr> = args.iter().map(|a| beta_normalize_fuel(a, fuel)).collect();
-            // Then try head reduction (only consume fuel on actual beta-reduction)
+            let normalized: Vec<Expr> = args.iter().map(|a| beta_normalize_with(a, substitutive_binders, fuel)).collect();
             if normalized.len() >= 2 {
                 if let Expr::Binder { kind, body, .. } = &normalized[0] {
-                    if kind == crate::expr::LAMBDA {
+                    if substitutive_binders.contains(kind) {
                         *fuel = fuel.saturating_sub(1);
                         let reduced = open(body, 0, &normalized[1]);
                         if normalized.len() == 2 {
-                            return beta_normalize_fuel(&reduced, fuel);
+                            return beta_normalize_with(&reduced, substitutive_binders, fuel);
                         } else {
                             let mut new_args = vec![reduced];
                             new_args.extend_from_slice(&normalized[2..]);
-                            return beta_normalize_fuel(&Expr::App(new_args), fuel);
+                            return beta_normalize_with(&Expr::App(new_args), substitutive_binders, fuel);
                         }
                     }
                 }
@@ -235,8 +243,8 @@ fn beta_normalize_fuel(expr: &Expr, fuel: &mut usize) -> Expr {
             if normalized == *args { expr.clone() } else { Expr::App(normalized) }
         }
         Expr::Binder { kind, hint, ty, body } => {
-            let new_ty = beta_normalize_fuel(ty, fuel);
-            let new_body = beta_normalize_fuel(body, fuel);
+            let new_ty = beta_normalize_with(ty, substitutive_binders, fuel);
+            let new_body = beta_normalize_with(body, substitutive_binders, fuel);
             if &new_ty == ty.as_ref() && &new_body == body.as_ref() {
                 expr.clone()
             } else {
@@ -248,57 +256,6 @@ fn beta_normalize_fuel(expr: &Expr, fuel: &mut usize) -> Expr {
                 }
             }
         }
-    }
-}
-
-/// Check if an expression contains Bound(idx).
-pub fn contains_bound_var(expr: &Expr, idx: usize) -> bool {
-    match expr {
-        Expr::Bound(i) => *i == idx,
-        Expr::Free(_) | Expr::Meta(_) | Expr::Sym(_) => false,
-        Expr::App(args) => args.iter().any(|a| contains_bound_var(a, idx)),
-        Expr::Binder { ty, body, .. } => {
-            contains_bound_var(ty, idx) || contains_bound_var(body, idx + 1)
-        }
-    }
-}
-
-/// Eta-contract: `(kind (x:T) (f x))` → `f` when `x ∉ FV(f)`.
-/// Only contracts if `kind` is in the provided set of eta binder kinds.
-pub fn eta_contract(expr: &Expr, eta_binders: &std::collections::HashSet<Name>) -> Expr {
-    match expr {
-        Expr::Binder { kind, ty, body, hint } => {
-            let new_ty = eta_contract(ty, eta_binders);
-            let new_body = eta_contract(body, eta_binders);
-            if eta_binders.contains(kind) {
-                if let Expr::App(args) = &new_body {
-                    if args.len() >= 2 {
-                        if let Expr::Bound(0) = args.last().unwrap() {
-                            let f_args = &args[..args.len() - 1];
-                            if f_args.iter().all(|a| !contains_bound_var(a, 0)) {
-                                let f = if f_args.len() == 1 {
-                                    f_args[0].clone()
-                                } else {
-                                    Expr::App(f_args.to_vec())
-                                };
-                                return shift(&f, 0, -1);
-                            }
-                        }
-                    }
-                }
-            }
-            Expr::Binder {
-                kind: kind.clone(),
-                hint: hint.clone(),
-                ty: Box::new(new_ty),
-                body: Box::new(new_body),
-            }
-        }
-        Expr::App(args) => {
-            let new_args: Vec<Expr> = args.iter().map(|a| eta_contract(a, eta_binders)).collect();
-            Expr::App(new_args)
-        }
-        _ => expr.clone(),
     }
 }
 

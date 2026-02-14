@@ -11,43 +11,21 @@ use super::rust_ast::*;
 /// Skip these sorts — they are verification/emit infrastructure, not data.
 const SKIP_SORTS: &[&str] = &["Prop", "String"];
 
-/// Rust keywords that need escaping.
+/// Rust keywords that need escaping (appended with `_`).
+const RUST_KEYWORDS: &[&str] = &[
+    "Self", "as", "async", "await", "break", "continue", "crate", "else",
+    "enum", "extern", "fn", "for", "if", "impl", "in", "let", "loop",
+    "match", "mod", "move", "mut", "pub", "ref", "return", "self", "struct",
+    "super", "trait", "type", "use", "where", "while", "yield",
+];
+
 fn sanitize_keyword(s: &str) -> String {
-    match s {
-        "type" => "Type_".to_string(),
-        "self" => "self_".to_string(),
-        "Self" => "Self_".to_string(),
-        "crate" => "crate_".to_string(),
-        "super" => "super_".to_string(),
-        "extern" => "extern_".to_string(),
-        "mod" => "mod_".to_string(),
-        "use" => "use_".to_string(),
-        "fn" => "fn_".to_string(),
-        "struct" => "struct_".to_string(),
-        "enum" => "enum_".to_string(),
-        "trait" => "trait_".to_string(),
-        "impl" => "impl_".to_string(),
-        "pub" => "pub_".to_string(),
-        "let" => "let_".to_string(),
-        "mut" => "mut_".to_string(),
-        "ref" => "ref_".to_string(),
-        "match" => "match_".to_string(),
-        "if" => "if_".to_string(),
-        "else" => "else_".to_string(),
-        "loop" => "loop_".to_string(),
-        "while" => "while_".to_string(),
-        "for" => "for_".to_string(),
-        "in" => "in_".to_string(),
-        "return" => "return_".to_string(),
-        "break" => "break_".to_string(),
-        "continue" => "continue_".to_string(),
-        "as" => "as_".to_string(),
-        "where" => "where_".to_string(),
-        "async" => "async_".to_string(),
-        "await" => "await_".to_string(),
-        "move" => "move_".to_string(),
-        "yield" => "yield_".to_string(),
-        _ => s.to_string(),
+    if s == "type" {
+        "Type_".to_string()
+    } else if RUST_KEYWORDS.contains(&s) {
+        format!("{}_", s)
+    } else {
+        s.to_string()
     }
 }
 

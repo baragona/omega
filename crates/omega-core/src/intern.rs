@@ -47,12 +47,6 @@ enum HNode {
         ty: HExpr,
         body: HExpr,
     },
-    /// User-defined binding specification: `(bind spec body)`
-    UserBind {
-        spec: Name,
-        params: Vec<HExpr>,
-        body: HExpr,
-    },
 }
 
 /// The hash-consing arena.
@@ -114,7 +108,6 @@ impl Arena {
     const FREE_SALT: u64 = 0x517CC1B727220A95;
     const BOUND_SALT: u64 = 0x6C62272E07BB0142;
     const BINDER_SALT: u64 = 0xBF58476D1CE4E5B9;
-    const USERBIND_SALT: u64 = 0xD1342543DE82EF95;
 
     fn hash_str(s: &str) -> u64 {
         let mut h: u64 = 0xcbf29ce484222325; // FNV offset
@@ -137,13 +130,6 @@ impl Arena {
                 Self::hash_str(kind).wrapping_mul(Self::BINDER_SALT)
                 ^ self.structural_hash[ty.0 as usize].wrapping_mul(17)
                 ^ self.structural_hash[body.0 as usize],
-            HNode::UserBind { spec, params, body } => {
-                let mut h = Self::hash_str(spec) ^ Self::USERBIND_SALT;
-                for p in params {
-                    h = h.wrapping_mul(31) ^ self.structural_hash[p.0 as usize];
-                }
-                h ^ self.structural_hash[body.0 as usize]
-            }
         }
     }
 
@@ -218,7 +204,6 @@ impl Arena {
                 HNode::Free(_) => 3,
                 HNode::App(_) => 4,
                 HNode::Binder { .. } => 5,
-                HNode::UserBind { .. } => 6,
             }
         };
         let na = &self.nodes[a.0 as usize];
@@ -309,10 +294,6 @@ impl Arena {
             HNode::Binder { ty, body, .. } => {
                 self.contains_bound(*ty, idx) || self.contains_bound(*body, idx + 1)
             }
-            HNode::UserBind { params, body, .. } => {
-                params.iter().any(|p| self.contains_bound(*p, idx))
-                    || self.contains_bound(*body, idx + 1)
-            }
         }
     }
 
@@ -324,10 +305,6 @@ impl Arena {
             HNode::App(args) => args.iter().map(|a| self.count_bound_h(*a, idx)).sum(),
             HNode::Binder { ty, body, .. } => {
                 self.count_bound_h(*ty, idx) + self.count_bound_h(*body, idx + 1)
-            }
-            HNode::UserBind { params, body, .. } => {
-                params.iter().map(|p| self.count_bound_h(*p, idx)).sum::<usize>()
-                    + self.count_bound_h(*body, idx + 1)
             }
         }
     }
@@ -365,13 +342,6 @@ impl Arena {
                 }
                 Ok(())
             }
-            HNode::UserBind { params, body, .. } => {
-                for p in params {
-                    self.validate_binder_usage(*p)?;
-                }
-                self.validate_binder_usage(*body)?;
-                Ok(())
-            }
             _ => Ok(()),
         }
     }
@@ -407,14 +377,6 @@ impl Arena {
         })
     }
 
-    /// Create a user-defined binding form.
-    pub fn user_bind(&mut self, spec: &str, params: Vec<HExpr>, body: HExpr) -> HExpr {
-        self.intern(HNode::UserBind {
-            spec: spec.to_string(),
-            params,
-            body,
-        })
-    }
 
     /// Look up the node for a handle.
     fn node(&self, h: HExpr) -> &HNode {
@@ -445,9 +407,6 @@ impl Arena {
             HNode::Free(_) | HNode::Bound(_) | HNode::Sym(_) => false,
             HNode::App(args) => args.iter().any(|a| self.has_metas(*a)),
             HNode::Binder { ty, body, .. } => self.has_metas(ty) || self.has_metas(body),
-            HNode::UserBind { params, body, .. } => {
-                params.iter().any(|p| self.has_metas(*p)) || self.has_metas(body)
-            }
         };
         self.has_metas_cache[idx] = Some(result);
         result
@@ -477,14 +436,6 @@ impl Arena {
             HNode::Binder { ty, body, .. } => {
                 let (ty, body) = (*ty, *body);
                 self.meta_vars_inner(ty, acc);
-                self.meta_vars_inner(body, acc);
-            }
-            HNode::UserBind { params, body, .. } => {
-                let params = params.clone();
-                let body = *body;
-                for p in &params {
-                    self.meta_vars_inner(*p, acc);
-                }
                 self.meta_vars_inner(body, acc);
             }
         }
@@ -722,19 +673,6 @@ impl Arena {
                 ty: Box::new(self.to_expr(*ty)),
                 body: Box::new(self.to_expr(*body)),
             },
-            HNode::UserBind {
-                spec,
-                params,
-                body,
-            } => {
-                // Convert back as an App with special head
-                let mut args = vec![Expr::Sym(format!("@bind:{}", spec))];
-                for p in params {
-                    args.push(self.to_expr(*p));
-                }
-                args.push(self.to_expr(*body));
-                Expr::App(args)
-            }
         }
     }
 
@@ -783,20 +721,6 @@ impl Arena {
                     h
                 } else {
                     self.binder(kind, &hint, new_ty, new_body)
-                }
-            }
-            HNode::UserBind {
-                spec,
-                params,
-                body,
-            } => {
-                let new_params: Vec<HExpr> =
-                    params.iter().map(|p| self.apply_meta_subst_depth(*p, subst, depth)).collect();
-                let new_body = self.apply_meta_subst_depth(body, subst, depth);
-                if new_params == params && new_body == body {
-                    h
-                } else {
-                    self.user_bind(&spec, new_params, new_body)
                 }
             }
         }
@@ -1073,18 +997,6 @@ impl Arena {
                     self.binder(kind, &hint, new_ty, new_body)
                 }
             }
-            HNode::UserBind { spec, params, body } => {
-                let new_params: Vec<HExpr> = params
-                    .iter()
-                    .map(|&p| self.abstract_over(p, target, depth))
-                    .collect();
-                let new_body = self.abstract_over(body, target, depth);
-                if new_params == params && new_body == body {
-                    expr
-                } else {
-                    self.user_bind(&spec, new_params, new_body)
-                }
-            }
         }
     }
 
@@ -1100,8 +1012,6 @@ impl Arena {
             }
             HNode::Free(_) | HNode::Meta(_) | HNode::Sym(_) => expr,
             HNode::App(args) => {
-                let shifted_rep = self.shift(replacement, 0, 0); // no shift needed at this level
-                let _ = shifted_rep;
                 let new_args: Vec<HExpr> = args
                     .iter()
                     .map(|&a| self.open(a, index, replacement))
@@ -1120,18 +1030,6 @@ impl Arena {
                     expr
                 } else {
                     self.binder(kind, &hint, new_ty, new_body)
-                }
-            }
-            HNode::UserBind { spec, params, body } => {
-                let new_params: Vec<HExpr> = params
-                    .iter()
-                    .map(|&p| self.open(p, index, replacement))
-                    .collect();
-                let new_body = self.open(body, index, replacement);
-                if new_params == params && new_body == body {
-                    expr
-                } else {
-                    self.user_bind(&spec, new_params, new_body)
                 }
             }
         }
@@ -1171,18 +1069,6 @@ impl Arena {
                     expr
                 } else {
                     self.binder(kind, &hint, new_ty, new_body)
-                }
-            }
-            HNode::UserBind { spec, params, body } => {
-                let new_params: Vec<HExpr> = params
-                    .iter()
-                    .map(|&p| self.shift(p, cutoff, amount))
-                    .collect();
-                let new_body = self.shift(body, cutoff, amount);
-                if new_params == params && new_body == body {
-                    expr
-                } else {
-                    self.user_bind(&spec, new_params, new_body)
                 }
             }
         }
@@ -1266,18 +1152,6 @@ impl Arena {
                     self.binder(kind, &hint, new_ty, new_body)
                 }
             }
-            HNode::UserBind { spec, params, body } => {
-                let new_params: Vec<HExpr> = params
-                    .iter()
-                    .map(|&p| self.beta_normalize(p, fuel))
-                    .collect();
-                let new_body = self.beta_normalize(body, fuel);
-                if new_params == params && new_body == body {
-                    expr
-                } else {
-                    self.user_bind(&spec, new_params, new_body)
-                }
-            }
         }
     }
 
@@ -1305,14 +1179,6 @@ impl Arena {
             HNode::Binder { ty, body, .. } => {
                 let (ty, body) = (*ty, *body);
                 self.free_vars_inner(ty, acc);
-                self.free_vars_inner(body, acc);
-            }
-            HNode::UserBind { params, body, .. } => {
-                let params = params.clone();
-                let body = *body;
-                for p in &params {
-                    self.free_vars_inner(*p, acc);
-                }
                 self.free_vars_inner(body, acc);
             }
         }
@@ -1344,14 +1210,6 @@ impl Arena {
             HNode::Binder { ty, body, .. } => {
                 let (ty, body) = (*ty, *body);
                 self.abstractable_vars_inner(ty, acc);
-                self.abstractable_vars_inner(body, acc);
-            }
-            HNode::UserBind { params, body, .. } => {
-                let params = params.clone();
-                let body = *body;
-                for p in &params {
-                    self.abstractable_vars_inner(*p, acc);
-                }
                 self.abstractable_vars_inner(body, acc);
             }
         }
@@ -1386,18 +1244,6 @@ impl Arena {
                     self.display(*ty),
                     self.display(*body)
                 )
-            }
-            HNode::UserBind {
-                spec,
-                params,
-                body,
-            } => {
-                let ps: Vec<String> = params.iter().map(|p| self.display(*p)).collect();
-                if ps.is_empty() {
-                    format!("(@bind:{} {})", spec, self.display(*body))
-                } else {
-                    format!("(@bind:{} {} {})", spec, ps.join(" "), self.display(*body))
-                }
             }
         }
     }
@@ -1562,13 +1408,4 @@ mod tests {
         assert_eq!(arena.len(), 5);
     }
 
-    #[test]
-    fn user_binding() {
-        let mut arena = Arena::new();
-        let body = arena.bound(0);
-        let ty = arena.sym("Nat");
-        let ub = arena.user_bind("pi", vec![ty], body);
-        let display = arena.display(ub);
-        assert_eq!(display, "(@bind:pi Nat #0)");
-    }
 }

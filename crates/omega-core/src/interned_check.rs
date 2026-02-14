@@ -493,7 +493,7 @@ fn check_inner(
         } => {
             let orig_rule = rule_cache
                 .get(rule_name)
-                .ok_or_else(|| OmegaError::UnknownRule(rule_name.clone()))?;
+                .ok_or_else(|| OmegaError::UnknownName { kind: "rule".into(), name: rule_name.clone() })?;
 
             if premises.len() != orig_rule.premises.len() {
                 return Err(OmegaError::PremiseCountMismatch {
@@ -705,48 +705,33 @@ mod tests {
             pattern: Expr::app(vec![Expr::sym("proves"), Expr::meta("P")]),
             constraints: vec![],
         });
-        theory.rules.push(Rule {
-            name: "and-intro".to_string(),
-            premises: vec![
+        theory.rules.push(Rule::new(
+            "and-intro",
+            vec![
                 Expr::app(vec![Expr::sym("proves"), Expr::meta("A")]),
                 Expr::app(vec![Expr::sym("proves"), Expr::meta("B")]),
             ],
-            conclusion: Expr::app(vec![
+            Expr::app(vec![
                 Expr::sym("proves"),
                 Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
             ]),
-            reflected: false,
-            provenance: None,
-            implicit_args: vec![],
-            context_extensions: vec![],
-
-        });
-        theory.rules.push(Rule {
-            name: "and-elim-l".to_string(),
-            premises: vec![Expr::app(vec![
+        ));
+        theory.rules.push(Rule::new(
+            "and-elim-l",
+            vec![Expr::app(vec![
                 Expr::sym("proves"),
                 Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
             ])],
-            conclusion: Expr::app(vec![Expr::sym("proves"), Expr::meta("A")]),
-            reflected: false,
-            provenance: None,
-            implicit_args: vec![],
-            context_extensions: vec![],
-
-        });
-        theory.rules.push(Rule {
-            name: "and-elim-r".to_string(),
-            premises: vec![Expr::app(vec![
+            Expr::app(vec![Expr::sym("proves"), Expr::meta("A")]),
+        ));
+        theory.rules.push(Rule::new(
+            "and-elim-r",
+            vec![Expr::app(vec![
                 Expr::sym("proves"),
                 Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
             ])],
-            conclusion: Expr::app(vec![Expr::sym("proves"), Expr::meta("B")]),
-            reflected: false,
-            provenance: None,
-            implicit_args: vec![],
-            context_extensions: vec![],
-
-        });
+            Expr::app(vec![Expr::sym("proves"), Expr::meta("B")]),
+        ));
         theory.compute_hash();
         theory
     }

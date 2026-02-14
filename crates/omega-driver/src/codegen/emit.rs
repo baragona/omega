@@ -144,99 +144,18 @@ fn emit_type(ty: &RustType, buf: &mut String) {
 }
 
 fn emit_expr(expr: &RustExpr, buf: &mut String, depth: usize) {
-    let indent = "    ".repeat(depth);
-    match expr {
-        RustExpr::Var(v) => buf.push_str(&format!("{}{}", indent, v)),
-        RustExpr::Constructor {
-            enum_name,
-            variant,
-            args,
-        } => {
-            buf.push_str(&format!("{}{}::{}", indent, enum_name, variant));
-            if !args.is_empty() {
-                buf.push('(');
-                for (i, a) in args.iter().enumerate() {
-                    if i > 0 {
-                        buf.push_str(", ");
-                    }
-                    emit_expr_inline(a, buf);
-                }
-                buf.push(')');
-            }
-        }
-        RustExpr::Call { func, args } => {
-            buf.push_str(&format!("{}{}(", indent, func));
-            for (i, a) in args.iter().enumerate() {
-                if i > 0 {
-                    buf.push_str(", ");
-                }
-                emit_expr_inline(a, buf);
-            }
-            buf.push(')');
-        }
-        RustExpr::Tuple(elems) => {
-            buf.push_str(&format!("{}(", indent));
-            for (i, e) in elems.iter().enumerate() {
-                if i > 0 {
-                    buf.push_str(", ");
-                }
-                emit_expr_inline(e, buf);
-            }
-            buf.push(')');
-        }
-        RustExpr::BoxNew(inner) => {
-            buf.push_str(&format!("{}Box::new(", indent));
-            emit_expr_inline(inner, buf);
-            buf.push(')');
-        }
-        RustExpr::Deref(inner) => {
-            buf.push_str(&format!("{}*", indent));
-            emit_expr_inline(inner, buf);
-        }
-        RustExpr::Clone(inner) => {
-            buf.push_str(&indent);
-            emit_expr_inline(inner, buf);
-            buf.push_str(".clone()");
-        }
-        RustExpr::MethodCall {
-            receiver,
-            method,
-            args,
-        } => {
-            buf.push_str(&format!("{}{}.{}(", indent, receiver, method));
-            for (i, a) in args.iter().enumerate() {
-                if i > 0 {
-                    buf.push_str(", ");
-                }
-                emit_expr_inline(a, buf);
-            }
-            buf.push(')');
-        }
-        RustExpr::Unreachable => {
-            buf.push_str(&format!("{}unreachable!()", indent));
-        }
-        RustExpr::Match { scrutinee, arms } => {
-            buf.push_str(&format!("{}match ", indent));
-            emit_expr_inline(scrutinee, buf);
-            buf.push_str(" {\n");
-            for arm in arms {
-                let arm_indent = "    ".repeat(depth + 1);
-                buf.push_str(&arm_indent);
-                emit_pattern(&arm.pattern, buf);
-                if let Some(guard) = &arm.guard {
-                    buf.push_str(&format!(" if {}", guard));
-                }
-                buf.push_str(" => ");
-                emit_expr_inline(&arm.body, buf);
-                buf.push_str(",\n");
-            }
-            buf.push_str(&format!("{}}}", indent));
-        }
-    }
+    buf.push_str(&"    ".repeat(depth));
+    emit_expr_impl(expr, buf, Some(depth));
 }
 
 /// Emit an expression inline (no leading indentation).
 fn emit_expr_inline(expr: &RustExpr, buf: &mut String) {
+    emit_expr_impl(expr, buf, None);
+}
+
+/// Shared expression emitter. `indent` controls leading whitespace and
+/// multi-line vs inline formatting for Match.
+fn emit_expr_impl(expr: &RustExpr, buf: &mut String, indent: Option<usize>) {
     match expr {
         RustExpr::Var(v) => buf.push_str(v),
         RustExpr::Constructor {
@@ -307,19 +226,38 @@ fn emit_expr_inline(expr: &RustExpr, buf: &mut String) {
         RustExpr::Match { scrutinee, arms } => {
             buf.push_str("match ");
             emit_expr_inline(scrutinee, buf);
-            buf.push_str(" { ");
-            for (i, arm) in arms.iter().enumerate() {
-                if i > 0 {
-                    buf.push_str(", ");
+            if let Some(depth) = indent {
+                // Multi-line format
+                buf.push_str(" {\n");
+                let arm_indent = "    ".repeat(depth + 1);
+                let close_indent = "    ".repeat(depth);
+                for arm in arms {
+                    buf.push_str(&arm_indent);
+                    emit_pattern(&arm.pattern, buf);
+                    if let Some(guard) = &arm.guard {
+                        buf.push_str(&format!(" if {}", guard));
+                    }
+                    buf.push_str(" => ");
+                    emit_expr_inline(&arm.body, buf);
+                    buf.push_str(",\n");
                 }
-                emit_pattern(&arm.pattern, buf);
-                if let Some(guard) = &arm.guard {
-                    buf.push_str(&format!(" if {}", guard));
+                buf.push_str(&format!("{}}}", close_indent));
+            } else {
+                // Inline format
+                buf.push_str(" { ");
+                for (i, arm) in arms.iter().enumerate() {
+                    if i > 0 {
+                        buf.push_str(", ");
+                    }
+                    emit_pattern(&arm.pattern, buf);
+                    if let Some(guard) = &arm.guard {
+                        buf.push_str(&format!(" if {}", guard));
+                    }
+                    buf.push_str(" => ");
+                    emit_expr_inline(&arm.body, buf);
                 }
-                buf.push_str(" => ");
-                emit_expr_inline(&arm.body, buf);
+                buf.push_str(" }");
             }
-            buf.push_str(" }");
         }
     }
 }

@@ -25,7 +25,7 @@ fn bench_zfc_interned_vs_tree() {
     let start = Instant::now();
     for _ in 0..iterations {
         let mut session = Session::new();
-        session.kernel.use_interned = true;
+        session.kernel.set_use_interned(true);
         batch::process_file_path(&mut session, path).unwrap();
     }
     let interned_total = start.elapsed();
@@ -33,7 +33,7 @@ fn bench_zfc_interned_vs_tree() {
     let start = Instant::now();
     for _ in 0..iterations {
         let mut session = Session::new();
-        session.kernel.use_interned = false;
+        session.kernel.set_use_interned(false);
         batch::process_file_path(&mut session, path).unwrap();
     }
     let tree_total = start.elapsed();
@@ -91,16 +91,11 @@ fn make_torture_theory() -> Theory {
         pattern: Expr::app(vec![Expr::sym("eq"), Expr::meta("a"), Expr::meta("b")]),
         constraints: vec![],
     });
-    theory.rules.push(Rule {
-        name: "eq-refl".into(),
-        premises: vec![],
-        conclusion: Expr::app(vec![Expr::sym("eq"), Expr::meta("a"), Expr::meta("a")]),
-        reflected: false,
-        provenance: None,
-        implicit_args: vec![],
-        context_extensions: vec![],
-
-    });
+    theory.rules.push(Rule::new(
+        "eq-refl",
+        vec![],
+        Expr::app(vec![Expr::sym("eq"), Expr::meta("a"), Expr::meta("a")]),
+    ));
     theory.compute_hash();
     theory
 }
@@ -257,16 +252,11 @@ fn make_peano_compute_theory() -> Theory {
         pattern: Expr::app(vec![Expr::sym("eq"), Expr::meta("a"), Expr::meta("b")]),
         constraints: vec![],
     });
-    theory.rules.push(Rule {
-        name: "eq-refl".into(),
-        premises: vec![],
-        conclusion: Expr::app(vec![Expr::sym("eq"), Expr::meta("a"), Expr::meta("a")]),
-        reflected: false,
-        provenance: None,
-        implicit_args: vec![],
-        context_extensions: vec![],
-
-    });
+    theory.rules.push(Rule::new(
+        "eq-refl",
+        vec![],
+        Expr::app(vec![Expr::sym("eq"), Expr::meta("a"), Expr::meta("a")]),
+    ));
     theory.rewrites.push(omega_core::judgment::RewriteRule {
         name: "add-z".into(),
         lhs: Expr::app(vec![Expr::sym("add"), Expr::sym("z"), Expr::meta("n")]),

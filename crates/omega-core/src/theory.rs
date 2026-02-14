@@ -108,7 +108,6 @@ impl Theory {
     /// - Rules reference valid judgment forms
     pub fn validate(&self) -> Result<()> {
         self.check_duplicates()?;
-        self.check_rule_references()?;
         self.check_rewrites()?;
         Ok(())
     }
@@ -118,25 +117,25 @@ impl Theory {
 
         for s in &self.sorts {
             if seen.insert(("sort", &s.name), ()).is_some() {
-                return Err(OmegaError::DuplicateSort(s.name.clone()));
+                return Err(OmegaError::DuplicateName { kind: "sort".into(), name: s.name.clone() });
             }
         }
 
         for c in &self.constructors {
             if seen.insert(("ctor", &c.name), ()).is_some() {
-                return Err(OmegaError::DuplicateConstructor(c.name.clone()));
+                return Err(OmegaError::DuplicateName { kind: "constructor".into(), name: c.name.clone() });
             }
         }
 
         for r in &self.rules {
             if seen.insert(("rule", &r.name), ()).is_some() {
-                return Err(OmegaError::DuplicateRule(r.name.clone()));
+                return Err(OmegaError::DuplicateName { kind: "rule".into(), name: r.name.clone() });
             }
         }
 
         for j in &self.judgments {
             if seen.insert(("judgment", &j.name), ()).is_some() {
-                return Err(OmegaError::DuplicateJudgment(j.name.clone()));
+                return Err(OmegaError::DuplicateName { kind: "judgment".into(), name: j.name.clone() });
             }
         }
 
@@ -149,15 +148,6 @@ impl Theory {
             }
         }
 
-        Ok(())
-    }
-
-    fn check_rule_references(&self) -> Result<()> {
-        // Collect known constructor and sort names for reference
-        let _sort_names: Vec<&str> = self.sorts.iter().map(|s| s.name.as_str()).collect();
-        let _ctor_names: Vec<&str> = self.constructors.iter().map(|c| c.name.as_str()).collect();
-        // Rules can reference any constructor or sort — we do a light check here.
-        // Full type checking of rule patterns is left to the user's logic.
         Ok(())
     }
 
@@ -396,18 +386,21 @@ impl Theory {
         let rules: Vec<Rule> = self
             .rules
             .iter()
-            .map(|r| Rule {
-                name: format!("{}.{}", alias, r.name),
-                premises: r.premises.iter().map(|p| subst_syms(p, &combined_map)).collect(),
-                conclusion: subst_syms(&r.conclusion, &combined_map),
-                reflected: r.reflected,
-                provenance: r.provenance.clone(),
-                implicit_args: r.implicit_args.clone(), // metas stay as-is
-                context_extensions: r
+            .map(|r| {
+                let mut rule = Rule::new(
+                    format!("{}.{}", alias, r.name),
+                    r.premises.iter().map(|p| subst_syms(p, &combined_map)).collect(),
+                    subst_syms(&r.conclusion, &combined_map),
+                );
+                rule.reflected = r.reflected;
+                rule.provenance = r.provenance.clone();
+                rule.implicit_args = r.implicit_args.clone(); // metas stay as-is
+                rule.context_extensions = r
                     .context_extensions
                     .iter()
                     .map(|(idx, expr)| (*idx, subst_syms(expr, &combined_map)))
-                    .collect(),
+                    .collect();
+                rule
             })
             .collect();
 
@@ -455,7 +448,7 @@ impl Theory {
     /// Add a rule (e.g., from reflection).
     pub fn add_rule(&mut self, rule: Rule) -> Result<()> {
         if self.get_rule(&rule.name).is_some() {
-            return Err(OmegaError::DuplicateRule(rule.name.clone()));
+            return Err(OmegaError::DuplicateName { kind: "rule".into(), name: rule.name.clone() });
         }
         self.rules.push(rule);
         self.compute_hash();
@@ -498,50 +491,35 @@ mod tests {
             constraints: vec![("P".to_string(), "Prop".to_string())],
         });
 
-        theory.rules.push(Rule {
-            name: "and-intro".to_string(),
-            premises: vec![
+        theory.rules.push(Rule::new(
+            "and-intro",
+            vec![
                 Expr::app(vec![Expr::sym("proves"), Expr::meta("A")]),
                 Expr::app(vec![Expr::sym("proves"), Expr::meta("B")]),
             ],
-            conclusion: Expr::app(vec![
+            Expr::app(vec![
                 Expr::sym("proves"),
                 Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
             ]),
-            reflected: false,
-            provenance: None,
-            implicit_args: vec![],
-            context_extensions: vec![],
+        ));
 
-        });
-
-        theory.rules.push(Rule {
-            name: "and-elim-l".to_string(),
-            premises: vec![Expr::app(vec![
+        theory.rules.push(Rule::new(
+            "and-elim-l",
+            vec![Expr::app(vec![
                 Expr::sym("proves"),
                 Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
             ])],
-            conclusion: Expr::app(vec![Expr::sym("proves"), Expr::meta("A")]),
-            reflected: false,
-            provenance: None,
-            implicit_args: vec![],
-            context_extensions: vec![],
+            Expr::app(vec![Expr::sym("proves"), Expr::meta("A")]),
+        ));
 
-        });
-
-        theory.rules.push(Rule {
-            name: "and-elim-r".to_string(),
-            premises: vec![Expr::app(vec![
+        theory.rules.push(Rule::new(
+            "and-elim-r",
+            vec![Expr::app(vec![
                 Expr::sym("proves"),
                 Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
             ])],
-            conclusion: Expr::app(vec![Expr::sym("proves"), Expr::meta("B")]),
-            reflected: false,
-            provenance: None,
-            implicit_args: vec![],
-            context_extensions: vec![],
-
-        });
+            Expr::app(vec![Expr::sym("proves"), Expr::meta("B")]),
+        ));
 
         theory.compute_hash();
         theory
@@ -564,7 +542,7 @@ mod tests {
         });
         assert!(matches!(
             theory.validate(),
-            Err(OmegaError::DuplicateSort(_))
+            Err(OmegaError::DuplicateName { kind, .. }) if kind == "sort"
         ));
     }
 
@@ -617,19 +595,14 @@ mod tests {
             pattern: Expr::app(vec![Expr::sym("proves"), Expr::meta("P")]),
             constraints: vec![("P".to_string(), "Prop".to_string())],
         });
-        theory.rules.push(Rule {
-            name: "refl".to_string(),
-            premises: vec![],
-            conclusion: Expr::app(vec![
+        theory.rules.push(Rule::new(
+            "refl",
+            vec![],
+            Expr::app(vec![
                 Expr::sym("proves"),
                 Expr::app(vec![Expr::sym("eq-T"), Expr::meta("a"), Expr::meta("a")]),
             ]),
-            reflected: false,
-            provenance: None,
-            implicit_args: vec![],
-            context_extensions: vec![],
-
-        });
+        ));
         theory.compute_hash();
 
         let instance = theory.instantiate(

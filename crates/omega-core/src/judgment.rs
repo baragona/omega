@@ -64,6 +64,33 @@ pub struct RewriteRule {
 }
 
 impl Rule {
+    /// Create a new rule with the minimum required fields.
+    /// Optional fields default to: reflected=false, provenance=None,
+    /// implicit_args=[], context_extensions=[].
+    pub fn new(name: impl Into<Name>, premises: Vec<Expr>, conclusion: Expr) -> Self {
+        Rule {
+            name: name.into(),
+            premises,
+            conclusion,
+            reflected: false,
+            provenance: None,
+            implicit_args: vec![],
+            context_extensions: vec![],
+        }
+    }
+
+    /// Builder: set implicit arguments.
+    pub fn with_implicit(mut self, args: Vec<Name>) -> Self {
+        self.implicit_args = args;
+        self
+    }
+
+    /// Builder: set context extensions.
+    pub fn with_context(mut self, extensions: Vec<(usize, Expr)>) -> Self {
+        self.context_extensions = extensions;
+        self
+    }
+
     /// Collect all meta-variables mentioned in this rule.
     pub fn meta_vars(&self) -> Vec<Name> {
         let mut vars = Vec::new();
