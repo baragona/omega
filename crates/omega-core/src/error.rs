@@ -38,8 +38,6 @@ pub enum OmegaError {
     DuplicateName { kind: DeclKind, name: Name },
     /// A named declaration was not found.
     UnknownName { kind: DeclKind, name: Name },
-    /// Theory has no rules.
-    EmptyTheory(Name),
 
     // --- Derivation errors ---
     /// A rewrite rule's RHS references a meta-variable not present in its LHS.
@@ -77,8 +75,6 @@ pub enum OmegaError {
     AssumptionMismatch { goal: Expr },
     /// An assumption was already consumed (affine mode).
     UseAfterMove { index: usize, expr: Expr },
-    /// Unresolved meta-variables remain after checking.
-    UnresolvedMetas(Vec<Name>),
 
     // --- Metatheorem errors ---
     /// Case analysis is not exhaustive.
@@ -122,7 +118,6 @@ impl fmt::Display for OmegaError {
             OmegaError::UnknownName { kind, name } => {
                 write!(f, "unknown {}: {}", kind, name)
             }
-            OmegaError::EmptyTheory(n) => write!(f, "theory {} has no rules", n),
             OmegaError::RewriteMetaEscape { rule, meta } => {
                 write!(f, "rewrite rule {}: RHS meta-variable ?{} not in LHS", rule, meta)
             }
@@ -182,16 +177,6 @@ impl fmt::Display for OmegaError {
                     "affine violation: assumption {} ({}) already consumed",
                     index, expr
                 )
-            }
-            OmegaError::UnresolvedMetas(ms) => {
-                write!(f, "unresolved meta-variables: ")?;
-                for (i, m) in ms.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "?{}", m)?;
-                }
-                Ok(())
             }
             OmegaError::NonExhaustiveCases { missing_rules } => {
                 write!(f, "non-exhaustive case analysis, missing: ")?;

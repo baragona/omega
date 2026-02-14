@@ -30,8 +30,4 @@ impl Tactic {
     pub fn apply(rule: &str) -> Self {
         Tactic::Apply(rule.into())
     }
-
-    pub fn auto(depth: usize) -> Self {
-        Tactic::Auto(depth)
-    }
 }

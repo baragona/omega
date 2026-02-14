@@ -539,3 +539,87 @@ fn reject_premise_check_failed() {
         err
     );
 }
+
+#[test]
+fn reject_non_exhaustive_metatheorem() {
+    // Metatheorem must cover all rules that produce matching judgments.
+    // Here we have two rules (ax-p, ax-q) but the metatheorem only handles ax-p.
+    let source = "
+    (theory T
+      (sort Prop)
+      (judgment (proves ?P) :where P : Prop)
+      (rule ax-p :premises () :conclusion (proves p))
+      (rule ax-q :premises () :conclusion (proves q)))
+    (meta-theorem bad-meta
+      :theory T
+      :forall ((d (proves ?A)))
+      :exists ((e (proves ?A)))
+      :proof (case-analysis d
+        (case ax-p ()
+          (by-rule ax-p))))
+    ";
+    let result = check_source(source);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("non-exhaustive") || err.contains("missing"),
+        "expected non-exhaustive error, got: {}",
+        err
+    );
+}
+
+#[test]
+fn reject_metatheorem_rule_not_in_theory() {
+    // Metatheorem proof uses a rule not in the theory.
+    let source = "
+    (theory T
+      (sort Prop)
+      (judgment (proves ?P) :where P : Prop)
+      (rule ax :premises () :conclusion (proves ?A)))
+    (theory T2
+      (sort Prop)
+      (judgment (proves ?P) :where P : Prop)
+      (rule other-rule :premises () :conclusion (proves ?A)))
+    (meta-theorem bad-meta
+      :theory T
+      :forall ((d (proves ?A)))
+      :exists ((e (proves ?A)))
+      :proof (case-analysis d
+        (case ax ()
+          (by-rule other-rule))))
+    ";
+    let result = check_source(source);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("not in theory") || err.contains("unknown rule"),
+        "expected 'rule not in theory' error, got: {}",
+        err
+    );
+}
+
+#[test]
+fn reject_reflection_no_existential() {
+    // Reflecting a metatheorem that has no existential clause.
+    let source = "
+    (theory T
+      (sort Prop)
+      (judgment (proves ?P) :where P : Prop)
+      (rule ax :premises () :conclusion (proves ?A)))
+    (meta-theorem no-exist
+      :theory T
+      :forall ((d (proves ?A)))
+      :proof (case-analysis d
+        (case ax ()
+          (by-rule ax))))
+    (reflect no-exist :as derived :theory T)
+    ";
+    let result = check_source(source);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("no existential") || err.contains("nothing to reflect"),
+        "expected 'no existential' error, got: {}",
+        err
+    );
+}

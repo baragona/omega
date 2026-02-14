@@ -1,12 +1,8 @@
 /// Constraint-based unification for the Omega elaborator.
 ///
-/// Instead of eager pattern matching that fails immediately on a mismatch,
-/// this module collects constraints and solves them incrementally. This
-/// enables:
-/// - Implicit argument inference
-/// - Bidirectional type checking
-/// - Deferred constraint solving (when not enough info is available yet)
-/// - Higher-order pattern unification (Miller patterns)
+/// Collects constraints and solves them incrementally, enabling
+/// implicit argument inference, bidirectional type checking,
+/// and deferred constraint solving.
 use crate::binding::apply_meta_subst;
 use crate::expr::{Expr, Name};
 use crate::pattern::Substitution;
@@ -19,12 +15,6 @@ pub type UVar = Name;
 pub enum Constraint {
     /// Two expressions must be equal: `lhs = rhs`.
     Unify(Expr, Expr),
-    /// A meta-variable must be solved to some expression: `?X = e`.
-    Assign(UVar, Expr),
-    /// An expression must match a pattern (one-directional).
-    Match { pattern: Expr, expr: Expr },
-    /// A constraint that is deferred (not enough info to solve yet).
-    Deferred(Box<Constraint>),
 }
 
 /// The state of the constraint solver.
@@ -42,13 +32,11 @@ pub struct UnificationState {
 
 /// Result of a unification step.
 #[derive(Debug)]
-pub enum UnifyResult {
+enum UnifyResult {
     /// Constraint solved, substitution updated.
     Solved,
     /// Constraint deferred (not enough info).
     Deferred,
-    /// Constraint is unsolvable.
-    Failed(String),
 }
 
 impl UnificationState {
@@ -70,11 +58,6 @@ impl UnificationState {
     /// Create a fresh meta-expression.
     pub fn fresh_meta(&mut self, prefix: &str) -> Expr {
         Expr::Meta(self.fresh_uvar(prefix))
-    }
-
-    /// Add a unification constraint.
-    pub fn add_constraint(&mut self, c: Constraint) {
-        self.pending.push(c);
     }
 
     /// Constrain two expressions to be equal.
@@ -104,9 +87,6 @@ impl UnificationState {
                     UnifyResult::Deferred => {
                         // Already pushed to deferred by solve_one
                     }
-                    UnifyResult::Failed(msg) => {
-                        return Err(msg);
-                    }
                 }
             }
         }
@@ -125,45 +105,6 @@ impl UnificationState {
     fn solve_one(&mut self, constraint: Constraint) -> Result<UnifyResult, String> {
         match constraint {
             Constraint::Unify(lhs, rhs) => self.solve_unify(lhs, rhs),
-            Constraint::Assign(var, expr) => {
-                let expr = apply_meta_subst(&expr, &self.subst);
-                if let Some(existing) = self.subst.get(&var) {
-                    // Already assigned — unify with existing
-                    self.solve_unify(existing.clone(), expr)
-                } else {
-                    // Occurs check
-                    if occurs(&var, &expr) {
-                        return Err(format!(
-                            "occurs check failed: ?{} appears in {}",
-                            var, expr
-                        ));
-                    }
-                    self.subst.insert(var, expr);
-                    Ok(UnifyResult::Solved)
-                }
-            }
-            Constraint::Match { pattern, expr } => {
-                let pattern = apply_meta_subst(&pattern, &self.subst);
-                let expr = apply_meta_subst(&expr, &self.subst);
-                match crate::pattern::match_expr(&pattern, &expr) {
-                    Ok(sub) => {
-                        for (k, v) in sub {
-                            self.subst.insert(k, v);
-                        }
-                        Ok(UnifyResult::Solved)
-                    }
-                    Err(_) => {
-                        // Maybe the pattern has unsolved metas — defer
-                        if pattern.has_metas() || expr.has_metas() {
-                            self.deferred.push(Constraint::Match { pattern, expr });
-                            Ok(UnifyResult::Deferred)
-                        } else {
-                            Err(format!("pattern {} does not match {}", pattern, expr))
-                        }
-                    }
-                }
-            }
-            Constraint::Deferred(inner) => self.solve_one(*inner),
         }
     }
 
@@ -289,17 +230,6 @@ impl UnificationState {
         }
         result
     }
-
-    /// Check if the state has any unsolved constraints.
-    pub fn is_solved(&self) -> bool {
-        self.pending.is_empty() && self.deferred.is_empty()
-    }
-}
-
-impl Default for UnificationState {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 /// Occurs check: does the variable `name` appear in `expr`?
@@ -412,8 +342,6 @@ mod tests {
 
     #[test]
     fn implicit_argument_inference() {
-        // Simulate: a rule says (proves (and ?A ?B)) with implicit ?A, ?B
-        // The user writes (and-intro p1 p2) and the elaborator must infer A and B
         let mut state = UnificationState::new();
 
         // Rule conclusion: (proves (and ?A ?B))

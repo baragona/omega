@@ -1,0 +1,134 @@
+;;; coverage-unify.omega — exercises unification paths via tactic proofs
+;;;
+;;; Targets: implicit argument inference, bidirectional unification,
+;;;          constraint decomposition, transitive chains, deferred solving
+
+(theory UnifyTest
+  (sort Prop)
+  (sort Tm)
+  (constructor and : (-> Prop Prop Prop))
+  (constructor imp : (-> Prop Prop Prop))
+  (constructor or  : (-> Prop Prop Prop))
+  (constructor eq  : (-> Tm Tm Prop))
+  (constructor f   : (-> Tm Tm))
+  (constructor g   : (-> Tm Tm Tm))
+  (constructor a : Tm)
+  (constructor b : Tm)
+  (constructor c : Tm)
+  (judgment (proves ?P) :where P : Prop)
+
+  ;; Rules with implicit args to exercise Assign constraints
+  (rule eq-refl
+    :premises ()
+    :conclusion (proves (eq ?x ?x))
+    :implicit (?x))
+
+  (rule eq-symm
+    :premises ((proves (eq ?x ?y)))
+    :conclusion (proves (eq ?y ?x))
+    :implicit (?x ?y))
+
+  ;; eq-trans: the middle term ?y is implicit — requires bidirectional inference
+  (rule eq-trans
+    :premises ((proves (eq ?x ?y)) (proves (eq ?y ?z)))
+    :conclusion (proves (eq ?x ?z))
+    :implicit (?y))
+
+  ;; Congruence: infer the function and arguments
+  (rule eq-cong-f
+    :premises ((proves (eq ?x ?y)))
+    :conclusion (proves (eq (f ?x) (f ?y)))
+    :implicit (?x ?y))
+
+  (rule eq-cong-g
+    :premises ((proves (eq ?x1 ?y1)) (proves (eq ?x2 ?y2)))
+    :conclusion (proves (eq (g ?x1 ?x2) (g ?y1 ?y2)))
+    :implicit (?x1 ?y1 ?x2 ?y2))
+
+  ;; Propositional rules
+  (rule and-intro
+    :premises ((proves ?A) (proves ?B))
+    :conclusion (proves (and ?A ?B)))
+  (rule and-elim-l
+    :premises ((proves (and ?A ?B)))
+    :conclusion (proves ?A))
+  (rule and-elim-r
+    :premises ((proves (and ?A ?B)))
+    :conclusion (proves ?B))
+  (rule imp-intro
+    :premises ((proves ?B))
+    :conclusion (proves (imp ?A ?B))))
+
+;; --- Tactic proofs exercising implicit inference ---
+
+;; Simple implicit: eq-refl infers ?x = a
+(proof tac-refl
+  :theory UnifyTest
+  :goal (proves (eq a a))
+  :tactics (apply eq-refl))
+
+;; Implicit with decomposition: eq-cong-f infers ?x=a, ?y=b
+(proof tac-cong
+  :theory UnifyTest
+  :goal (proves (eq (f a) (f b)))
+  :assumptions ((proves (eq a b)))
+  :tactics (apply eq-cong-f) assumption)
+
+;; Bidirectional: eq-trans infers the implicit middle term ?y
+(proof tac-trans
+  :theory UnifyTest
+  :goal (proves (eq a c))
+  :assumptions ((proves (eq a b)) (proves (eq b c)))
+  :tactics (apply eq-trans) assumption assumption)
+
+;; Multiple implicits: eq-cong-g infers 4 implicit args
+(proof tac-cong-g
+  :theory UnifyTest
+  :goal (proves (eq (g a b) (g c a)))
+  :assumptions ((proves (eq a c)) (proves (eq b a)))
+  :tactics (apply eq-cong-g) assumption assumption)
+
+;; Chained: two congruences under and
+(proof tac-chain
+  :theory UnifyTest
+  :goal (proves (and (eq (f a) (f b)) (eq (g a b) (g c a))))
+  :assumptions ((proves (eq a b)) (proves (eq a c)) (proves (eq b a)))
+  :tactics (apply and-intro)
+           (apply eq-cong-f) assumption
+           (apply eq-cong-g) assumption assumption)
+
+;; Symmetry with implicit inference
+(proof tac-symm
+  :theory UnifyTest
+  :goal (proves (eq b a))
+  :assumptions ((proves (eq a b)))
+  :tactics (apply eq-symm) assumption)
+
+;; Combined: symm then elim-l, exercises multiple paths
+(proof tac-symm-and
+  :theory UnifyTest
+  :goal (proves (eq b a))
+  :assumptions ((proves (and (eq a b) (eq c c))))
+  :tactics (apply eq-symm)
+           (apply and-elim-l) assumption)
+
+;; Congruence under and: exercises nested unification
+(proof tac-nested
+  :theory UnifyTest
+  :goal (proves (and (eq a a) (eq b b)))
+  :tactics (apply and-intro) (apply eq-refl) (apply eq-refl))
+
+;; Auto with implicit args
+(proof tac-auto-impl
+  :theory UnifyTest
+  :goal (proves (eq a a))
+  :tactics (auto 3))
+
+;; Mix: and-intro + eq-cong-f + assumption
+(proof tac-mix
+  :theory UnifyTest
+  :goal (proves (and (eq (f a) (f b)) (eq a b)))
+  :assumptions ((proves (eq a b)))
+  :tactics (apply and-intro)
+           (apply eq-cong-f) assumption
+           assumption)

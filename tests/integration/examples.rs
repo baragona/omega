@@ -1552,3 +1552,19 @@ fn coverage_features_example() {
     assert!(results.iter().any(|r| r.contains("Proof explicit-assume: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof explicit-assume-swap: VALID")));
 }
+
+#[test]
+fn coverage_unify_example() {
+    let results = check_example("examples/coverage-unify.omega");
+    assert!(results.iter().any(|r| r.contains("Theory UnifyTest: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof tac-refl: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof tac-cong: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof tac-trans: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof tac-cong-g: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof tac-chain: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof tac-symm: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof tac-symm-and: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof tac-nested: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof tac-auto-impl: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof tac-mix: VALID")));
+}

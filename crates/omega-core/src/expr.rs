@@ -15,12 +15,6 @@ use std::sync::Arc;
 pub struct Name(Arc<str>);
 
 impl Name {
-    /// Create a name from anything string-like.
-    pub fn new(s: impl Into<String>) -> Self {
-        let s = s.into();
-        Name(Arc::from(s.as_str()))
-    }
-
     /// View as a string slice.
     pub fn as_str(&self) -> &str {
         &self.0
@@ -163,11 +157,6 @@ impl Expr {
     /// Convenience: create an application.
     pub fn app(exprs: Vec<Expr>) -> Expr {
         Expr::App(exprs)
-    }
-
-    /// Check if this expression is a meta-variable.
-    pub fn is_meta(&self) -> bool {
-        matches!(self, Expr::Meta(_))
     }
 
     /// Check if this expression contains any meta-variables.
