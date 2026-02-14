@@ -1387,8 +1387,109 @@ fn zfc_honest_example() {
     assert!(results.iter().any(|r| r.contains("Lemma aleph-values-give-gap: VALID [DERIVED]")));
     // Cardinality pipeline (1)
     assert!(results.iter().any(|r| r.contains("Lemma continuum-exceeds-gives-not-ch: VALID [DERIVED]")));
+    // Phase 19 Wave 5: all single-premise rules → imp-defs + auto lemmas (44)
+    // L-Definition + L-Hierarchy (5)
+    assert!(results.iter().any(|r| r.contains("Lemma in-L-iff-stage: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma def-op-sub: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma L-has-transitive-stages: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma transitive-stages-give-transitive-model: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma L-has-def-stages: VALID [DERIVED]")));
+    // Lowenheim-Skolem (3)
+    assert!(results.iter().any(|r| r.contains("Lemma single-relation-gives-countable-language: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma countable-language-gives-skolem-functions: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma skolem-closure-gives-elem-submodel: VALID [DERIVED]")));
+    // Mostowski (4)
+    assert!(results.iter().any(|r| r.contains("Lemma models-have-well-founded-epsilon: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma well-founded-epsilon-inherited-by-L: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma well-founded-gives-mostowski-map: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma mostowski-map-gives-collapse: VALID [DERIVED]")));
+    // L-Condensation (4)
+    assert!(results.iter().any(|r| r.contains("Lemma L-has-elementary-submodels: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma elementary-embeddings-preserve-definability: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma def-preserving-gives-transitive-image: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma transitive-def-closed-image-is-L-stage: VALID [DERIVED]")));
+    // L-Cofinality (3)
+    assert!(results.iter().any(|r| r.contains("Lemma zfc-ordinals-proper-class: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma unbounded-give-reflecting-ordinals: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma reflecting-ordinals-give-cofinal-stages: VALID [DERIVED]")));
+    // Formula reflection (2)
+    assert!(results.iter().any(|r| r.contains("Lemma formula-reflected-neg-step: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma all-reflected-means-has-reflection: VALID [DERIVED]")));
+    // Soundness + SAT (7)
+    assert!(results.iter().any(|r| r.contains("Lemma gch-implies-ch: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma model-implies-consistent: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma models-zfc-to-sat: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma models-zfc-sat-empty: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma models-zfc-sat-inf: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma sat-empty-means-contains: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma sat-inf-means-contains: VALID [DERIVED]")));
+    // Condensation/Reflection/Wellorder sub-results (5)
+    assert!(results.iter().any(|r| r.contains("Lemma initial-segment-isos-bound-subsets: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma range-stages-bound-ranges: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma wellorder-gives-choice-fn: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma condensation-gives-cardinal-stage-bound: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma cardinal-stage-bound-gives-counting: VALID [DERIVED]")));
+    // Truth lemma steps (2)
+    assert!(results.iter().any(|r| r.contains("Lemma truth-neg-step: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma truth-exists-step: VALID [DERIVED]")));
+    // Nice names (3)
+    assert!(results.iter().any(|r| r.contains("Lemma ccc-gives-thinnable-names: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma canonical-names-are-nice: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma nice-names-enumerate-subsets: VALID [DERIVED]")));
+    // Transfer (1)
+    assert!(results.iter().any(|r| r.contains("Lemma name-ranges-give-extended-rep: VALID [DERIVED]")));
+    // CCC/Delta/Cohen (5)
+    assert!(results.iter().any(|r| r.contains("Lemma countable-supports-give-bounded-antichains: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma ffp-is-poset: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma ffp-has-uniform-subfamily: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma uniform-subfamily-gives-root-extraction: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma root-extraction-gives-delta-system: VALID [DERIVED]")));
     // Cohen theorem (derived from forcing-preserves + generic + cohen-adds-reals)
     assert!(results.iter().any(|r| r.contains("Lemma cohen-theorem: VALID [DERIVED]")));
+    // Phase 19 Wave 6: multi-premise rules → curried imp-defs + derivation/auto lemmas (31)
+    // Cardinal ordering + aleph monotonicity (2)
+    assert!(results.iter().any(|r| r.contains("Lemma card-lt-trans: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma aleph-strict: VALID [DERIVED]")));
+    // L-model (2)
+    assert!(results.iter().any(|r| r.contains("Lemma def-elem-in-L-model: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma def-stages-give-def-closed: VALID [DERIVED]")));
+    // Tarski-Vaught (3)
+    assert!(results.iter().any(|r| r.contains("Lemma cofinal-def-closed-meets-criterion: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma formula-reflected-and-step: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma formula-reflected-exists-step: VALID [DERIVED]")));
+    // Satisfaction + Absoluteness (3)
+    assert!(results.iter().any(|r| r.contains("Lemma sat-and-intro: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma transitive-sat-delta0: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma transitive-sat-delta0-param: VALID [DERIVED]")));
+    // Definable closure + Condensation (5)
+    assert!(results.iter().any(|r| r.contains("Lemma def-closure-gives-sat: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma bounded-subsets-give-power: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma bounded-ranges-give-rep: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma choice-fn-gives-choice: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma subset-counting-gives-gch: VALID [DERIVED]")));
+    // Forcing extensions (3)
+    assert!(results.iter().any(|r| r.contains("Lemma extension-transitive: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma extension-contains: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma extension-has-names: VALID [DERIVED]")));
+    // Truth lemma + sound forcing (2)
+    assert!(results.iter().any(|r| r.contains("Lemma truth-and-step: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma sound-forcing-gives-sat: VALID [DERIVED]")));
+    // Forcing names + nice names (5)
+    assert!(results.iter().any(|r| r.contains("Lemma name-interpretation-gives-def-closed: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma thinnable-gives-canonical-names: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma subset-enumeration-gives-power: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma ground-model-has-name-ranges: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma extended-rep-satisfies: VALID [DERIVED]")));
+    // Transfer + Choice (2)
+    assert!(results.iter().any(|r| r.contains("Lemma ground-choice-extends: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma extended-choice-satisfies: VALID [DERIVED]")));
+    // Generic filter + CCC + Cardinality (4)
+    assert!(results.iter().any(|r| r.contains("Lemma countable-has-countable-dense: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma ccc-gives-countable-supports: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma card-ge-and-strict-gives-exceeds: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma indep-def: VALID [DERIVED]")));
+    // Phase 19 Wave 7: models-zfc-def (10-premise) → curried imp-def + recovery lemma
+    assert!(results.iter().any(|r| r.contains("Lemma models-zfc-def: VALID [DERIVED]")));
     // Tier 1: pure axiom derivations
     assert!(results.iter().any(|r| r.contains("Proof zero-in-omega: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof empty-in-power: VALID")));
