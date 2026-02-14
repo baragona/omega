@@ -128,53 +128,8 @@ mod tests {
     use super::*;
     use omega_core::expr::Expr;
     use omega_core::judgment::{ConstructorDecl, JudgmentForm, Rule, SortDecl};
+    use omega_core::test_util::make_prop_logic;
     use omega_core::theory::Theory;
-
-    fn make_prop_logic() -> Theory {
-        let mut theory = Theory::new("PropLogic");
-        theory.sorts.push(SortDecl {
-            name: "Prop".to_string(),
-        });
-        theory.constructors.push(ConstructorDecl {
-            name: "and".to_string(),
-            ty: Expr::sym("Prop"),
-
-        });
-        theory.judgments.push(JudgmentForm {
-            name: "proves".to_string(),
-            pattern: Expr::app(vec![Expr::sym("proves"), Expr::meta("P")]),
-            constraints: vec![],
-        });
-        theory.rules.push(Rule::new(
-            "and-intro",
-            vec![
-                Expr::app(vec![Expr::sym("proves"), Expr::meta("A")]),
-                Expr::app(vec![Expr::sym("proves"), Expr::meta("B")]),
-            ],
-            Expr::app(vec![
-                Expr::sym("proves"),
-                Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
-            ]),
-        ));
-        theory.rules.push(Rule::new(
-            "and-elim-l",
-            vec![Expr::app(vec![
-                Expr::sym("proves"),
-                Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
-            ])],
-            Expr::app(vec![Expr::sym("proves"), Expr::meta("A")]),
-        ));
-        theory.rules.push(Rule::new(
-            "and-elim-r",
-            vec![Expr::app(vec![
-                Expr::sym("proves"),
-                Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
-            ])],
-            Expr::app(vec![Expr::sym("proves"), Expr::meta("B")]),
-        ));
-        theory.compute_hash();
-        theory
-    }
 
     #[test]
     fn elaborate_with_implicit_args() {

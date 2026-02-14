@@ -467,69 +467,7 @@ mod tests {
     use super::*;
     use crate::expr::Expr;
     use crate::judgment::{ConstructorDecl, JudgmentForm, Rule, SortDecl};
-
-    fn make_prop_logic() -> Theory {
-        let mut theory = Theory::new("PropLogic");
-
-        theory.sorts.push(SortDecl {
-            name: "Prop".to_string(),
-        });
-
-        theory.constructors.push(ConstructorDecl {
-            name: "true".to_string(),
-            ty: Expr::sym("Prop"),
-
-        });
-        theory.constructors.push(ConstructorDecl {
-            name: "and".to_string(),
-            ty: Expr::app(vec![
-                Expr::sym("->"),
-                Expr::sym("Prop"),
-                Expr::sym("Prop"),
-                Expr::sym("Prop"),
-            ]),
-
-        });
-
-        theory.judgments.push(JudgmentForm {
-            name: "proves".to_string(),
-            pattern: Expr::app(vec![Expr::sym("proves"), Expr::meta("P")]),
-            constraints: vec![("P".to_string(), "Prop".to_string())],
-        });
-
-        theory.rules.push(Rule::new(
-            "and-intro",
-            vec![
-                Expr::app(vec![Expr::sym("proves"), Expr::meta("A")]),
-                Expr::app(vec![Expr::sym("proves"), Expr::meta("B")]),
-            ],
-            Expr::app(vec![
-                Expr::sym("proves"),
-                Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
-            ]),
-        ));
-
-        theory.rules.push(Rule::new(
-            "and-elim-l",
-            vec![Expr::app(vec![
-                Expr::sym("proves"),
-                Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
-            ])],
-            Expr::app(vec![Expr::sym("proves"), Expr::meta("A")]),
-        ));
-
-        theory.rules.push(Rule::new(
-            "and-elim-r",
-            vec![Expr::app(vec![
-                Expr::sym("proves"),
-                Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
-            ])],
-            Expr::app(vec![Expr::sym("proves"), Expr::meta("B")]),
-        ));
-
-        theory.compute_hash();
-        theory
-    }
+    use crate::test_util::make_prop_logic;
 
     #[test]
     fn validate_prop_logic() {

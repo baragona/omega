@@ -56,39 +56,7 @@ impl InternedTheory {
 
         let mut rule_cache: HashMap<String, InternedRule> = HashMap::new();
         for rule in &theory.rules {
-            let h_conclusion = arena.from_expr(&rule.conclusion);
-            let h_premises: Vec<HExpr> =
-                rule.premises.iter().map(|p| arena.from_expr(p)).collect();
-            let h_context_extensions: Vec<(usize, HExpr)> = rule.context_extensions
-                .iter()
-                .map(|(idx, expr)| (*idx, arena.from_expr(expr)))
-                .collect();
-            let mut meta_names = arena.meta_vars(h_conclusion);
-            for hp in &h_premises {
-                for m in arena.meta_vars(*hp) {
-                    if !meta_names.contains(&m) {
-                        meta_names.push(m);
-                    }
-                }
-            }
-            for (_, hce) in &h_context_extensions {
-                for m in arena.meta_vars(*hce) {
-                    if !meta_names.contains(&m) {
-                        meta_names.push(m);
-                    }
-                }
-            }
-            rule_cache.insert(
-                rule.name.clone(),
-                InternedRule {
-                    name: rule.name.clone(),
-                    conclusion: h_conclusion,
-                    premises: h_premises,
-                    implicit_args: rule.implicit_args.clone(),
-                    meta_names,
-                    context_extensions: h_context_extensions,
-                },
-            );
+            rule_cache.insert(rule.name.clone(), intern_rule(&mut arena, rule));
         }
         let mut rewrites = Vec::new();
         for rw in &theory.rewrites {
@@ -110,42 +78,8 @@ impl InternedTheory {
 
     /// Add a new rule (e.g., from reflection) to the cached theory.
     pub fn add_rule(&mut self, rule: &crate::judgment::Rule) {
-        let h_conclusion = self.arena.from_expr(&rule.conclusion);
-        let h_premises: Vec<HExpr> = rule
-            .premises
-            .iter()
-            .map(|p| self.arena.from_expr(p))
-            .collect();
-        let h_context_extensions: Vec<(usize, HExpr)> = rule.context_extensions
-            .iter()
-            .map(|(idx, expr)| (*idx, self.arena.from_expr(expr)))
-            .collect();
-        let mut meta_names = self.arena.meta_vars(h_conclusion);
-        for hp in &h_premises {
-            for m in self.arena.meta_vars(*hp) {
-                if !meta_names.contains(&m) {
-                    meta_names.push(m);
-                }
-            }
-        }
-        for (_, hce) in &h_context_extensions {
-            for m in self.arena.meta_vars(*hce) {
-                if !meta_names.contains(&m) {
-                    meta_names.push(m);
-                }
-            }
-        }
-        self.rule_cache.insert(
-            rule.name.clone(),
-            InternedRule {
-                name: rule.name.clone(),
-                conclusion: h_conclusion,
-                premises: h_premises,
-                implicit_args: rule.implicit_args.clone(),
-                meta_names,
-                context_extensions: h_context_extensions,
-            },
-        );
+        let ir = intern_rule(&mut self.arena, rule);
+        self.rule_cache.insert(rule.name.clone(), ir);
     }
 
     /// Check a derivation using the cached arena and rules.
@@ -158,23 +92,20 @@ impl InternedTheory {
         let h_goal = self.arena.from_expr(goal);
         let h_assumptions: Vec<HExpr> =
             ctx.assumptions.iter().map(|a| self.arena.from_expr(a)).collect();
-        let fuel = self.reduce_fuel;
-        let context_mode = self.context_mode;
-
-        check_inner(
-            &mut self.arena,
-            &self.rule_cache,
-            &self.rewrites,
-            &mut self.reduce_cache,
-            fuel,
-            context_mode,
-            h_goal,
-            derivation,
-            &h_assumptions,
-            &mut HashMap::new(),
-            &mut self.fresh_counter,
-            &mut HashSet::new(),
-        )
+        let mut global_subst = HashMap::new();
+        let mut consumed = HashSet::new();
+        let mut state = CheckState {
+            arena: &mut self.arena,
+            rule_cache: &self.rule_cache,
+            rewrites: &self.rewrites,
+            reduce_cache: &mut self.reduce_cache,
+            reduce_fuel: self.reduce_fuel,
+            context_mode: self.context_mode,
+            global_subst: &mut global_subst,
+            fresh_counter: &mut self.fresh_counter,
+            consumed: &mut consumed,
+        };
+        check_inner(&mut state, h_goal, derivation, &h_assumptions)
     }
 
     /// Check a derivation with a pre-interned goal and assumptions.
@@ -185,23 +116,20 @@ impl InternedTheory {
         derivation: &Derivation,
         h_assumptions: &[HExpr],
     ) -> Result<()> {
-        let fuel = self.reduce_fuel;
-        let context_mode = self.context_mode;
-
-        check_inner(
-            &mut self.arena,
-            &self.rule_cache,
-            &self.rewrites,
-            &mut self.reduce_cache,
-            fuel,
-            context_mode,
-            h_goal,
-            derivation,
-            h_assumptions,
-            &mut HashMap::new(),
-            &mut self.fresh_counter,
-            &mut HashSet::new(),
-        )
+        let mut global_subst = HashMap::new();
+        let mut consumed = HashSet::new();
+        let mut state = CheckState {
+            arena: &mut self.arena,
+            rule_cache: &self.rule_cache,
+            rewrites: &self.rewrites,
+            reduce_cache: &mut self.reduce_cache,
+            reduce_fuel: self.reduce_fuel,
+            context_mode: self.context_mode,
+            global_subst: &mut global_subst,
+            fresh_counter: &mut self.fresh_counter,
+            consumed: &mut consumed,
+        };
+        check_inner(&mut state, h_goal, derivation, h_assumptions)
     }
 
     /// Mutable access to the arena for direct term construction.
@@ -231,6 +159,40 @@ struct InternedRule {
     meta_names: Vec<Name>,
     /// Context extensions: (premise_index, assumption_to_add).
     context_extensions: Vec<(usize, HExpr)>,
+}
+
+/// Intern a single rule into the arena, collecting all meta-variable names.
+fn intern_rule(arena: &mut Arena, rule: &crate::judgment::Rule) -> InternedRule {
+    let h_conclusion = arena.from_expr(&rule.conclusion);
+    let h_premises: Vec<HExpr> = rule.premises.iter().map(|p| arena.from_expr(p)).collect();
+    let h_context_extensions: Vec<(usize, HExpr)> = rule
+        .context_extensions
+        .iter()
+        .map(|(idx, expr)| (*idx, arena.from_expr(expr)))
+        .collect();
+    let mut meta_names = arena.meta_vars(h_conclusion);
+    for hp in &h_premises {
+        for m in arena.meta_vars(*hp) {
+            if !meta_names.contains(&m) {
+                meta_names.push(m);
+            }
+        }
+    }
+    for (_, hce) in &h_context_extensions {
+        for m in arena.meta_vars(*hce) {
+            if !meta_names.contains(&m) {
+                meta_names.push(m);
+            }
+        }
+    }
+    InternedRule {
+        name: rule.name.clone(),
+        conclusion: h_conclusion,
+        premises: h_premises,
+        implicit_args: rule.implicit_args.clone(),
+        meta_names,
+        context_extensions: h_context_extensions,
+    }
 }
 
 fn freshen_interned_rule(
@@ -376,65 +338,70 @@ fn normalize(
     current
 }
 
-fn check_inner(
-    arena: &mut Arena,
-    rule_cache: &HashMap<String, InternedRule>,
-    rewrites: &[InternedRewrite],
-    reduce_cache: &mut HashMap<HExpr, HExpr>,
+/// Mutable state threaded through derivation checking.
+struct CheckState<'a> {
+    arena: &'a mut Arena,
+    rule_cache: &'a HashMap<String, InternedRule>,
+    rewrites: &'a [InternedRewrite],
+    reduce_cache: &'a mut HashMap<HExpr, HExpr>,
     reduce_fuel: usize,
     context_mode: ContextMode,
+    global_subst: &'a mut HSubst,
+    fresh_counter: &'a mut usize,
+    consumed: &'a mut HashSet<usize>,
+}
+
+fn check_inner(
+    state: &mut CheckState,
     goal: HExpr,
     derivation: &Derivation,
     assumptions: &[HExpr],
-    global_subst: &mut HSubst,
-    fresh_counter: &mut usize,
-    consumed: &mut HashSet<usize>,
 ) -> Result<()> {
-    let affine = context_mode == ContextMode::Affine;
-    let mut fuel = reduce_fuel;
+    let affine = state.context_mode == ContextMode::Affine;
+    let mut fuel = state.reduce_fuel;
     match derivation {
         Derivation::Assumption => {
-            let goal_resolved = apply_fixpoint(arena, goal, global_subst);
-            let goal_norm = normalize(arena, rewrites, reduce_cache, goal_resolved, &mut fuel);
+            let goal_resolved = apply_fixpoint(state.arena, goal, state.global_subst);
+            let goal_norm = normalize(state.arena, state.rewrites, state.reduce_cache, goal_resolved, &mut fuel);
 
             // In affine mode, iterate from the end (most recent first),
             // skipping consumed entries — this gives shadowing for free.
             for idx in (0..assumptions.len()).rev() {
-                if affine && consumed.contains(&idx) {
+                if affine && state.consumed.contains(&idx) {
                     continue;
                 }
-                let assumption_resolved = apply_fixpoint(arena, assumptions[idx], global_subst);
-                let assumption_norm = normalize(arena, rewrites, reduce_cache, assumption_resolved, &mut fuel);
+                let assumption_resolved = apply_fixpoint(state.arena, assumptions[idx], state.global_subst);
+                let assumption_norm = normalize(state.arena, state.rewrites, state.reduce_cache, assumption_resolved, &mut fuel);
 
                 // O(1) equality check!
                 if assumption_norm == goal_norm {
                     if affine {
-                        consumed.insert(idx);
+                        state.consumed.insert(idx);
                     }
                     return Ok(());
                 }
 
-                if let Ok(sub) = arena.match_expr(assumption_norm, goal_norm) {
+                if let Ok(sub) = state.arena.match_expr(assumption_norm, goal_norm) {
                     for (k, v) in sub {
-                        global_subst.insert(k, v);
+                        state.global_subst.insert(k, v);
                     }
                     if affine {
-                        consumed.insert(idx);
+                        state.consumed.insert(idx);
                     }
                     return Ok(());
                 }
-                if let Ok(sub) = arena.match_expr(goal_norm, assumption_norm) {
+                if let Ok(sub) = state.arena.match_expr(goal_norm, assumption_norm) {
                     for (k, v) in sub {
-                        global_subst.insert(k, v);
+                        state.global_subst.insert(k, v);
                     }
                     if affine {
-                        consumed.insert(idx);
+                        state.consumed.insert(idx);
                     }
                     return Ok(());
                 }
             }
             Err(OmegaError::AssumptionMismatch {
-                goal: arena.to_expr(goal_norm),
+                goal: state.arena.to_expr(goal_norm),
             })
         }
 
@@ -446,44 +413,44 @@ fn check_inner(
                     assumptions.len()
                 )));
             }
-            if affine && consumed.contains(idx) {
+            if affine && state.consumed.contains(idx) {
                 return Err(OmegaError::UseAfterMove {
                     index: *idx,
-                    expr: arena.to_expr(assumptions[*idx]),
+                    expr: state.arena.to_expr(assumptions[*idx]),
                 });
             }
-            let assumption = apply_fixpoint(arena, assumptions[*idx], global_subst);
-            let assumption_norm = normalize(arena, rewrites, reduce_cache, assumption, &mut fuel);
-            let goal_resolved = apply_fixpoint(arena, goal, global_subst);
-            let goal_norm = normalize(arena, rewrites, reduce_cache, goal_resolved, &mut fuel);
+            let assumption = apply_fixpoint(state.arena, assumptions[*idx], state.global_subst);
+            let assumption_norm = normalize(state.arena, state.rewrites, state.reduce_cache, assumption, &mut fuel);
+            let goal_resolved = apply_fixpoint(state.arena, goal, state.global_subst);
+            let goal_norm = normalize(state.arena, state.rewrites, state.reduce_cache, goal_resolved, &mut fuel);
 
             if assumption_norm == goal_norm {
                 if affine {
-                    consumed.insert(*idx);
+                    state.consumed.insert(*idx);
                 }
                 return Ok(());
             }
-            if let Ok(sub) = arena.match_expr(goal_norm, assumption_norm) {
+            if let Ok(sub) = state.arena.match_expr(goal_norm, assumption_norm) {
                 for (k, v) in sub {
-                    global_subst.insert(k, v);
+                    state.global_subst.insert(k, v);
                 }
                 if affine {
-                    consumed.insert(*idx);
+                    state.consumed.insert(*idx);
                 }
                 return Ok(());
             }
-            if let Ok(sub) = arena.match_expr(assumption_norm, goal_norm) {
+            if let Ok(sub) = state.arena.match_expr(assumption_norm, goal_norm) {
                 for (k, v) in sub {
-                    global_subst.insert(k, v);
+                    state.global_subst.insert(k, v);
                 }
                 if affine {
-                    consumed.insert(*idx);
+                    state.consumed.insert(*idx);
                 }
                 return Ok(());
             }
             Err(OmegaError::GoalMismatch {
-                expected: arena.to_expr(goal_norm),
-                got: arena.to_expr(assumption_norm),
+                expected: state.arena.to_expr(goal_norm),
+                got: state.arena.to_expr(assumption_norm),
             })
         }
 
@@ -491,7 +458,7 @@ fn check_inner(
             rule_name,
             premises,
         } => {
-            let orig_rule = rule_cache
+            let orig_rule = state.rule_cache
                 .get(rule_name)
                 .ok_or_else(|| OmegaError::UnknownName { kind: "rule".into(), name: rule_name.clone() })?;
 
@@ -503,34 +470,34 @@ fn check_inner(
                 });
             }
 
-            let rule = freshen_interned_rule(arena, orig_rule, fresh_counter);
-            let goal_resolved = apply_fixpoint(arena, goal, global_subst);
-            let goal_norm = normalize(arena, rewrites, reduce_cache, goal_resolved, &mut fuel);
+            let rule = freshen_interned_rule(state.arena, orig_rule, state.fresh_counter);
+            let goal_resolved = apply_fixpoint(state.arena, goal, state.global_subst);
+            let goal_norm = normalize(state.arena, state.rewrites, state.reduce_cache, goal_resolved, &mut fuel);
 
             let mut local_subst: HSubst =
-                match arena.match_expr(rule.conclusion, goal_norm) {
+                match state.arena.match_expr(rule.conclusion, goal_norm) {
                     Ok(s) => s,
                     Err(_cause) => {
-                        if arena.has_metas(goal_norm) {
-                            arena
+                        if state.arena.has_metas(goal_norm) {
+                            state.arena
                                 .match_expr(goal_norm, rule.conclusion)
                                 .map_err(|_| OmegaError::PatternMatchFailed {
                                     rule: rule_name.clone(),
-                                    expected: arena.to_expr(rule.conclusion),
-                                    got: arena.to_expr(goal_norm),
+                                    expected: state.arena.to_expr(rule.conclusion),
+                                    got: state.arena.to_expr(goal_norm),
                                     cause: crate::pattern::MatchError::Mismatch {
-                                        pattern: arena.to_expr(rule.conclusion),
-                                        expr: arena.to_expr(goal_norm),
+                                        pattern: state.arena.to_expr(rule.conclusion),
+                                        expr: state.arena.to_expr(goal_norm),
                                     },
                                 })?
                         } else {
                             return Err(OmegaError::PatternMatchFailed {
                                 rule: rule_name.clone(),
-                                expected: arena.to_expr(rule.conclusion),
-                                got: arena.to_expr(goal_norm),
+                                expected: state.arena.to_expr(rule.conclusion),
+                                got: state.arena.to_expr(goal_norm),
                                 cause: crate::pattern::MatchError::Mismatch {
-                                    pattern: arena.to_expr(rule.conclusion),
-                                    expr: arena.to_expr(goal_norm),
+                                    pattern: state.arena.to_expr(rule.conclusion),
+                                    expr: state.arena.to_expr(goal_norm),
                                 },
                             });
                         }
@@ -541,29 +508,29 @@ fn check_inner(
                 premises.iter().zip(rule.premises.iter()).enumerate()
             {
                 let mut premise_goal =
-                    arena.apply_meta_subst(premise_pattern, &local_subst);
-                premise_goal = arena.apply_meta_subst(premise_goal, global_subst);
+                    state.arena.apply_meta_subst(premise_pattern, &local_subst);
+                premise_goal = state.arena.apply_meta_subst(premise_goal, state.global_subst);
                 // Beta-normalize premise goals to reduce any beta-redexes
-                // created by meta substitution (e.g., (?B ?e2) → ((λx.T) e2) → T[e2/x])
-                premise_goal = arena.beta_normalize(premise_goal, &mut fuel);
+                // created by meta substitution (e.g., (?B ?e2) -> ((lx.T) e2) -> T[e2/x])
+                premise_goal = state.arena.beta_normalize(premise_goal, &mut fuel);
 
                 // Bidirectional: infer conclusion and unify when metas remain
-                if arena.has_metas(premise_goal) {
+                if state.arena.has_metas(premise_goal) {
                     if let Some(inferred) = infer_conclusion_h(
-                        arena,
-                        rule_cache,
+                        state.arena,
+                        state.rule_cache,
                         premise_derivation,
                         assumptions,
-                        global_subst,
-                        fresh_counter,
+                        state.global_subst,
+                        state.fresh_counter,
                     ) {
-                        if let Some(s) = unify_h(arena, premise_goal, inferred) {
+                        if let Some(s) = unify_h(state.arena, premise_goal, inferred) {
                             for (k, v) in &s {
                                 local_subst.insert(k.clone(), *v);
-                                global_subst.insert(k.clone(), *v);
+                                state.global_subst.insert(k.clone(), *v);
                             }
-                            premise_goal = arena.apply_meta_subst(premise_goal, &s);
-                            premise_goal = arena.beta_normalize(premise_goal, &mut fuel);
+                            premise_goal = state.arena.apply_meta_subst(premise_goal, &s);
+                            premise_goal = state.arena.beta_normalize(premise_goal, &mut fuel);
                         }
                     }
                 }
@@ -574,9 +541,9 @@ fn check_inner(
                     let extensions: Vec<HExpr> = rule.context_extensions.iter()
                         .filter(|(idx, _)| *idx == i)
                         .map(|(_, h)| {
-                            let resolved = arena.apply_meta_subst(*h, &local_subst);
-                            let resolved = arena.apply_meta_subst(resolved, global_subst);
-                            arena.whnf(resolved)
+                            let resolved = state.arena.apply_meta_subst(*h, &local_subst);
+                            let resolved = state.arena.apply_meta_subst(resolved, state.global_subst);
+                            state.arena.whnf(resolved)
                         })
                         .collect();
                     if extensions.is_empty() {
@@ -589,28 +556,15 @@ fn check_inner(
                     }
                 };
 
-                check_inner(
-                    arena,
-                    rule_cache,
-                    rewrites,
-                    reduce_cache,
-                    reduce_fuel,
-                    context_mode,
-                    premise_goal,
-                    premise_derivation,
-                    premise_assumptions,
-                    global_subst,
-                    fresh_counter,
-                    consumed,
-                )
-                .map_err(|e| {
-                    OmegaError::MalformedDerivation(format!(
-                        "in premise {} of rule {}: {}",
-                        i, rule_name, e
-                    ))
-                })?;
+                check_inner(state, premise_goal, premise_derivation, premise_assumptions)
+                    .map_err(|e| {
+                        OmegaError::MalformedDerivation(format!(
+                            "in premise {} of rule {}: {}",
+                            i, rule_name, e
+                        ))
+                    })?;
 
-                for (k, v) in global_subst.iter() {
+                for (k, v) in state.global_subst.iter() {
                     if !local_subst.contains_key(k) {
                         local_subst.insert(k.clone(), *v);
                     }
@@ -618,9 +572,9 @@ fn check_inner(
             }
 
             // Validate linear/affine binder usage in the goal
-            if !arena.linear_binders.is_empty() || !arena.affine_binders.is_empty() {
-                let resolved_goal = apply_fixpoint(arena, goal, global_subst);
-                arena.validate_binder_usage(resolved_goal).map_err(|msg| {
+            if !state.arena.linear_binders.is_empty() || !state.arena.affine_binders.is_empty() {
+                let resolved_goal = apply_fixpoint(state.arena, goal, state.global_subst);
+                state.arena.validate_binder_usage(resolved_goal).map_err(|msg| {
                     OmegaError::MalformedDerivation(format!(
                         "in rule {}: {}", rule_name, msg
                     ))
@@ -628,7 +582,7 @@ fn check_inner(
             }
 
             for (k, v) in local_subst {
-                global_subst.insert(k, v);
+                state.global_subst.insert(k, v);
             }
 
             Ok(())
@@ -682,59 +636,7 @@ mod tests {
     use super::*;
     use crate::derivation::{Context, Derivation};
     use crate::expr::Expr;
-    use crate::judgment::{ConstructorDecl, JudgmentForm, Rule, SortDecl};
-    use crate::theory::Theory;
-
-    fn make_prop_logic() -> Theory {
-        let mut theory = Theory::new("PropLogic");
-        theory.sorts.push(SortDecl {
-            name: "Prop".to_string(),
-        });
-        theory.constructors.push(ConstructorDecl {
-            name: "and".to_string(),
-            ty: Expr::app(vec![
-                Expr::sym("->"),
-                Expr::sym("Prop"),
-                Expr::sym("Prop"),
-                Expr::sym("Prop"),
-            ]),
-
-        });
-        theory.judgments.push(JudgmentForm {
-            name: "proves".to_string(),
-            pattern: Expr::app(vec![Expr::sym("proves"), Expr::meta("P")]),
-            constraints: vec![],
-        });
-        theory.rules.push(Rule::new(
-            "and-intro",
-            vec![
-                Expr::app(vec![Expr::sym("proves"), Expr::meta("A")]),
-                Expr::app(vec![Expr::sym("proves"), Expr::meta("B")]),
-            ],
-            Expr::app(vec![
-                Expr::sym("proves"),
-                Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
-            ]),
-        ));
-        theory.rules.push(Rule::new(
-            "and-elim-l",
-            vec![Expr::app(vec![
-                Expr::sym("proves"),
-                Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
-            ])],
-            Expr::app(vec![Expr::sym("proves"), Expr::meta("A")]),
-        ));
-        theory.rules.push(Rule::new(
-            "and-elim-r",
-            vec![Expr::app(vec![
-                Expr::sym("proves"),
-                Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
-            ])],
-            Expr::app(vec![Expr::sym("proves"), Expr::meta("B")]),
-        ));
-        theory.compute_hash();
-        theory
-    }
+    use crate::test_util::make_prop_logic;
 
     #[test]
     fn interned_and_intro() {
