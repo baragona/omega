@@ -7,6 +7,7 @@ use omega_core::derivation::{Context, Derivation};
 use omega_core::expr::{Expr, Name};
 use omega_core::pattern::match_expr;
 use omega_core::theory::Theory;
+use omega_core::unify::UnificationState;
 
 use crate::engine::ProofState;
 use crate::tactic::Tactic;
@@ -53,8 +54,12 @@ pub fn elaborate(
         ));
     }
 
-    // Reconstruct derivation from recorded steps
-    reconstruct(&steps, &goal, &context, theory, &state.subst)
+    // Reconstruct derivation from recorded steps.
+    // Use an empty subst — reconstruction re-derives all bindings by matching
+    // rules against goals top-down. The auto state's subst has freshened meta
+    // names (A$1, B$1, ...) that are meaningless to reconstruction.
+    let recon_subst = std::collections::HashMap::new();
+    reconstruct(&steps, &goal, &context, theory, &recon_subst)
 }
 
 #[derive(Debug)]
@@ -70,9 +75,40 @@ fn reconstruct(
     theory: &Theory,
     subst: &std::collections::HashMap<Name, Expr>,
 ) -> Result<Derivation, String> {
-    // Simple reconstruction: walk the steps and build the tree
     let mut step_iter = steps.iter().peekable();
-    reconstruct_goal(&mut step_iter, goal, context, theory, subst)
+    let mut fresh_counter: usize = 0;
+    reconstruct_goal(&mut step_iter, goal, context, theory, subst, &mut fresh_counter)
+}
+
+/// Freshen all meta-variables in a rule for reconstruction (avoids collision
+/// between rule metas like mp's ?P and lemma metas like ?P in the goal).
+fn freshen_rule_for_recon(
+    rule: &omega_core::judgment::Rule,
+    counter: &mut usize,
+) -> (Expr, Vec<Expr>) {
+    use omega_core::pattern::Substitution;
+
+    let all_metas = rule.meta_vars();
+    if all_metas.is_empty() {
+        return (rule.conclusion().clone(), rule.premises().to_vec());
+    }
+
+    *counter += 1;
+    let suffix = format!("$r{}", *counter);
+
+    let mut fresh_subst = Substitution::new();
+    for m in &all_metas {
+        fresh_subst.insert(m.clone(), Expr::Meta(format!("{}{}", m, suffix).into()));
+    }
+
+    let conclusion = apply_meta_subst(rule.conclusion(), &fresh_subst);
+    let premises: Vec<Expr> = rule
+        .premises()
+        .iter()
+        .map(|p| apply_meta_subst(p, &fresh_subst))
+        .collect();
+
+    (conclusion, premises)
 }
 
 fn reconstruct_goal<'a>(
@@ -81,6 +117,7 @@ fn reconstruct_goal<'a>(
     context: &Context,
     theory: &Theory,
     subst: &std::collections::HashMap<Name, Expr>,
+    fresh_counter: &mut usize,
 ) -> Result<Derivation, String> {
     let step = steps.next().ok_or("ran out of tactic steps during reconstruction")?;
 
@@ -91,33 +128,46 @@ fn reconstruct_goal<'a>(
                 .get_rule(rule_name)
                 .ok_or_else(|| format!("unknown rule: {}", rule_name))?;
 
+            // Freshen rule metas to avoid collision with goal metas
+            let (conclusion, premises) = freshen_rule_for_recon(rule, fresh_counter);
+
             let goal_resolved = apply_meta_subst(goal, subst);
-            let local_subst = match_expr(rule.conclusion(), &goal_resolved)
-                .map_err(|e| format!("reconstruction: rule {} doesn't match: {}", rule_name, e))?;
+
+            // Use unification to match freshened conclusion against goal
+            let local_subst = match match_expr(&conclusion, &goal_resolved) {
+                Ok(s) => s,
+                Err(_) => {
+                    let mut unifier = UnificationState::new();
+                    unifier.unify(conclusion, goal_resolved.clone());
+                    unifier.solve()
+                        .map_err(|e| format!("reconstruction: rule {} doesn't match goal {}: {}", rule_name, goal_resolved, e))?;
+                    unifier.subst
+                }
+            };
 
             let mut merged_subst = subst.clone();
             for (k, v) in &local_subst {
                 merged_subst.insert(k.clone(), v.clone());
             }
 
-            let mut premises = Vec::new();
-            for premise_pattern in rule.premises() {
+            let mut sub_derivations = Vec::new();
+            for premise_pattern in &premises {
                 let premise_goal = apply_meta_subst(premise_pattern, &merged_subst);
                 let sub_deriv =
-                    reconstruct_goal(steps, &premise_goal, context, theory, &merged_subst)?;
-                premises.push(sub_deriv);
+                    reconstruct_goal(steps, &premise_goal, context, theory, &merged_subst, fresh_counter)?;
+                sub_derivations.push(sub_deriv);
             }
 
             Ok(Derivation::RuleApp {
                 rule_name: rule_name.clone(),
-                premises,
+                premises: sub_derivations,
             })
         }
         Tactic::Exact(deriv) => Ok(deriv.clone()),
         Tactic::Intro(_) => {
             // Intro modifies the context; the sub-derivation proves the new goal
             // For reconstruction, we need to wrap in the appropriate rule
-            reconstruct_goal(steps, goal, context, theory, subst)
+            reconstruct_goal(steps, goal, context, theory, subst, fresh_counter)
         }
         _ => Err(format!("reconstruction not implemented for {:?}", step.tactic)),
     }

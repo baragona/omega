@@ -19,13 +19,7 @@ pub fn auto_search(
     max_depth: usize,
 ) -> Result<(ProofState, Vec<Tactic>), String> {
     let mut budget: usize = 500_000;
-    let initial_budget = budget;
-    let result = auto_search_inner(state, theory, max_depth, &mut budget);
-    let nodes_explored = initial_budget - budget;
-    if nodes_explored > 100 {
-        eprintln!("[auto] explored {} nodes (depth {})", nodes_explored, max_depth);
-    }
-    result
+    auto_search_inner(state, theory, max_depth, &mut budget)
 }
 
 fn auto_search_inner(
@@ -42,23 +36,6 @@ fn auto_search_inner(
     if state.is_complete() {
         return Ok((state.clone(), vec![]));
     }
-
-    let trace_enabled = std::env::var("AUTO_TRACE").is_ok();
-    let trace_verbose = std::env::var("AUTO_TRACE_VERBOSE").is_ok();
-    let initial_goal = if trace_enabled && !state.goals.is_empty() {
-        use omega_core::binding::apply_meta_subst;
-        let g = &state.goals[0];
-        let resolved = apply_meta_subst(&g.target, &state.subst);
-        if trace_verbose {
-            eprintln!("[auto d={}] goal_raw={} subst_keys={:?} resolved={}",
-                max_depth, g.target,
-                state.subst.keys().collect::<Vec<_>>(),
-                resolved);
-        }
-        Some(format!("{}", resolved))
-    } else {
-        None
-    };
 
     // Try assumption first
     if let Ok(new_state) = state.apply_tactic(&Tactic::Assumption, theory) {
@@ -84,10 +61,6 @@ fn auto_search_inner(
         }
         let tactic = Tactic::Apply(rule.name().clone());
         if let Ok(new_state) = state.apply_tactic(&tactic, theory) {
-            if trace_enabled {
-                eprintln!("[auto d={}] {} matched goal {}", max_depth, rule.name(),
-                    initial_goal.as_deref().unwrap_or("?"));
-            }
             if new_state.is_complete() {
                 return Ok((new_state, vec![tactic]));
             }
