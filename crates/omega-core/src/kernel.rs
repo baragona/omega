@@ -42,7 +42,7 @@ impl Kernel {
     pub fn register_theory(&mut self, theory: Theory) -> Result<()> {
         theory.validate()?;
 
-        let name = theory.name.clone();
+        let name = theory.name().to_string();
         self.interned_cache
             .insert(name.clone(), interned_check::InternedTheory::new(&theory));
         self.theories.insert(name, theory);
@@ -106,11 +106,6 @@ impl Kernel {
     /// Get a reference to a registered theory.
     pub fn get_theory(&self, name: &str) -> Option<&Theory> {
         self.theories.get(name)
-    }
-
-    /// Get a mutable reference to a registered theory.
-    pub fn get_theory_mut(&mut self, name: &str) -> Option<&mut Theory> {
-        self.theories.get_mut(name)
     }
 
     /// List all registered theory names.

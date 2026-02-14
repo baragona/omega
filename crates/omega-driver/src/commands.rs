@@ -15,7 +15,7 @@ pub fn process_command(session: &mut Session, cmd: Command) -> Result<String, St
     match cmd {
         Command::TheoryDef(mut theory) => {
             // Resolve imports: merge declarations from imported theories
-            let imports = theory.imports.clone();
+            let imports = theory.imports().to_vec();
             for import in &imports {
                 let imported = session
                     .kernel
@@ -27,19 +27,19 @@ pub fn process_command(session: &mut Session, cmd: Command) -> Result<String, St
                     // Simple import, no alias: merge as-is (existing behavior)
                     theory
                         .merge_from(&imported)
-                        .map_err(|e| format!("import error in theory {}: {}", theory.name, e))?;
+                        .map_err(|e| format!("import error in theory {}: {}", theory.name(), e))?;
                 } else {
                     // Parameterized or aliased import: instantiate then merge
                     let alias = import.alias.as_deref().unwrap_or(&import.theory_name);
                     let instance = imported
                         .instantiate(&import.args, alias)
-                        .map_err(|e| format!("import error in theory {}: {}", theory.name, e))?;
+                        .map_err(|e| format!("import error in theory {}: {}", theory.name(), e))?;
                     theory
                         .merge_from(&instance)
-                        .map_err(|e| format!("import error in theory {}: {}", theory.name, e))?;
+                        .map_err(|e| format!("import error in theory {}: {}", theory.name(), e))?;
                 }
             }
-            let name = theory.name.clone();
+            let name = theory.name().to_string();
             session
                 .kernel
                 .register_theory(theory)
@@ -234,7 +234,7 @@ pub fn process_command(session: &mut Session, cmd: Command) -> Result<String, St
 
             // Normalize the expression using the theory's rewrite rules
             let mut fuel = 10_000usize;
-            let normalized = normalize_expr(&expr, &th.rewrites, &mut fuel);
+            let normalized = normalize_expr(&expr, th.rewrites(), &mut fuel);
 
             // Flatten the rope tree to text
             let mut buf = String::new();

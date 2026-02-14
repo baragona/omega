@@ -163,7 +163,7 @@ fn derive_param_name(ty: &Expr, seen: &mut HashMap<String, usize>) -> String {
 /// Analyze a theory and produce a RustCrate.
 pub fn analyze(theory: &Theory) -> RustCrate {
     let sort_names: HashSet<&str> = theory
-        .sorts
+        .sorts()
         .iter()
         .map(|s| s.name.as_str())
         .filter(|s| !SKIP_SORTS.contains(s))
@@ -173,7 +173,7 @@ pub fn analyze(theory: &Theory) -> RustCrate {
     let has_effect_sort = theory.get_sort("Effect").is_some();
     let effect_ctors: HashSet<&str> = if has_effect_sort {
         theory
-            .constructors
+            .constructors()
             .iter()
             .filter(|c| {
                 let (_, ret) = flatten_arrow(&c.ty);
@@ -187,7 +187,7 @@ pub fn analyze(theory: &Theory) -> RustCrate {
 
     // Build set of constructor names that are heads of rewrite LHS — these are functions, not variants.
     let rewrite_heads: HashSet<&str> = theory
-        .rewrites
+        .rewrites()
         .iter()
         .filter_map(|rw| head_sym(&rw.lhs))
         .collect();
@@ -196,7 +196,7 @@ pub fn analyze(theory: &Theory) -> RustCrate {
     let mut ctor_sort: HashMap<&str, &str> = HashMap::new();
     // Build constructor → param sorts mapping (sort of each parameter).
     let mut ctor_param_sorts: HashMap<&str, Vec<Option<&str>>> = HashMap::new();
-    for c in &theory.constructors {
+    for c in theory.constructors() {
         let (params, ret) = flatten_arrow(&c.ty);
         if let Some(s) = sort_name(ret) {
             ctor_sort.insert(c.name.as_str(), s);
@@ -207,7 +207,7 @@ pub fn analyze(theory: &Theory) -> RustCrate {
 
     // Also skip constructors whose return sort is skipped, or used only for verification
     let skip_ctors: HashSet<&str> = theory
-        .constructors
+        .constructors()
         .iter()
         .filter(|c| {
             let (_, ret) = flatten_arrow(&c.ty);
@@ -221,7 +221,7 @@ pub fn analyze(theory: &Theory) -> RustCrate {
 
     // ── Build enums ──
     let mut enums: Vec<RustEnum> = Vec::new();
-    for sort in &theory.sorts {
+    for sort in theory.sorts() {
         if SKIP_SORTS.contains(&sort.name.as_str()) {
             continue;
         }
@@ -231,7 +231,7 @@ pub fn analyze(theory: &Theory) -> RustCrate {
         }
 
         let variants: Vec<RustVariant> = theory
-            .constructors
+            .constructors()
             .iter()
             .filter(|c| {
                 if rewrite_heads.contains(c.name.as_str()) {
@@ -270,7 +270,7 @@ pub fn analyze(theory: &Theory) -> RustCrate {
     // ── Build functions from rewrite rules ──
     // Group rewrites by head symbol
     let mut rewrite_groups: HashMap<&str, Vec<&omega_core::judgment::RewriteRule>> = HashMap::new();
-    for rw in &theory.rewrites {
+    for rw in theory.rewrites() {
         if let Some(head) = head_sym(&rw.lhs) {
             if skip_ctors.contains(head) {
                 continue;
@@ -298,7 +298,7 @@ pub fn analyze(theory: &Theory) -> RustCrate {
         // Detect if this function returns Effect → effectful function
         let is_effectful = has_effect_sort && ret_sort == "Effect";
         let effects_trait_name = if is_effectful {
-            Some(format!("{}Effects", &theory.name))
+            Some(format!("{}Effects", theory.name()))
         } else {
             None
         };
@@ -378,7 +378,7 @@ pub fn analyze(theory: &Theory) -> RustCrate {
     let mut traits: Vec<RustTrait> = Vec::new();
     if has_effect_sort {
         let methods: Vec<RustMethod> = theory
-            .constructors
+            .constructors()
             .iter()
             .filter(|c| {
                 // Only pure effect constructors (not rewrite heads — those become functions)
@@ -408,7 +408,7 @@ pub fn analyze(theory: &Theory) -> RustCrate {
 
         if !methods.is_empty() {
             traits.push(RustTrait {
-                name: format!("{}Effects", &theory.name),
+                name: format!("{}Effects", theory.name()),
                 methods,
             });
         }
@@ -444,7 +444,7 @@ pub fn analyze(theory: &Theory) -> RustCrate {
     });
 
     RustCrate {
-        name: to_snake_case(&theory.name),
+        name: to_snake_case(theory.name()),
         modules,
         has_box_patterns,
     }

@@ -85,19 +85,19 @@ pub fn print_rule(rule: &Rule) -> String {
 
 /// Print a theory summary.
 pub fn print_theory_summary(theory: &Theory) -> String {
-    let mut s = format!("Theory: {}\n", theory.name);
-    s.push_str(&format!("  Sorts: {}\n", theory.sorts.len()));
-    s.push_str(&format!("  Constructors: {}\n", theory.constructors.len()));
-    s.push_str(&format!("  Judgments: {}\n", theory.judgments.len()));
-    s.push_str(&format!("  Rules: {}\n", theory.rules.len()));
+    let mut s = format!("Theory: {}\n", theory.name());
+    s.push_str(&format!("  Sorts: {}\n", theory.sorts().len()));
+    s.push_str(&format!("  Constructors: {}\n", theory.constructors().len()));
+    s.push_str(&format!("  Judgments: {}\n", theory.judgments().len()));
+    s.push_str(&format!("  Rules: {}\n", theory.rules().len()));
 
-    for sort in &theory.sorts {
+    for sort in theory.sorts() {
         s.push_str(&format!("  sort {}\n", sort.name));
     }
-    for ctor in &theory.constructors {
+    for ctor in theory.constructors() {
         s.push_str(&format!("  constructor {} : {}\n", ctor.name, print_expr(&ctor.ty)));
     }
-    for rule in &theory.rules {
+    for rule in theory.rules() {
         let reflected = if rule.reflected { " [reflected]" } else { "" };
         s.push_str(&format!("  rule {}{}\n", rule.name, reflected));
     }

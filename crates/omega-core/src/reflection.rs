@@ -35,10 +35,10 @@ pub fn reflect(
     theory: &Theory,
 ) -> Result<(Rule, ReflectionRecord)> {
     // Check that the theory matches
-    if theory.name != metatheorem.theory_name {
+    if theory.name() != metatheorem.theory_name {
         return Err(OmegaError::RuleNotInTheory {
             rule: metatheorem.name.clone(),
-            theory: theory.name.clone(),
+            theory: theory.name().to_string(),
         });
     }
 
@@ -68,7 +68,7 @@ pub fn reflect(
     let record = ReflectionRecord {
         metatheorem_name: metatheorem.name.clone(),
         rule_name: rule_name.to_string(),
-        theory_name: theory.name.clone(),
+        theory_name: theory.name().to_string(),
         theory_hash: theory.content_hash(),
     };
 
@@ -96,7 +96,7 @@ pub fn check_no_self_strengthening(
     theory: &Theory,
 ) -> Result<()> {
     let reflected_rules: Vec<&str> = theory
-        .rules
+        .rules()
         .iter()
         .filter(|r| r.reflected)
         .map(|r| r.name.as_str())

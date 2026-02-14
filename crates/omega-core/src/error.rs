@@ -16,8 +16,14 @@ pub enum OmegaError {
     EmptyTheory(Name),
 
     // --- Derivation errors ---
-    /// The derivation tree is malformed.
+    /// The derivation tree is malformed (catch-all for rare cases).
     MalformedDerivation(String),
+    /// An assumption index is out of bounds.
+    AssumptionIndexOutOfBounds { index: usize, count: usize },
+    /// A premise sub-derivation failed during proof checking.
+    PremiseCheckFailed { rule: Name, premise: usize, cause: Box<OmegaError> },
+    /// A binder usage constraint was violated (linear or affine).
+    BinderUsageViolation { rule: Name, detail: String },
     /// Pattern matching failed during proof checking.
     PatternMatchFailed {
         rule: Name,
@@ -86,6 +92,15 @@ impl fmt::Display for OmegaError {
             }
             OmegaError::EmptyTheory(n) => write!(f, "theory {} has no rules", n),
             OmegaError::MalformedDerivation(s) => write!(f, "malformed derivation: {}", s),
+            OmegaError::AssumptionIndexOutOfBounds { index, count } => {
+                write!(f, "assumption index {} out of bounds ({} assumptions)", index, count)
+            }
+            OmegaError::PremiseCheckFailed { rule, premise, cause } => {
+                write!(f, "in premise {} of rule {}: {}", premise, rule, cause)
+            }
+            OmegaError::BinderUsageViolation { rule, detail } => {
+                write!(f, "binder usage violation in rule {}: {}", rule, detail)
+            }
             OmegaError::PatternMatchFailed {
                 rule,
                 expected,

@@ -135,22 +135,22 @@ mod tests {
     fn elaborate_with_implicit_args() {
         // Test that the tactic engine can handle rules with implicit arguments
         let mut theory = Theory::new("EqLogic");
-        theory.sorts.push(SortDecl {
+        theory.add_sort(SortDecl {
             name: "Tm".to_string(),
         });
-        theory.constructors.push(ConstructorDecl {
+        theory.add_constructor(ConstructorDecl {
             name: "eq".to_string(),
             ty: Expr::sym("Tm"),
 
         });
-        theory.judgments.push(JudgmentForm {
+        theory.add_judgment(JudgmentForm {
             name: "proves".to_string(),
             pattern: Expr::app(vec![Expr::sym("proves"), Expr::meta("P")]),
             constraints: vec![],
         });
 
         // eq-refl: proves (eq ?a ?a) with ?a implicit
-        theory.rules.push(Rule::new(
+        theory.push_rule(Rule::new(
             "eq-refl",
             vec![],
             Expr::app(vec![

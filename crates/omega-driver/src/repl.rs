@@ -134,7 +134,7 @@ fn handle_repl_command(session: &Session, line: &str) -> ReplAction {
         ":rules" => {
             if let Some(name) = arg {
                 if let Some(theory) = session.kernel.get_theory(name) {
-                    for rule in &theory.rules {
+                    for rule in theory.rules() {
                         println!("{}", printer::print_rule(rule));
                         println!();
                     }

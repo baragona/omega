@@ -40,7 +40,7 @@ impl InternedTheory {
     pub fn new(theory: &Theory) -> Self {
         let mut arena = Arena::new();
         // Thread AC/ACI symbols from theory attributes into arena
-        for (name, attrs) in &theory.attributes {
+        for (name, attrs) in theory.attributes() {
             use crate::theory::Attribute;
             if attrs.contains(&Attribute::ACI) {
                 arena.aci_symbols.insert(name.clone());
@@ -49,17 +49,17 @@ impl InternedTheory {
             }
         }
         // Thread binder behavior flags from theory into arena
-        arena.substitutive_binders = theory.substitutive_binders.clone();
-        arena.eta_binders = theory.eta_binders.clone();
-        arena.linear_binders = theory.linear_binders.clone();
-        arena.affine_binders = theory.affine_binders.clone();
+        arena.substitutive_binders = theory.substitutive_binders().clone();
+        arena.eta_binders = theory.eta_binders().clone();
+        arena.linear_binders = theory.linear_binders().clone();
+        arena.affine_binders = theory.affine_binders().clone();
 
         let mut rule_cache: HashMap<String, InternedRule> = HashMap::new();
-        for rule in &theory.rules {
+        for rule in theory.rules() {
             rule_cache.insert(rule.name.clone(), intern_rule(&mut arena, rule));
         }
         let mut rewrites = Vec::new();
-        for rw in &theory.rewrites {
+        for rw in theory.rewrites() {
             let lhs = arena.from_expr(&rw.lhs);
             let rhs = arena.from_expr(&rw.rhs);
             rewrites.push(InternedRewrite { lhs, rhs });
@@ -72,7 +72,7 @@ impl InternedTheory {
             reduce_cache: HashMap::new(),
             reduce_fuel: 10_000,
             fresh_counter: 0,
-            context_mode: theory.context_mode,
+            context_mode: theory.context_mode(),
         }
     }
 
@@ -407,11 +407,10 @@ fn check_inner(
 
         Derivation::AssumptionIdx(idx) => {
             if *idx >= assumptions.len() {
-                return Err(OmegaError::MalformedDerivation(format!(
-                    "assumption index {} out of bounds ({} assumptions)",
-                    idx,
-                    assumptions.len()
-                )));
+                return Err(OmegaError::AssumptionIndexOutOfBounds {
+                    index: *idx,
+                    count: assumptions.len(),
+                });
             }
             if affine && state.consumed.contains(idx) {
                 return Err(OmegaError::UseAfterMove {
@@ -558,10 +557,11 @@ fn check_inner(
 
                 check_inner(state, premise_goal, premise_derivation, premise_assumptions)
                     .map_err(|e| {
-                        OmegaError::MalformedDerivation(format!(
-                            "in premise {} of rule {}: {}",
-                            i, rule_name, e
-                        ))
+                        OmegaError::PremiseCheckFailed {
+                            rule: rule_name.to_string(),
+                            premise: i,
+                            cause: Box::new(e),
+                        }
                     })?;
 
                 for (k, v) in state.global_subst.iter() {
@@ -575,9 +575,10 @@ fn check_inner(
             if !state.arena.linear_binders.is_empty() || !state.arena.affine_binders.is_empty() {
                 let resolved_goal = apply_fixpoint(state.arena, goal, state.global_subst);
                 state.arena.validate_binder_usage(resolved_goal).map_err(|msg| {
-                    OmegaError::MalformedDerivation(format!(
-                        "in rule {}: {}", rule_name, msg
-                    ))
+                    OmegaError::BinderUsageViolation {
+                        rule: rule_name.to_string(),
+                        detail: msg,
+                    }
                 })?;
             }
 

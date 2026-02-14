@@ -45,40 +45,40 @@ pub enum ContextMode {
 #[derive(Debug, Clone)]
 pub struct Theory {
     /// The name of this theory.
-    pub name: Name,
+    name: Name,
     /// Sort declarations.
-    pub sorts: Vec<SortDecl>,
+    sorts: Vec<SortDecl>,
     /// Constructor declarations.
-    pub constructors: Vec<ConstructorDecl>,
+    constructors: Vec<ConstructorDecl>,
     /// Judgment form declarations.
-    pub judgments: Vec<JudgmentForm>,
+    judgments: Vec<JudgmentForm>,
     /// Inference rules.
-    pub rules: Vec<Rule>,
+    rules: Vec<Rule>,
     /// User-defined binding specifications.
-    pub binding_specs: Vec<BindingSpec>,
+    binding_specs: Vec<BindingSpec>,
     /// Rewrite rules for definitional equality (delta reduction).
-    pub rewrites: Vec<RewriteRule>,
+    rewrites: Vec<RewriteRule>,
     /// Context mode: structural (default) or affine (at-most-once usage).
-    pub context_mode: ContextMode,
+    context_mode: ContextMode,
     /// A hash of the theory content for staleness detection.
-    /// Private: use `content_hash()` accessor. Recomputed by `compute_hash()`.
+    /// Use `content_hash()` accessor. Recomputed by `compute_hash()`.
     content_hash: u64,
     /// Import directives (resolved at registration time).
-    pub imports: Vec<Import>,
+    imports: Vec<Import>,
     /// Theory parameters: (name, sort/type). Empty for non-parameterized theories.
-    pub params: Vec<(Name, Expr)>,
+    params: Vec<(Name, Expr)>,
     /// Binder kinds that trigger beta-reduction (substitution on application).
     /// Typically contains "lambda". Theories can add custom substitutive binders.
-    pub substitutive_binders: HashSet<Name>,
+    substitutive_binders: HashSet<Name>,
     /// Binder kinds that trigger eta-contraction at intern time.
     /// `(kind (x:T) (f x))` → `f` when `x ∉ FV(f)`.
-    pub eta_binders: HashSet<Name>,
+    eta_binders: HashSet<Name>,
     /// Binder kinds with linear usage: bound variable must be used exactly once.
-    pub linear_binders: HashSet<Name>,
+    linear_binders: HashSet<Name>,
     /// Binder kinds with affine usage: bound variable must be used at most once.
-    pub affine_binders: HashSet<Name>,
+    affine_binders: HashSet<Name>,
     /// Symbol attributes (AC, ACI, etc.).
-    pub attributes: HashMap<Name, HashSet<Attribute>>,
+    attributes: HashMap<Name, HashSet<Attribute>>,
 }
 
 impl Theory {
@@ -196,6 +196,75 @@ impl Theory {
     /// Look up a binding spec by name.
     pub fn get_binding_spec(&self, name: &str) -> Option<&BindingSpec> {
         self.binding_specs.iter().find(|bs| bs.name == name)
+    }
+
+    // --- Read accessors ---
+
+    /// The theory name.
+    pub fn name(&self) -> &str { &self.name }
+    /// All sort declarations.
+    pub fn sorts(&self) -> &[SortDecl] { &self.sorts }
+    /// All constructor declarations.
+    pub fn constructors(&self) -> &[ConstructorDecl] { &self.constructors }
+    /// All judgment form declarations.
+    pub fn judgments(&self) -> &[JudgmentForm] { &self.judgments }
+    /// All inference rules.
+    pub fn rules(&self) -> &[Rule] { &self.rules }
+    /// All binding specifications.
+    pub fn binding_specs(&self) -> &[BindingSpec] { &self.binding_specs }
+    /// All rewrite rules.
+    pub fn rewrites(&self) -> &[RewriteRule] { &self.rewrites }
+    /// The context mode (structural or affine).
+    pub fn context_mode(&self) -> ContextMode { self.context_mode }
+    /// Import directives.
+    pub fn imports(&self) -> &[Import] { &self.imports }
+    /// Theory parameters.
+    pub fn params(&self) -> &[(Name, Expr)] { &self.params }
+    /// Binder kinds that trigger beta-reduction.
+    pub fn substitutive_binders(&self) -> &HashSet<Name> { &self.substitutive_binders }
+    /// Binder kinds that trigger eta-contraction.
+    pub fn eta_binders(&self) -> &HashSet<Name> { &self.eta_binders }
+    /// Binder kinds requiring linear usage (exactly once).
+    pub fn linear_binders(&self) -> &HashSet<Name> { &self.linear_binders }
+    /// Binder kinds requiring affine usage (at most once).
+    pub fn affine_binders(&self) -> &HashSet<Name> { &self.affine_binders }
+    /// Symbol attributes (AC, ACI, etc.).
+    pub fn attributes(&self) -> &HashMap<Name, HashSet<Attribute>> { &self.attributes }
+
+    // --- Mutators for theory construction (before validation) ---
+
+    /// Add a sort declaration.
+    pub fn add_sort(&mut self, sort: SortDecl) { self.sorts.push(sort); }
+    /// Add a constructor declaration.
+    pub fn add_constructor(&mut self, ctor: ConstructorDecl) { self.constructors.push(ctor); }
+    /// Add a judgment form declaration.
+    pub fn add_judgment(&mut self, judgment: JudgmentForm) { self.judgments.push(judgment); }
+    /// Push a rule during theory construction (before validation).
+    /// For adding rules to an already-registered theory, use `add_rule()` instead.
+    pub fn push_rule(&mut self, rule: Rule) { self.rules.push(rule); }
+    /// Add a binding specification.
+    pub fn add_binding_spec(&mut self, bs: BindingSpec) { self.binding_specs.push(bs); }
+    /// Add a rewrite rule.
+    pub fn add_rewrite(&mut self, rw: RewriteRule) { self.rewrites.push(rw); }
+    /// Set the context mode.
+    pub fn set_context_mode(&mut self, mode: ContextMode) { self.context_mode = mode; }
+    /// Add an import directive.
+    pub fn add_import(&mut self, import: Import) { self.imports.push(import); }
+    /// Add a theory parameter.
+    pub fn add_param(&mut self, name: Name, ty: Expr) { self.params.push((name, ty)); }
+    /// Set all theory parameters at once.
+    pub fn set_params(&mut self, params: Vec<(Name, Expr)>) { self.params = params; }
+    /// Register a binder kind as substitutive (triggers beta-reduction).
+    pub fn add_substitutive_binder(&mut self, name: Name) { self.substitutive_binders.insert(name); }
+    /// Register a binder kind for eta-contraction.
+    pub fn add_eta_binder(&mut self, name: Name) { self.eta_binders.insert(name); }
+    /// Register a binder kind as linear (exactly-once usage).
+    pub fn add_linear_binder(&mut self, name: Name) { self.linear_binders.insert(name); }
+    /// Register a binder kind as affine (at-most-once usage).
+    pub fn add_affine_binder(&mut self, name: Name) { self.affine_binders.insert(name); }
+    /// Set an attribute on a symbol.
+    pub fn add_attribute(&mut self, sym_name: Name, attr: Attribute) {
+        self.attributes.entry(sym_name).or_default().insert(attr);
     }
 
     /// Compute and update the content hash.
@@ -478,10 +547,10 @@ mod tests {
     #[test]
     fn detect_duplicate_sort() {
         let mut theory = Theory::new("Bad");
-        theory.sorts.push(SortDecl {
+        theory.add_sort(SortDecl {
             name: "Prop".to_string(),
         });
-        theory.sorts.push(SortDecl {
+        theory.add_sort(SortDecl {
             name: "Prop".to_string(),
         });
         assert!(matches!(
@@ -507,16 +576,16 @@ mod tests {
         assert!(derived.get_constructor("and").is_some());
         assert!(derived.get_rule("and-intro").is_some());
         assert!(derived.get_rule("and-elim-l").is_some());
-        assert_eq!(derived.sorts.len(), 1);
-        assert_eq!(derived.constructors.len(), 2);
-        assert_eq!(derived.rules.len(), 3);
+        assert_eq!(derived.sorts().len(), 1);
+        assert_eq!(derived.constructors().len(), 2);
+        assert_eq!(derived.rules().len(), 3);
     }
 
     #[test]
     fn merge_from_rejects_collision() {
         let base = make_prop_logic();
         let mut derived = Theory::new("Derived");
-        derived.sorts.push(SortDecl {
+        derived.add_sort(SortDecl {
             name: "Prop".to_string(), // Same as base
         });
         let result = derived.merge_from(&base);
@@ -527,19 +596,19 @@ mod tests {
     fn instantiate_basic() {
         // A parameterized theory with one sort, one constructor, one rule
         let mut theory = Theory::new("EqT");
-        theory.params = vec![
+        theory.set_params(vec![
             ("T".to_string(), Expr::sym("Type")),
             ("eq-T".to_string(), Expr::app(vec![
                 Expr::sym("->"), Expr::sym("T"), Expr::sym("T"), Expr::sym("Prop"),
             ])),
-        ];
-        theory.sorts.push(SortDecl { name: "Prop".to_string() });
-        theory.judgments.push(JudgmentForm {
+        ]);
+        theory.add_sort(SortDecl { name: "Prop".to_string() });
+        theory.add_judgment(JudgmentForm {
             name: "proves".to_string(),
             pattern: Expr::app(vec![Expr::sym("proves"), Expr::meta("P")]),
             constraints: vec![("P".to_string(), "Prop".to_string())],
         });
-        theory.rules.push(Rule::new(
+        theory.push_rule(Rule::new(
             "refl",
             vec![],
             Expr::app(vec![
@@ -555,9 +624,9 @@ mod tests {
         ).unwrap();
 
         // Check renamed declarations
-        assert_eq!(instance.sorts[0].name, "NE.Prop");
-        assert_eq!(instance.judgments[0].name, "NE.proves");
-        assert_eq!(instance.rules[0].name, "NE.refl");
+        assert_eq!(instance.sorts()[0].name, "NE.Prop");
+        assert_eq!(instance.judgments()[0].name, "NE.proves");
+        assert_eq!(instance.rules()[0].name, "NE.refl");
 
         // Check parameter substitution in rule conclusion
         // eq-T should be replaced with nat-eq, proves should be renamed to NE.proves
@@ -565,16 +634,16 @@ mod tests {
             Expr::sym("NE.proves"),
             Expr::app(vec![Expr::sym("nat-eq"), Expr::meta("a"), Expr::meta("a")]),
         ]);
-        assert_eq!(instance.rules[0].conclusion, expected_conclusion);
+        assert_eq!(instance.rules()[0].conclusion, expected_conclusion);
 
         // Instance is concrete
-        assert!(instance.params.is_empty());
+        assert!(instance.params().is_empty());
     }
 
     #[test]
     fn instantiate_wrong_arg_count() {
         let mut theory = Theory::new("T");
-        theory.params = vec![("X".to_string(), Expr::sym("Type"))];
+        theory.set_params(vec![("X".to_string(), Expr::sym("Type"))]);
         let result = theory.instantiate(&[], "A");
         assert!(result.is_err());
     }

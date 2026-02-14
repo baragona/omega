@@ -16,15 +16,15 @@ use crate::theory::Theory;
 pub fn make_prop_logic() -> Theory {
     let mut theory = Theory::new("PropLogic");
 
-    theory.sorts.push(SortDecl {
+    theory.add_sort(SortDecl {
         name: "Prop".to_string(),
     });
 
-    theory.constructors.push(ConstructorDecl {
+    theory.add_constructor(ConstructorDecl {
         name: "true".to_string(),
         ty: Expr::sym("Prop"),
     });
-    theory.constructors.push(ConstructorDecl {
+    theory.add_constructor(ConstructorDecl {
         name: "and".to_string(),
         ty: Expr::app(vec![
             Expr::sym("->"),
@@ -33,7 +33,7 @@ pub fn make_prop_logic() -> Theory {
             Expr::sym("Prop"),
         ]),
     });
-    theory.constructors.push(ConstructorDecl {
+    theory.add_constructor(ConstructorDecl {
         name: "imp".to_string(),
         ty: Expr::app(vec![
             Expr::sym("->"),
@@ -43,13 +43,13 @@ pub fn make_prop_logic() -> Theory {
         ]),
     });
 
-    theory.judgments.push(JudgmentForm {
+    theory.add_judgment(JudgmentForm {
         name: "proves".to_string(),
         pattern: Expr::app(vec![Expr::sym("proves"), Expr::meta("P")]),
         constraints: vec![("P".to_string(), "Prop".to_string())],
     });
 
-    theory.rules.push(Rule::new(
+    theory.push_rule(Rule::new(
         "and-intro",
         vec![
             Expr::app(vec![Expr::sym("proves"), Expr::meta("A")]),
@@ -61,7 +61,7 @@ pub fn make_prop_logic() -> Theory {
         ]),
     ));
 
-    theory.rules.push(Rule::new(
+    theory.push_rule(Rule::new(
         "and-elim-l",
         vec![Expr::app(vec![
             Expr::sym("proves"),
@@ -70,7 +70,7 @@ pub fn make_prop_logic() -> Theory {
         Expr::app(vec![Expr::sym("proves"), Expr::meta("A")]),
     ));
 
-    theory.rules.push(Rule::new(
+    theory.push_rule(Rule::new(
         "and-elim-r",
         vec![Expr::app(vec![
             Expr::sym("proves"),
@@ -79,7 +79,7 @@ pub fn make_prop_logic() -> Theory {
         Expr::app(vec![Expr::sym("proves"), Expr::meta("B")]),
     ));
 
-    theory.rules.push(Rule::new(
+    theory.push_rule(Rule::new(
         "imp-intro",
         vec![Expr::app(vec![Expr::sym("proves"), Expr::meta("B")])],
         Expr::app(vec![
@@ -88,7 +88,7 @@ pub fn make_prop_logic() -> Theory {
         ]),
     ));
 
-    theory.rules.push(Rule::new(
+    theory.push_rule(Rule::new(
         "imp-elim",
         vec![
             Expr::app(vec![

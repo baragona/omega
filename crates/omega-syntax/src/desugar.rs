@@ -152,7 +152,7 @@ fn parse_single_declaration(theory: &mut Theory, decl: &[Sexp]) -> Result<()> {
     match kind {
         "sort" => {
             let sort_name = expect_atom(&decl[1])?;
-            theory.sorts.push(SortDecl {
+            theory.add_sort(SortDecl {
                 name: sort_name.to_string(),
             });
         }
@@ -161,13 +161,13 @@ fn parse_single_declaration(theory: &mut Theory, decl: &[Sexp]) -> Result<()> {
             // (constructor name : type)
             if decl.len() >= 4 && expect_atom(&decl[2]).ok() == Some(":") {
                 let ty = desugar_expr(&decl[3])?;
-                theory.constructors.push(ConstructorDecl {
+                theory.add_constructor(ConstructorDecl {
                     name: ctor_name.to_string(),
                     ty,
                 });
             } else {
                 // Just a name, no explicit type
-                theory.constructors.push(ConstructorDecl {
+                theory.add_constructor(ConstructorDecl {
                     name: ctor_name.to_string(),
                     ty: Expr::sym("_"),
                 });
@@ -209,7 +209,7 @@ fn parse_single_declaration(theory: &mut Theory, decl: &[Sexp]) -> Result<()> {
                 }
             }
 
-            theory.judgments.push(JudgmentForm {
+            theory.add_judgment(JudgmentForm {
                 name: jname,
                 pattern,
                 constraints,
@@ -217,7 +217,7 @@ fn parse_single_declaration(theory: &mut Theory, decl: &[Sexp]) -> Result<()> {
         }
         "rule" => {
             let rule = desugar_rule(decl)?;
-            theory.rules.push(rule);
+            theory.push_rule(rule);
         }
         "rewrite" => {
             // (rewrite name lhs rhs)
@@ -230,7 +230,7 @@ fn parse_single_declaration(theory: &mut Theory, decl: &[Sexp]) -> Result<()> {
             let rw_name = expect_atom(&decl[1])?;
             let lhs = desugar_expr(&decl[2])?;
             let rhs = desugar_expr(&decl[3])?;
-            theory.rewrites.push(RewriteRule {
+            theory.add_rewrite(RewriteRule {
                 name: rw_name.to_string(),
                 lhs,
                 rhs,
@@ -276,7 +276,7 @@ fn desugar_theory(items: &[Sexp], span: Span) -> Result<Command> {
             }
             let param_name = expect_atom(&pair[0])?;
             let param_ty = desugar_expr(&pair[1])?;
-            theory.params.push((param_name.to_string(), param_ty));
+            theory.add_param(param_name.to_string(), param_ty);
         }
         4 // declarations start after :params and the param list
     } else {
@@ -302,7 +302,7 @@ fn desugar_theory(items: &[Sexp], span: Span) -> Result<Command> {
             }
             "binding-spec" => {
                 let bs = desugar_binding_spec(decl)?;
-                theory.binding_specs.push(bs);
+                theory.add_binding_spec(bs);
             }
             "context-mode" => {
                 // (context-mode affine) or (context-mode structural)
@@ -314,8 +314,8 @@ fn desugar_theory(items: &[Sexp], span: Span) -> Result<Command> {
                 }
                 let mode = expect_atom(&decl[1])?;
                 match mode {
-                    "affine" => theory.context_mode = ContextMode::Affine,
-                    "structural" => theory.context_mode = ContextMode::Structural,
+                    "affine" => theory.set_context_mode(ContextMode::Affine),
+                    "structural" => theory.set_context_mode(ContextMode::Structural),
                     _ => {
                         return Err(DesugarError {
                             message: format!("unknown context mode: {} (expected affine or structural)", mode),
@@ -374,7 +374,7 @@ fn desugar_theory(items: &[Sexp], span: Span) -> Result<Command> {
                         span: decl[0].span(),
                     });
                 }
-                theory.imports.push(Import {
+                theory.add_import(Import {
                     theory_name: import_name.to_string(),
                     args,
                     alias,
@@ -392,10 +392,10 @@ fn desugar_theory(items: &[Sexp], span: Span) -> Result<Command> {
                 for flag_sexp in &decl[2..] {
                     let flag = expect_atom(flag_sexp)?;
                     match flag {
-                        ":substitutive" => { theory.substitutive_binders.insert(binder_name.to_string()); }
-                        ":eta" => { theory.eta_binders.insert(binder_name.to_string()); }
-                        ":linear" => { theory.linear_binders.insert(binder_name.to_string()); }
-                        ":affine" => { theory.affine_binders.insert(binder_name.to_string()); }
+                        ":substitutive" => { theory.add_substitutive_binder(binder_name.to_string()); }
+                        ":eta" => { theory.add_eta_binder(binder_name.to_string()); }
+                        ":linear" => { theory.add_linear_binder(binder_name.to_string()); }
+                        ":affine" => { theory.add_affine_binder(binder_name.to_string()); }
                         _ => {
                             return Err(DesugarError {
                                 message: format!("unknown binder-behavior flag: {} (expected :substitutive, :eta, :linear, :affine)", flag),
@@ -425,7 +425,7 @@ fn desugar_theory(items: &[Sexp], span: Span) -> Result<Command> {
                         });
                     }
                 };
-                theory.attributes.entry(sym_name.to_string()).or_insert_with(std::collections::HashSet::new).insert(attr);
+                theory.add_attribute(sym_name.to_string(), attr);
             }
             _ => {
                 return Err(DesugarError {
@@ -437,7 +437,7 @@ fn desugar_theory(items: &[Sexp], span: Span) -> Result<Command> {
     }
 
     // Auto-register "lambda" as substitutive (triggers beta-reduction)
-    theory.substitutive_binders.insert(omega_core::expr::LAMBDA.to_string());
+    theory.add_substitutive_binder(omega_core::expr::LAMBDA.to_string());
     theory.compute_hash();
     Ok(Command::TheoryDef(theory))
 }
@@ -1295,13 +1295,13 @@ mod tests {
         assert_eq!(cmds.len(), 1);
 
         if let Command::TheoryDef(theory) = &cmds[0] {
-            assert_eq!(theory.name, "PropLogic");
-            assert_eq!(theory.sorts.len(), 1);
-            assert_eq!(theory.constructors.len(), 2);
-            assert_eq!(theory.judgments.len(), 1);
-            assert_eq!(theory.rules.len(), 1);
-            assert_eq!(theory.rules[0].name, "and-intro");
-            assert_eq!(theory.rules[0].premises.len(), 2);
+            assert_eq!(theory.name(), "PropLogic");
+            assert_eq!(theory.sorts().len(), 1);
+            assert_eq!(theory.constructors().len(), 2);
+            assert_eq!(theory.judgments().len(), 1);
+            assert_eq!(theory.rules().len(), 1);
+            assert_eq!(theory.rules()[0].name, "and-intro");
+            assert_eq!(theory.rules()[0].premises.len(), 2);
         } else {
             panic!("expected TheoryDef");
         }
@@ -1338,12 +1338,12 @@ mod tests {
         let sexps = parser::parse(input).unwrap();
         let cmds = desugar_program(&sexps).unwrap();
         if let Command::TheoryDef(theory) = &cmds[0] {
-            assert_eq!(theory.binding_specs.len(), 1);
-            assert_eq!(theory.binding_specs[0].name, "lin-lam");
-            assert_eq!(theory.binding_specs[0].arity, 1);
-            assert_eq!(theory.binding_specs[0].body_positions, vec![0]);
-            assert!(theory.binding_specs[0].linear);
-            assert!(!theory.binding_specs[0].affine);
+            assert_eq!(theory.binding_specs().len(), 1);
+            assert_eq!(theory.binding_specs()[0].name, "lin-lam");
+            assert_eq!(theory.binding_specs()[0].arity, 1);
+            assert_eq!(theory.binding_specs()[0].body_positions, vec![0]);
+            assert!(theory.binding_specs()[0].linear);
+            assert!(!theory.binding_specs()[0].affine);
         } else {
             panic!("expected TheoryDef");
         }

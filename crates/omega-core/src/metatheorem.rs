@@ -67,7 +67,7 @@ pub struct MetaCase {
 /// Verify a metatheorem proof.
 pub fn verify_metatheorem(metatheorem: &MetaTheorem, theory: &Theory) -> Result<()> {
     // 1. Check the theory exists and matches
-    if theory.name != metatheorem.theory_name {
+    if theory.name() != metatheorem.theory_name {
         return Err(OmegaError::RuleNotInTheory {
             rule: metatheorem.name.clone(),
             theory: metatheorem.theory_name.clone(),
@@ -242,7 +242,7 @@ fn verify_proof(
 /// produces the judgment's head constructor are applicable.
 fn find_applicable_rules(theory: &Theory, judgment: &Expr) -> Vec<Name> {
     let mut result = Vec::new();
-    for rule in &theory.rules {
+    for rule in theory.rules() {
         if conclusion_could_introduce(rule, judgment) {
             result.push(rule.name.clone());
         }
