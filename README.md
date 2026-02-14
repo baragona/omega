@@ -131,9 +131,13 @@ Omega is powerful enough to:
 - **Prove Gödel's Second Incompleteness Theorem** (`examples/godel.omega`)
 - **Derive classical logic from game-theoretic strategies** (`examples/game.omega`)
 - **Compare Boolean vs Heyting topoi** (`examples/topos.omega`)
-- **Show CH is independent of ZFC** via Boolean-valued models (`examples/continuum.omega`)
+- **Show CH is independent of ZFC** — full development from atomic axioms (`examples/zfc-independence.omega`), honest audit with derived Cantor lemmas (`examples/zfc-honest.omega`)
 - **Formalize large cardinals** and the reflection principle (`examples/large-cardinals.omega`)
 - **Climb to Γ₀** through the Veblen hierarchy (`examples/ordinal-arithmetic.omega`)
+- **Verify zero-knowledge circuits** via R1CS satisfiability (`examples/zk-circuit.omega`)
+- **Reason coinductively about infinite streams** (`examples/streams.omega`)
+- **Kompile theories to Rust** — extract verified state machines to executable code (`omega kompile`)
+- **Implement a verified proof checker as rewrite rules** — self-representation where the kernel certifies its own encoded checker (`examples/self.omega`)
 
 The kernel is done. The rest is just writing `.omega` files.
 
@@ -177,9 +181,29 @@ Double negation elimination as a single axiom, deriving everything classical: LE
 
 Contradictions without explosion. Russell's paradox `R∈R ∧ R∉R` exists as a dialetheia — a true contradiction — but doesn't infect the entire system. The key: omit the standard explosion rule `⊥ → A`, so contradictions remain locally contained.
 
-**`examples/zfc.omega`** — ZFC Set Theory (15 proofs)
+**`examples/zfc.omega`** — ZFC Set Theory (39 proofs)
 
 Von Neumann ordinals (0=∅, 1={∅}, 2={∅,{∅}}), pairing, union, powerset, and the Axiom of Choice with a Skolem operator. Deep implicit-argument chains: `eq-trans` infers middle terms across 3-step equality reasoning over set membership.
+
+**`examples/zfc-foundations.omega`** — ZFC from Scratch (15 proofs)
+
+Everything built from Set, Prop, and ∈. Natural numbers exist (0, 1, 2 ∈ ω), ordinal structure (ω is a limit ordinal), and the ordering on numbers (∈ IS the ordering: 0 < 1 < 2). Ordered pairs, singletons, and successor all constructed from ZFC axioms — no primitives beyond membership.
+
+**`examples/zfc-cardinals.omega`** — Functions to Independence (15 proofs)
+
+Part II of the atomic CH proof. Functions as sets of ordered pairs, injections, surjections, bijections. Cardinal ordering via injections, Cantor's diagonal theorem (no surjection A → P(A)), the aleph hierarchy, and the Continuum Hypothesis stated and shown independent — all importing from `zfc-foundations`.
+
+**`examples/zfc-independence.omega`** — Complete CH Independence (25 proofs)
+
+The full development in ~200 rules across eight parts: atomic foundation, functions and cardinals, first-order logic with satisfaction, absoluteness and relativization, Gödel's L with condensation, forcing machinery with names and generics, the Cohen poset Add(ω,ℵ₂) with CCC, and the final independence theorem. Zero black boxes.
+
+**`examples/zfc-honest.omega`** — Honest CH Formalization (29 proofs)
+
+Every rule tagged as [AXIOM-FOL], [AXIOM-ZFC], [DEFINITION], [DERIVED], or [ADMITTED]. The crown jewel: Cantor's theorem fully derived as 4 chained lemmas (diag-in-power → diag-contradiction → cantor-no-surj → cantor) — no admits. Uses the `(lemma ...)` command as Cut: verify proof, discard tree, register conclusion. 21 FOL axioms + 18 ZFC axioms + 10 definitions + 9 derived rules + ~55 admitted lemmas.
+
+**`examples/ch-complete.omega`** — CH Independence Expanded (15 proofs)
+
+Expands the black-box rules into actual mathematical content: ordinals and cardinals, first-order logic and models, the ZFC axioms, absoluteness, the constructible universe L, forcing machinery, and the Cohen poset. Eight-part structure from ordinals through the independence theorem.
 
 **`examples/large-cardinals.omega`** — Large Cardinals (10 proofs)
 
@@ -196,6 +220,10 @@ Conway's surreal numbers: { L | R } encompassing reals and ordinals in a single 
 **`examples/continuum.omega`** — Continuum Hypothesis Independence (10 proofs)
 
 The "final boss" of set theory. Boolean-valued models where truth values live in a Boolean algebra B. Six normalization proofs verify Boolean algebra laws (identity, annihilation, double negation, modus ponens computes via 3-step rewrite chain). Then the big results: Gödel's L satisfies CH (1940), Cohen's forcing satisfies ¬CH (1963), therefore CH is independent of ZFC.
+
+**`examples/forcing.omega`** — Forcing & CH Independence (10 proofs)
+
+The most famous unprovable statement. Gödel (1938): CH is consistent — the constructible universe L satisfies GCH. Cohen (1963): ¬CH is consistent — forcing with Add(ω,ℵ₂) adds ℵ₂ new reals while CCC preserves cardinals. Beth hierarchy, cardinal exponentiation, and both directions proved.
 
 **`examples/club-filter.omega`** — Club Filter & Fodor's Lemma (10 proofs)
 
@@ -258,6 +286,18 @@ Mutual definition of a universe of codes U and decoding function El — the Dybj
 **`examples/level-poly.omega`** — Level Polymorphism (13 proofs)
 
 Universe-polymorphic List, Id, and Pi with `lmax` as ACI-normalized level computation. `nil : List(List(Nat))` requires chaining `t-list(t-nat)` through the level system. Pi types at generic levels with assumptions providing universe witnesses.
+
+**`examples/bidirectional.omega`** — Bidirectional Type Checking (10 proofs)
+
+Types flow in two directions: synthesis (⇒) produces a type, checking (⇐) receives an expected type. The same surface lambda `λx.body` elaborates to different core terms depending on context — `check(λx.x, Nat→Nat)` produces `λ(x:Nat).x`. Synthesis for literals and variables, checking for lambdas and application.
+
+**`examples/nominal.omega`** — Nominal Logic (10 proofs)
+
+Names as first-class citizens. Swapping `swap(a,b,t)` exchanges names, freshness `a # t` means "a does not appear free in t", and alpha-equivalence is *computed* by swapping: `lam(a, var(a)) ≡α lam(b, var(b))` because `b # lam(a, var(a))` and `swap(a,b,...)` makes them identical. No de Bruijn indices needed.
+
+**`examples/refinement.omega`** — Refinement Types (10 proofs)
+
+Types plus predicates: `{ x : Nat | x > 0 }` is the type of positive naturals. Subtyping lattice Pos ⊂ NonZero ⊂ Nat with arrow variance. The rewrite engine acts as an SMT solver — it *computes* whether a literal is positive. Safe division: only NonZero denominators type-check.
 
 #### Substructural Logic
 
@@ -361,6 +401,14 @@ Three handlers for one program. `put(1, choose(get, val(0)))` produces `some(1)`
 
 Mini-ML with Robinson unification. Soundness: `unify(α→β, Int→Bool) = [α↦Int, β↦Bool]` and applying the substitution to both sides yields `Int→Bool`. Constraint generation, occurs check, and substitution composition — the algorithm behind `let x = ...` in ML-family languages.
 
+**`examples/streams.omega`** — Coinduction & Bisimulation (10 proofs)
+
+Reasoning about infinite structures. Streams defined by observations (head and tail), with coinduction as the dual of induction: to prove two streams bisimilar, assume bisimilarity when comparing their tails. Five observation proofs (head of ones, nats, zip-add) and five bisimulation proofs including `map-succ(zeros) ∼ ones` via coinductive hypothesis.
+
+**`examples/zk-circuit.omega`** — Zero-Knowledge Circuits (10 proofs)
+
+R1CS (Rank-1 Constraint Systems) for zero-knowledge proofs. Arithmetic gates (`a * b = c`, `a + b = c`), witnesses assigning values to wires, and circuit satisfiability checked by the rewrite engine as arithmetic verifier. Multiple witnesses for the same public output demonstrate zero-knowledge: you can't tell *which* factoring was used.
+
 #### Verified State Machines
 
 **`examples/kv-store.omega`** — Verified Key-Value Store (10 proofs)
@@ -451,6 +499,18 @@ Hash-consing benchmark: a term doubled 100,000 times has 2^100,001 nodes as a tr
 
 The "final boss" of the module system: imports Option(Int), Result(Int, String), and Pair(Int, Bool) into a single theory. Each parameterized theory instantiated with different types, all coexisting with aliased namespaces. Cross-module equality reasoning.
 
+**`examples/lemma-demo.omega`** — The Cut Rule (13 proofs)
+
+The `(lemma ...)` command: prove a theorem, then use its conclusion as a derived rule. Logically the Cut rule — once verified, the proof tree is discarded and only the signature is retained. Demonstrates lemma chaining (using one lemma to prove the next), deep composition, and the `[DERIVED]` audit trail.
+
+**`examples/self.omega`** — Self-Representation: Omega Checks Itself (15 proofs)
+
+A derivation checker, automated solver, and reflection principle — all as rewrite rules. Three acts: (I) `concl(D)` validates proof trees, returning `ok(F)` or `fail`; (II) `tauto(φ)` builds proof trees automatically via context-aware search; (III) `reflect-tauto` lifts validated results to a `true` judgment. Catch-all rewrite rules (declaration-order priority) eliminate O(n²) failure enumeration. Highlights:
+- Proof 11: MP antecedent mismatch `P→Q, R` → `fail` (catch-all handles without per-formula rules)
+- Proof 13: `tauto(P∧Q → Q∧P)` — automated commutativity (compare manual proof 6)
+- Proof 14: `tauto(P∧(Q∧R) → (P∧Q)∧R)` — automated associativity via depth-3 context lookup
+- Proof 15: `true(P∧Q → Q∧P)` — one-line reflected proof composing solver + checker + soundness
+
 #### Standard Library (`libs/`)
 
 **`libs/option.omega`** — Option(T): parameterized theory with none/some constructors and case elimination. Single type parameter.
@@ -485,6 +545,26 @@ omega-cli              Command-line interface
 
 **`omega-core`** is the trusted computing base. It has no external dependencies and implements three operations: `register_theory`, `check_derivation`, and `check_metatheorem`. Reflection is driver-level sugar — the kernel verifies the metatheorem, and the driver installs the derived rule. Everything above the kernel is untrusted elaboration.
 
+## Testing & Coverage
+
+```bash
+# Run all tests (219 tests: 126 integration + 67 unit + 26 syntax/elaborate)
+cargo test --workspace
+
+# Run just integration tests (example files + negative tests + kompile + bench)
+cargo test --test integration
+
+# Run a specific example test
+cargo test --test integration -- zfc_honest
+
+# Code coverage (requires cargo-llvm-cov: cargo install cargo-llvm-cov)
+cargo llvm-cov --workspace --summary-only   # Per-file line coverage
+cargo llvm-cov --workspace --html           # HTML report in target/llvm-cov/html/
+cargo llvm-cov --workspace --open           # Generate and open in browser
+```
+
+Coverage is ~79% overall (~84% for omega-core). Untestable code (interactive REPL, CLI main) is excluded from targets. Negative tests exercise error paths: duplicate declarations, goal mismatches, affine violations, rewrite meta escape, and more.
+
 ## Roadmap
 
 - [x] User-defined binding specifications
@@ -504,6 +584,8 @@ omega-cli              Command-line interface
 - [x] Level-polymorphic declarations
 - [x] Per-binder eta-contraction, linear/affine checks
 - [x] Reflection moved out of kernel (three-operation trusted core)
+- [x] Lemma command (Cut rule for proof chaining)
+- [x] Theory-to-Rust compiler (`omega kompile`)
 
 ## License
 

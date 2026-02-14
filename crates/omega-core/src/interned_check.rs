@@ -643,7 +643,7 @@ mod tests {
             Expr::app(vec![Expr::sym("and"), Expr::free("p"), Expr::free("q")]),
         ]);
         let derivation = Derivation::RuleApp {
-            rule_name: "and-intro".to_string(),
+            rule_name: "and-intro".into(),
             premises: vec![Derivation::Assumption, Derivation::Assumption],
         };
         let ctx = Context::with_assumptions(vec![
@@ -666,14 +666,14 @@ mod tests {
             Expr::app(vec![Expr::sym("and"), Expr::free("p"), Expr::free("q")]),
         ])]);
         let derivation = Derivation::RuleApp {
-            rule_name: "and-intro".to_string(),
+            rule_name: "and-intro".into(),
             premises: vec![
                 Derivation::RuleApp {
-                    rule_name: "and-elim-r".to_string(),
+                    rule_name: "and-elim-r".into(),
                     premises: vec![Derivation::Assumption],
                 },
                 Derivation::RuleApp {
-                    rule_name: "and-elim-l".to_string(),
+                    rule_name: "and-elim-l".into(),
                     premises: vec![Derivation::Assumption],
                 },
             ],
@@ -691,7 +691,7 @@ mod tests {
         ]);
         // Wrong number of premises
         let derivation = Derivation::RuleApp {
-            rule_name: "and-intro".to_string(),
+            rule_name: "and-intro".into(),
             premises: vec![Derivation::Assumption],
         };
         let ctx = Context::with_assumptions(vec![

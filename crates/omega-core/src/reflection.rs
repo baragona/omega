@@ -154,32 +154,32 @@ mod tests {
         let theory = make_prop_logic();
 
         let mt = MetaTheorem {
-            name: "and-comm".to_string(),
-            theory_name: "PropLogic".to_string(),
+            name: "and-comm".into(),
+            theory_name: "PropLogic".into(),
             forall: vec![(
-                "D".to_string(),
+                "D".into(),
                 Expr::app(vec![
                     Expr::sym("proves"),
                     Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
                 ]),
             )],
             exists: vec![(
-                "D'".to_string(),
+                "D'".into(),
                 Expr::app(vec![
                     Expr::sym("proves"),
                     Expr::app(vec![Expr::sym("and"), Expr::meta("B"), Expr::meta("A")]),
                 ]),
             )],
             proof: MetaProof::CaseAnalysis {
-                scrutinee: "D".to_string(),
+                scrutinee: "D".into(),
                 cases: vec![MetaCase {
-                    rule_name: "and-intro".to_string(),
-                    premise_names: vec!["D1".to_string(), "D2".to_string()],
+                    rule_name: "and-intro".into(),
+                    premise_names: vec!["D1".into(), "D2".into()],
                     body: MetaProof::ByRule {
-                        rule_name: "and-intro".to_string(),
+                        rule_name: "and-intro".into(),
                         args: vec![
-                            MetaProof::Var("D2".to_string()),
-                            MetaProof::Var("D1".to_string()),
+                            MetaProof::Var("D2".into()),
+                            MetaProof::Var("D1".into()),
                         ],
                     },
                 }],
@@ -199,9 +199,9 @@ mod tests {
         let hash_before = theory.content_hash();
 
         let record = ReflectionRecord {
-            metatheorem_name: "test".to_string(),
-            rule_name: "test-rule".to_string(),
-            theory_name: "PropLogic".to_string(),
+            metatheorem_name: "test".into(),
+            rule_name: "test-rule".into(),
+            theory_name: "PropLogic".into(),
             theory_hash: hash_before,
         };
 

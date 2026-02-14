@@ -1398,7 +1398,7 @@ mod tests {
         ]));
         let replacement = arena.sym("true");
         let mut subst = HashMap::new();
-        subst.insert("A".to_string(), replacement);
+        subst.insert(Name::from("A"), replacement);
 
         let result = arena.apply_meta_subst(orig, &subst);
         let expected = arena.from_expr(&Expr::app(vec![

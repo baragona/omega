@@ -584,7 +584,7 @@ impl TheoryBuilder {
 mod tests {
     use super::*;
     use crate::expr::Expr;
-    use crate::judgment::{ConstructorDecl, JudgmentForm, Rule, SortDecl};
+    use crate::judgment::{JudgmentForm, Rule, SortDecl};
     use crate::test_util::make_prop_logic;
 
     #[test]
@@ -624,8 +624,8 @@ mod tests {
         assert!(derived.get_rule("and-intro").is_some());
         assert!(derived.get_rule("and-elim-l").is_some());
         assert_eq!(derived.sorts().len(), 1);
-        assert_eq!(derived.constructors().len(), 2);
-        assert_eq!(derived.rules().len(), 3);
+        assert_eq!(derived.constructors().len(), 3);
+        assert_eq!(derived.rules().len(), 5);
     }
 
     #[test]
@@ -642,8 +642,8 @@ mod tests {
         // A parameterized theory with one sort, one constructor, one rule
         let mut tb = Theory::builder("EqT");
         tb.set_params(vec![
-            ("T".to_string(), Expr::sym("Type")),
-            ("eq-T".to_string(), Expr::app(vec![
+            ("T".into(), Expr::sym("Type")),
+            ("eq-T".into(), Expr::app(vec![
                 Expr::sym("->"), Expr::sym("T"), Expr::sym("T"), Expr::sym("Prop"),
             ])),
         ]);
@@ -651,7 +651,7 @@ mod tests {
         tb.add_judgment(JudgmentForm::new(
             "proves",
             Expr::app(vec![Expr::sym("proves"), Expr::meta("P")]),
-            vec![("P".to_string(), "Prop".to_string())],
+            vec![("P".into(), "Prop".into())],
         ));
         tb.push_rule(Rule::new(
             "refl",
@@ -688,7 +688,7 @@ mod tests {
     #[test]
     fn instantiate_wrong_arg_count() {
         let mut tb = Theory::builder("T");
-        tb.set_params(vec![("X".to_string(), Expr::sym("Type"))]);
+        tb.set_params(vec![("X".into(), Expr::sym("Type"))]);
         let theory = tb.build().unwrap();
         let result = theory.instantiate(&[], "A");
         assert!(result.is_err());

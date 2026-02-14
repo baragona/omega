@@ -278,3 +278,264 @@ fn reject_affine_triple_use() {
     let result = check_source(source);
     assert!(result.is_err(), "triple use in affine should be rejected");
 }
+
+#[test]
+fn reject_duplicate_constructor() {
+    let result = check_source(
+        "(theory Bad
+           (sort Prop)
+           (constructor true : Prop)
+           (constructor true : Prop)
+           (judgment (proves ?P) :where P : Prop)
+           (rule ax :premises () :conclusion (proves ?A)))",
+    );
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("duplicate constructor"),
+        "expected 'duplicate constructor' in error, got: {}",
+        err
+    );
+}
+
+#[test]
+fn reject_duplicate_judgment() {
+    let result = check_source(
+        "(theory Bad
+           (sort Prop)
+           (judgment (proves ?P) :where P : Prop)
+           (judgment (proves ?P) :where P : Prop)
+           (rule ax :premises () :conclusion (proves ?A)))",
+    );
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("duplicate judgment"),
+        "expected 'duplicate judgment' in error, got: {}",
+        err
+    );
+}
+
+#[test]
+fn reject_duplicate_rewrite() {
+    // Duplicate rewrite names are detected during merge_from (import).
+    // Base has the rewrite; Ext imports Base but also defines a rewrite with
+    // the same name, causing a collision.
+    let source = "
+    (theory Base
+      (sort Nat)
+      (constructor z : Nat)
+      (constructor s : (-> Nat Nat))
+      (constructor add : (-> Nat Nat Nat))
+      (judgment (eq ?a ?b) :where a : Nat b : Nat)
+      (rewrite add-z (add ?n z) ?n)
+      (rule refl :premises () :conclusion (eq ?a ?a)))
+    (theory Bad
+      (rewrite add-z (add ?n z) ?n)
+      (import Base))
+    ";
+    let result = check_source(source);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("duplicate rewrite"),
+        "expected 'duplicate rewrite' in error, got: {}",
+        err
+    );
+}
+
+#[test]
+fn reject_duplicate_binding_spec() {
+    // Duplicate binding-spec detection uses the (binding-spec ...) form.
+    let result = check_source(
+        "(theory Bad
+           (binding-spec lam :binds 1 :scope (0))
+           (binding-spec lam :binds 1 :scope (0) :linear)
+           (sort Ty) (sort Tm)
+           (constructor arr : (-> Ty Ty Ty))
+           (judgment (has-type ?e ?T) :where e : Tm T : Ty)
+           (rule t-lam
+             :premises ((has-type ?body ?B))
+             :conclusion (has-type (lam (x : ?A) ?body) (arr ?A ?B))))",
+    );
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("duplicate binding-spec"),
+        "expected 'duplicate binding-spec' in error, got: {}",
+        err
+    );
+}
+
+#[test]
+fn reject_goal_mismatch() {
+    let source = "
+    (theory T
+      (sort Prop)
+      (constructor and : (-> Prop Prop Prop))
+      (judgment (proves ?P) :where P : Prop)
+      (rule and-intro
+        :premises ((proves ?A) (proves ?B))
+        :conclusion (proves (and ?A ?B))))
+    (proof bad
+      :theory T
+      :assumptions ((proves p) (proves q))
+      :goal (proves (and q p))
+      :derivation (and-intro (assumption 0) (assumption 1)))
+    ";
+    let result = check_source(source);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("goal mismatch") || err.contains("pattern match failed"),
+        "expected goal/pattern mismatch error, got: {}",
+        err
+    );
+}
+
+#[test]
+fn reject_rewrite_meta_escape() {
+    let result = check_source(
+        "(theory Bad
+           (sort Nat)
+           (constructor z : Nat)
+           (constructor s : (-> Nat Nat))
+           (constructor add : (-> Nat Nat Nat))
+           (judgment (eq ?a ?b) :where a : Nat b : Nat)
+           (rewrite bad-rw (add ?n z) ?m)
+           (rule refl :premises () :conclusion (eq ?a ?a)))",
+    );
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("RHS meta-variable") && err.contains("not in LHS"),
+        "expected rewrite meta escape error, got: {}",
+        err
+    );
+}
+
+#[test]
+fn reject_param_count_mismatch() {
+    let source = "
+    (theory Param
+      :params ((T Type))
+      (sort Prop)
+      (judgment (proves ?P) :where P : Prop)
+      (rule ax :premises () :conclusion (proves ?A)))
+    (check-theory Param)
+    (theory Bad
+      (sort Nat)
+      (constructor z : Nat)
+      (import Param Nat z :as P))
+    ";
+    let result = check_source(source);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("expects") && err.contains("parameter"),
+        "expected param count mismatch error, got: {}",
+        err
+    );
+}
+
+#[test]
+fn reject_assumption_no_match() {
+    let source = "
+    (theory T
+      (sort Prop)
+      (judgment (proves ?P) :where P : Prop)
+      (rule ax :premises () :conclusion (proves ?A)))
+    (proof bad
+      :theory T
+      :assumptions ((proves p))
+      :goal (proves q)
+      :derivation (assumption))
+    ";
+    let result = check_source(source);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("no matching assumption"),
+        "expected 'no matching assumption' error, got: {}",
+        err
+    );
+}
+
+#[test]
+fn reject_assumption_index_out_of_bounds() {
+    let source = "
+    (theory T
+      (sort Prop)
+      (judgment (proves ?P) :where P : Prop)
+      (rule ax :premises () :conclusion (proves ?A)))
+    (proof bad
+      :theory T
+      :assumptions ((proves p))
+      :goal (proves p)
+      :derivation (assumption 5))
+    ";
+    let result = check_source(source);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("assumption index") && err.contains("out of bounds"),
+        "expected 'assumption index out of bounds' error, got: {}",
+        err
+    );
+}
+
+#[test]
+fn reject_affine_use_after_move() {
+    // In affine context mode, consuming the same assumption twice triggers UseAfterMove.
+    // We need 2 premises that both consume assumption 0 explicitly.
+    let source = "
+    (theory AffineMove
+      (context-mode affine)
+      (sort Prop)
+      (constructor and : (-> Prop Prop Prop))
+      (judgment (holds ?A) :where A : Prop)
+      (rule and-intro
+        :premises ((holds ?A) (holds ?B))
+        :conclusion (holds (and ?A ?B))))
+    (proof bad
+      :theory AffineMove
+      :goal (holds (and a a))
+      :assumptions ((holds a))
+      :derivation (and-intro (assumption 0) (assumption 0)))
+    ";
+    let result = check_source(source);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("already consumed") || err.contains("affine violation"),
+        "expected affine use-after-move error, got: {}",
+        err
+    );
+}
+
+#[test]
+fn reject_premise_check_failed() {
+    // A valid rule application where the sub-derivation for a premise fails.
+    let source = "
+    (theory T
+      (sort Prop)
+      (constructor and : (-> Prop Prop Prop))
+      (judgment (proves ?P) :where P : Prop)
+      (rule and-intro
+        :premises ((proves ?A) (proves ?B))
+        :conclusion (proves (and ?A ?B)))
+      (rule ax-p :premises () :conclusion (proves p)))
+    (proof bad
+      :theory T
+      :goal (proves (and p q))
+      :derivation (and-intro (ax-p) (assumption)))
+    ";
+    let result = check_source(source);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("no matching assumption") || err.contains("premise"),
+        "expected premise check failure, got: {}",
+        err
+    );
+}

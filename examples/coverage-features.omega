@@ -1,0 +1,82 @@
+;;; coverage-features.omega — exercises less-used features for coverage
+;;;
+;;; Targets: universe levels, W-types, context extensions, emit,
+;;;          assumption indices, verbose printing
+
+;; --- Universe levels ---
+(theory UnivTest
+  (sort U)
+  (constructor star : U)
+  (judgment (has-type ?e (Type 0)) :where e : U)
+  (rule t-star
+    :premises ()
+    :conclusion (has-type star (Type 0))))
+
+(proof univ-star
+  :theory UnivTest
+  :goal (has-type star (Type 0))
+  :derivation (t-star))
+
+;; --- Context extensions (induction) ---
+(theory NatInd
+  (sort Nat)
+  (sort Prop)
+  (constructor z : Nat)
+  (constructor s : (-> Nat Nat))
+  (constructor eq : (-> Nat Nat Prop))
+  (judgment (proves ?P) :where P : Prop)
+
+  ;; Reflexivity
+  (rule eq-refl
+    :premises ()
+    :conclusion (proves (eq ?n ?n)))
+
+  ;; Induction with context extension
+  (rule nat-ind
+    :premises ((proves (?P z)) (proves (?P (s ?k))))
+    :context ((1 (proves (?P ?k))))
+    :conclusion (proves (?P ?n))))
+
+;; Simple induction: prove eq(n, n) by induction on n
+;; Base: eq(z, z) by eq-refl
+;; Step: eq(s(k), s(k)) by eq-refl (IH not needed)
+(proof ind-trivial
+  :theory NatInd
+  :goal (proves (eq ?n ?n))
+  :derivation (nat-ind (eq-refl) (eq-refl)))
+
+;; --- Emit (code generation via string ropes) ---
+(theory StringEmit
+  (sort String)
+  (constructor empty : String)
+  (constructor cat : (-> String String String))
+  (constructor newline : String)
+
+  (rewrite cat-empty-l (cat empty ?s) ?s)
+  (rewrite cat-empty-r (cat ?s empty) ?s))
+
+(emit :theory StringEmit
+  (cat (cat hello newline) (cat world newline)))
+
+;; --- Explicit assumption indices ---
+(theory AssumeTest
+  (sort Prop)
+  (constructor and : (-> Prop Prop Prop))
+  (judgment (proves ?P) :where P : Prop)
+  (rule and-intro
+    :premises ((proves ?A) (proves ?B))
+    :conclusion (proves (and ?A ?B))))
+
+;; Use (assumption 0) and (assumption 1) to pick specific assumptions
+(proof explicit-assume
+  :theory AssumeTest
+  :goal (proves (and p q))
+  :assumptions ((proves p) (proves q))
+  :derivation (and-intro (assumption 0) (assumption 1)))
+
+;; Swap: use (assumption 1) then (assumption 0)
+(proof explicit-assume-swap
+  :theory AssumeTest
+  :goal (proves (and q p))
+  :assumptions ((proves p) (proves q))
+  :derivation (and-intro (assumption 1) (assumption 0)))

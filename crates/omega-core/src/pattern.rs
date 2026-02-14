@@ -440,7 +440,7 @@ mod tests {
             Expr::free("n"),
         ]);
         let mut subst = Substitution::new();
-        subst.insert("n".to_string(), Expr::free("n"));
+        subst.insert("n".into(), Expr::free("n"));
         match_extend(&pat, &target, &mut subst).unwrap();
 
         let p = subst.get("P").unwrap();

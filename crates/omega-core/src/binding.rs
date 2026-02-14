@@ -474,8 +474,8 @@ mod tests {
     fn whnf_beta_redex() {
         // (lambda (x : _) (eq x z)) applied to n => (eq n z)
         let lam = Expr::Binder {
-            kind: crate::expr::LAMBDA.to_string(),
-            hint: "x".to_string(),
+            kind: crate::expr::LAMBDA.to_string().into(),
+            hint: "x".into(),
             ty: Box::new(Expr::sym("_")),
             body: Box::new(Expr::app(vec![Expr::sym("eq"), Expr::Bound(0), Expr::sym("z")])),
         };
@@ -496,14 +496,14 @@ mod tests {
     fn whnf_nested_lambda_application() {
         // (lambda (x:_) (lambda (y:_) (f #1 #0))) a b => (f a b)
         let inner = Expr::Binder {
-            kind: crate::expr::LAMBDA.to_string(),
-            hint: "y".to_string(),
+            kind: crate::expr::LAMBDA.to_string().into(),
+            hint: "y".into(),
             ty: Box::new(Expr::sym("_")),
             body: Box::new(Expr::app(vec![Expr::sym("f"), Expr::Bound(1), Expr::Bound(0)])),
         };
         let outer = Expr::Binder {
-            kind: crate::expr::LAMBDA.to_string(),
-            hint: "x".to_string(),
+            kind: crate::expr::LAMBDA.to_string().into(),
+            hint: "x".into(),
             ty: Box::new(Expr::sym("_")),
             body: Box::new(inner),
         };
@@ -517,8 +517,8 @@ mod tests {
     fn beta_normalize_deep() {
         // (lambda (x:_) x) applied to a => a (identity function)
         let id = Expr::Binder {
-            kind: crate::expr::LAMBDA.to_string(),
-            hint: "x".to_string(),
+            kind: crate::expr::LAMBDA.to_string().into(),
+            hint: "x".into(),
             ty: Box::new(Expr::sym("_")),
             body: Box::new(Expr::Bound(0)),
         };
@@ -530,8 +530,8 @@ mod tests {
     fn beta_normalize_inside_app() {
         // (f ((lambda (x:_) x) a)) => (f a)
         let id = Expr::Binder {
-            kind: crate::expr::LAMBDA.to_string(),
-            hint: "x".to_string(),
+            kind: crate::expr::LAMBDA.to_string().into(),
+            hint: "x".into(),
             ty: Box::new(Expr::sym("_")),
             body: Box::new(Expr::Bound(0)),
         };
@@ -545,8 +545,8 @@ mod tests {
     fn subst_syms_basic() {
         use std::collections::HashMap;
         let mut map = HashMap::new();
-        map.insert("T".to_string(), Expr::sym("Nat"));
-        map.insert("op".to_string(), Expr::sym("add"));
+        map.insert("T".into(), Expr::sym("Nat"));
+        map.insert("op".into(), Expr::sym("add"));
 
         let e = Expr::app(vec![Expr::sym("op"), Expr::meta("a"), Expr::sym("T")]);
         let result = subst_syms(&e, &map);
@@ -558,7 +558,7 @@ mod tests {
     fn subst_syms_nested() {
         use std::collections::HashMap;
         let mut map = HashMap::new();
-        map.insert("eq-T".to_string(), Expr::sym("nat-eq"));
+        map.insert("eq-T".into(), Expr::sym("nat-eq"));
 
         let e = Expr::app(vec![
             Expr::sym("proves"),
@@ -584,18 +584,18 @@ mod tests {
     fn subst_syms_binder() {
         use std::collections::HashMap;
         let mut map = HashMap::new();
-        map.insert("T".to_string(), Expr::sym("Nat"));
+        map.insert("T".into(), Expr::sym("Nat"));
 
         let e = Expr::Binder {
-            kind: crate::expr::ARROW.to_string(),
-            hint: "_".to_string(),
+            kind: crate::expr::ARROW.to_string().into(),
+            hint: "_".into(),
             ty: Box::new(Expr::sym("T")),
             body: Box::new(Expr::sym("T")),
         };
         let result = subst_syms(&e, &map);
         let expected = Expr::Binder {
-            kind: crate::expr::ARROW.to_string(),
-            hint: "_".to_string(),
+            kind: crate::expr::ARROW.to_string().into(),
+            hint: "_".into(),
             ty: Box::new(Expr::sym("Nat")),
             body: Box::new(Expr::sym("Nat")),
         };

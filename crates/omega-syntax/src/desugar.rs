@@ -1281,8 +1281,8 @@ mod tests {
             assert_eq!(theory.constructors().len(), 2);
             assert_eq!(theory.judgments().len(), 1);
             assert_eq!(theory.rules().len(), 1);
-            assert_eq!(theory.rules()[0].name, "and-intro");
-            assert_eq!(theory.rules()[0].premises.len(), 2);
+            assert_eq!(*theory.rules()[0].name(), "and-intro");
+            assert_eq!(theory.rules()[0].premises().len(), 2);
         } else {
             panic!("expected TheoryDef");
         }

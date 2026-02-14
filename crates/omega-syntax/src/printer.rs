@@ -122,7 +122,7 @@ mod tests {
     #[test]
     fn print_derivation_tree() {
         let d = Derivation::RuleApp {
-            rule_name: "and-intro".to_string(),
+            rule_name: "and-intro".into(),
             premises: vec![Derivation::Assumption, Derivation::Assumption],
         };
         assert_eq!(print_derivation(&d), "(and-intro (assumption) (assumption))");

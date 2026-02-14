@@ -1,0 +1,84 @@
+;;; coverage-tactics.omega — exercises tactic proofs, tactic lemmas, and auto
+;;;
+;;; Designed to exercise the tactic elaboration pipeline:
+;;;   desugar → TacticProof/TacticLemma → elaborate_tactics → kernel check
+
+(theory TacticTest
+  (sort Prop)
+  (constructor and : (-> Prop Prop Prop))
+  (constructor imp : (-> Prop Prop Prop))
+  (constructor true : Prop)
+  (judgment (proves ?P) :where P : Prop)
+
+  ;; Rules
+  (rule and-intro
+    :premises ((proves ?A) (proves ?B))
+    :conclusion (proves (and ?A ?B)))
+  (rule and-elim-l
+    :premises ((proves (and ?A ?B)))
+    :conclusion (proves ?A))
+  (rule and-elim-r
+    :premises ((proves (and ?A ?B)))
+    :conclusion (proves ?B))
+  (rule imp-intro
+    :premises ((proves ?B))
+    :conclusion (proves (imp ?A ?B)))
+  (rule imp-elim
+    :premises ((proves (imp ?A ?B)) (proves ?A))
+    :conclusion (proves ?B))
+  (rule true-intro
+    :premises ()
+    :conclusion (proves true)))
+
+;; --- Tactic proofs ---
+
+;; Simple: apply + assumption
+(proof tac-simple
+  :theory TacticTest
+  :goal (proves (and p q))
+  :assumptions ((proves p) (proves q))
+  :tactics (apply and-intro) assumption assumption)
+
+;; Auto finds simple proofs
+(proof tac-auto-1
+  :theory TacticTest
+  :goal (proves (and p q))
+  :assumptions ((proves p) (proves q))
+  :tactics (auto 3))
+
+;; Auto with true-intro (no premises needed)
+(proof tac-auto-true
+  :theory TacticTest
+  :goal (proves true)
+  :tactics (auto 3))
+
+;; --- Tactic lemmas ---
+
+(lemma tac-lemma-and-comm
+  :theory TacticTest
+  :premises ((proves (and ?A ?B)))
+  :conclusion (proves (and ?B ?A))
+  :tactics (apply and-intro)
+           (apply and-elim-r) assumption
+           (apply and-elim-l) assumption)
+
+;; Use the lemma
+(proof tac-use-lemma
+  :theory TacticTest
+  :goal (proves (and q p))
+  :assumptions ((proves (and p q)))
+  :derivation (tac-lemma-and-comm (assumption)))
+
+;; Tactic lemma with auto
+(lemma tac-lemma-auto
+  :theory TacticTest
+  :premises ((proves ?A))
+  :conclusion (proves (and ?A ?A))
+  :tactics (auto 3))
+
+;; Use the auto-derived lemma
+(proof tac-use-auto-lemma
+  :theory TacticTest
+  :goal (proves (and p p))
+  :assumptions ((proves p))
+  :derivation (tac-lemma-auto (assumption)))

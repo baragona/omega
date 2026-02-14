@@ -1306,9 +1306,18 @@ fn zfc_honest_example() {
     assert!(results.iter().any(|r| r.contains("Lemma generic-existence: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma cohen-adds-reals: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma ccc-preserves-cardinals: VALID [DERIVED]")));
-    // Phase 19: equality congruence lemmas (proved from FOL + equality)
+    // Phase 19 Wave 1: equality congruence lemmas (proved from FOL + equality)
     assert!(results.iter().any(|r| r.contains("Lemma neg-mem-eq: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma bic-mem-eq: VALID [DERIVED]")));
+    // Phase 19 Wave 2: definitional equivalence lemmas
+    assert!(results.iter().any(|r| r.contains("Lemma set-theory-has-single-relation: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma L-has-staged-hierarchy: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma proper-class-ordinals-unbounded-in-L: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma condensation-gives-initial-segment-isos: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma reflection-gives-range-stages: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma truth-gives-sound-forcing: VALID [DERIVED]")));
+    // Phase 19 Wave 3: Tarski-Vaught criterion proved by formula induction
+    assert!(results.iter().any(|r| r.contains("Lemma tarski-vaught-criterion-gives-reflection: VALID [DERIVED]")));
     // Phase 18: final composite rule recovery lemmas
     assert!(results.iter().any(|r| r.contains("Lemma thinnable-names-are-nice: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma ground-rep-extends: VALID [DERIVED]")));
@@ -1418,4 +1427,128 @@ fn self_representation_example() {
     assert!(results.iter().any(|r| r.contains("Proof true-three-times-three: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof true-nested-computation: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof true-two-times-three: VALID")));
+}
+
+#[test]
+fn extensional_example() {
+    let results = check_example("examples/extensional.omega");
+    assert!(results.iter().any(|r| r.contains("Theory ETT: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof refl-ze: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof add-zero-zero: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof add-one-zero: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof reflect-refl: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof congruence-reflect: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof uip-refl-sym: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof fun-ext-demo: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof type-congruence: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof type-conversion: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof reflect-sym: VALID")));
+}
+
+#[test]
+fn kv_store_example() {
+    let results = check_example("examples/kv-store.omega");
+    assert!(results.iter().any(|r| r.contains("Theory KVStore: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof read-your-writes: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof frame-disjoint-keys: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof delete-from-empty: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof last-write-wins: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof rollback-restores: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof commit-durability: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof delete-after-empty: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof multi-key-k1: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof multi-key-k2: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof multi-key-k3: VALID")));
+}
+
+#[test]
+fn paraconsistent_example() {
+    let results = check_example("examples/paraconsistent.omega");
+    assert!(results.iter().any(|r| r.contains("Theory ParaconsistentLogic: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Theory NaiveSets: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof russell-member: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof russell-non-member: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof russell-paradox: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof truth-holds: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof identity: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof weakening: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof russell-fwd: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof russell-bwd: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof russell-lem: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof paradox-loop: VALID")));
+}
+
+#[test]
+fn quantitative_example() {
+    let results = check_example("examples/quantitative.omega");
+    assert!(results.iter().any(|r| r.contains("Theory QTT: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof linear-id: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof linear-suc: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof affine-discard: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof affine-use: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof unrestricted-dup: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof unrestricted-discard: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof add-zero-one: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof add-one-one: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof mul-zero-omega: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof mul-one-omega: VALID")));
+}
+
+#[test]
+fn system_f_example() {
+    let results = check_example("examples/system-f.omega");
+    assert!(results.iter().any(|r| r.contains("Theory SystemF: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof id-nat: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof id-bool: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof id-higher-order: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof apply-id: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof self-application: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof church-true-nat: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof church-ite: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof const-applied: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof compose-concrete: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof poly-pair: VALID")));
+}
+
+#[test]
+fn two_level_example() {
+    let results = check_example("examples/two-level.omega");
+    assert!(results.iter().any(|r| r.contains("Theory TwoLevelTT: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof inner-refl: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof outer-refl: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof lift-nat: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof lift-ze: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof lift-fib-proof: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof inner-inverse: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof outer-uip-demo: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof outer-reflect: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof lift-equality: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof cross-level: VALID")));
+}
+
+#[test]
+fn coverage_tactics_example() {
+    let results = check_example("examples/coverage-tactics.omega");
+    assert!(results.iter().any(|r| r.contains("Theory TacticTest: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof tac-simple: VALID (via tactics)")));
+    assert!(results.iter().any(|r| r.contains("Proof tac-auto-1: VALID (via tactics)")));
+    assert!(results.iter().any(|r| r.contains("Proof tac-auto-true: VALID (via tactics)")));
+    assert!(results.iter().any(|r| r.contains("Lemma tac-lemma-and-comm: VALID [DERIVED] (via tactics)")));
+    assert!(results.iter().any(|r| r.contains("Proof tac-use-lemma: VALID")));
+    assert!(results.iter().any(|r| r.contains("Lemma tac-lemma-auto: VALID [DERIVED] (via tactics)")));
+    assert!(results.iter().any(|r| r.contains("Proof tac-use-auto-lemma: VALID")));
+}
+
+#[test]
+fn coverage_features_example() {
+    let results = check_example("examples/coverage-features.omega");
+    assert!(results.iter().any(|r| r.contains("Theory UnivTest: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof univ-star: VALID")));
+    assert!(results.iter().any(|r| r.contains("Theory NatInd: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof ind-trivial: VALID")));
+    assert!(results.iter().any(|r| r.contains("Theory StringEmit: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Emit:")));
+    assert!(results.iter().any(|r| r.contains("Theory AssumeTest: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof explicit-assume: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof explicit-assume-swap: VALID")));
 }

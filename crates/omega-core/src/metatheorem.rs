@@ -316,30 +316,30 @@ mod tests {
         // Proof: case analysis on D:
         //   case and-intro(D1, D2) => by-rule and-intro(D2, D1)
         let mt = MetaTheorem {
-            name: "and-comm".to_string(),
-            theory_name: "PropLogic".to_string(),
+            name: "and-comm".into(),
+            theory_name: "PropLogic".into(),
             forall: vec![(
-                "D".to_string(),
+                "D".into(),
                 Expr::app(vec![
                     Expr::sym("proves"),
                     Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
                 ]),
             )],
             exists: vec![(
-                "D'".to_string(),
+                "D'".into(),
                 Expr::app(vec![
                     Expr::sym("proves"),
                     Expr::app(vec![Expr::sym("and"), Expr::meta("B"), Expr::meta("A")]),
                 ]),
             )],
             proof: MetaProof::CaseAnalysis {
-                scrutinee: "D".to_string(),
+                scrutinee: "D".into(),
                 cases: vec![MetaCase {
-                    rule_name: "and-intro".to_string(),
-                    premise_names: vec!["D1".to_string(), "D2".to_string()],
+                    rule_name: "and-intro".into(),
+                    premise_names: vec!["D1".into(), "D2".into()],
                     body: MetaProof::ByRule {
-                        rule_name: "and-intro".to_string(),
-                        args: vec![MetaProof::Var("D2".to_string()), MetaProof::Var("D1".to_string())],
+                        rule_name: "and-intro".into(),
+                        args: vec![MetaProof::Var("D2".into()), MetaProof::Var("D1".into())],
                     },
                 }],
             },
@@ -354,10 +354,10 @@ mod tests {
 
         // Missing the and-intro case
         let mt = MetaTheorem {
-            name: "bad".to_string(),
-            theory_name: "PropLogic".to_string(),
+            name: "bad".into(),
+            theory_name: "PropLogic".into(),
             forall: vec![(
-                "D".to_string(),
+                "D".into(),
                 Expr::app(vec![
                     Expr::sym("proves"),
                     Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
@@ -365,7 +365,7 @@ mod tests {
             )],
             exists: vec![],
             proof: MetaProof::CaseAnalysis {
-                scrutinee: "D".to_string(),
+                scrutinee: "D".into(),
                 cases: vec![], // No cases!
             },
         };
@@ -381,10 +381,10 @@ mod tests {
         let theory = make_prop_logic();
 
         let mt = MetaTheorem {
-            name: "bad-induction".to_string(),
-            theory_name: "PropLogic".to_string(),
+            name: "bad-induction".into(),
+            theory_name: "PropLogic".into(),
             forall: vec![(
-                "D".to_string(),
+                "D".into(),
                 Expr::app(vec![
                     Expr::sym("proves"),
                     Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
@@ -392,13 +392,13 @@ mod tests {
             )],
             exists: vec![],
             proof: MetaProof::CaseAnalysis {
-                scrutinee: "D".to_string(),
+                scrutinee: "D".into(),
                 cases: vec![MetaCase {
-                    rule_name: "and-intro".to_string(),
-                    premise_names: vec!["D1".to_string(), "D2".to_string()],
+                    rule_name: "and-intro".into(),
+                    premise_names: vec!["D1".into(), "D2".into()],
                     body: MetaProof::Inductive {
-                        metatheorem_name: "bad-induction".to_string(),
-                        arg: "D".to_string(), // NOT structurally smaller!
+                        metatheorem_name: "bad-induction".into(),
+                        arg: "D".into(), // NOT structurally smaller!
                     },
                 }],
             },

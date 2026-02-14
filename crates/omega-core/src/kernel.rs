@@ -135,7 +135,6 @@ impl Default for Kernel {
 mod tests {
     use super::*;
     use crate::expr::Expr;
-    use crate::judgment::Rule;
     use crate::metatheorem::{MetaCase, MetaProof, MetaTheorem};
     use crate::reflection;
     use crate::test_util::make_prop_logic;
@@ -154,7 +153,7 @@ mod tests {
             Expr::app(vec![Expr::sym("and"), Expr::free("p"), Expr::free("q")]),
         ]);
         let deriv = Derivation::RuleApp {
-            rule_name: "and-intro".to_string(),
+            rule_name: "and-intro".into(),
             premises: vec![Derivation::Assumption, Derivation::Assumption],
         };
         let ctx = Context::with_assumptions(vec![
@@ -167,32 +166,32 @@ mod tests {
 
         // 3. Verify a metatheorem: and-comm
         let mt = MetaTheorem {
-            name: "and-comm".to_string(),
-            theory_name: "PropLogic".to_string(),
+            name: "and-comm".into(),
+            theory_name: "PropLogic".into(),
             forall: vec![(
-                "D".to_string(),
+                "D".into(),
                 Expr::app(vec![
                     Expr::sym("proves"),
                     Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
                 ]),
             )],
             exists: vec![(
-                "D'".to_string(),
+                "D'".into(),
                 Expr::app(vec![
                     Expr::sym("proves"),
                     Expr::app(vec![Expr::sym("and"), Expr::meta("B"), Expr::meta("A")]),
                 ]),
             )],
             proof: MetaProof::CaseAnalysis {
-                scrutinee: "D".to_string(),
+                scrutinee: "D".into(),
                 cases: vec![MetaCase {
-                    rule_name: "and-intro".to_string(),
-                    premise_names: vec!["D1".to_string(), "D2".to_string()],
+                    rule_name: "and-intro".into(),
+                    premise_names: vec!["D1".into(), "D2".into()],
                     body: MetaProof::ByRule {
-                        rule_name: "and-intro".to_string(),
+                        rule_name: "and-intro".into(),
                         args: vec![
-                            MetaProof::Var("D2".to_string()),
-                            MetaProof::Var("D1".to_string()),
+                            MetaProof::Var("D2".into()),
+                            MetaProof::Var("D1".into()),
                         ],
                     },
                 }],
@@ -204,8 +203,8 @@ mod tests {
         let mt = kernel.get_verified_metatheorem("and-comm").unwrap().clone();
         let theory = kernel.get_theory("PropLogic").unwrap();
         let (rule, _record) = reflection::reflect(&mt, "proves/and-comm", theory).unwrap();
-        assert!(rule.reflected);
-        assert_eq!(rule.provenance, Some("and-comm".to_string()));
+        assert!(rule.reflected());
+        assert_eq!(rule.provenance(), Some(&Name::from("and-comm")));
         kernel.add_rule("PropLogic", rule).unwrap();
 
         // 5. Use the reflected rule in a proof
@@ -214,7 +213,7 @@ mod tests {
             Expr::app(vec![Expr::sym("and"), Expr::free("q"), Expr::free("p")]),
         ]);
         let deriv2 = Derivation::RuleApp {
-            rule_name: "proves/and-comm".to_string(),
+            rule_name: "proves/and-comm".into(),
             premises: vec![Derivation::Assumption],
         };
         let ctx2 = Context::with_assumptions(vec![Expr::app(vec![
