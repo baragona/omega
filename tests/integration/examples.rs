@@ -1568,3 +1568,32 @@ fn coverage_unify_example() {
     assert!(results.iter().any(|r| r.contains("Proof tac-auto-impl: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof tac-mix: VALID")));
 }
+
+#[test]
+fn full_demo_example() {
+    let results = check_example("examples/full-demo.omega");
+    assert!(results.iter().any(|r| r.contains("Theory PropDemo: registered OK")));
+    // Part 1: Raw derivation trees
+    assert!(results.iter().any(|r| r.contains("Proof p1-identity: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof p1-weakening: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof p1-and-comm: VALID")));
+    // Part 2: Tactics
+    assert!(results.iter().any(|r| r.contains("Proof p2-apply-and-intro: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof p2-auto-swap: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof p2-tactic-chain: VALID")));
+    // Part 3: Metatheorems
+    assert!(results.iter().any(|r| r.contains("Metatheorem and-comm-meta: VERIFIED")));
+    assert!(results.iter().any(|r| r.contains("Metatheorem or-comm-meta: VERIFIED")));
+    // Part 4: Reflection
+    assert!(results.iter().any(|r| r.contains("Reflected and-comm-meta as and-comm")));
+    assert!(results.iter().any(|r| r.contains("Reflected or-comm-meta as or-comm")));
+    assert!(results.iter().any(|r| r.contains("Proof p4-and-comm: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof p4-or-comm: VALID")));
+    // Part 5: Lemmas
+    assert!(results.iter().any(|r| r.contains("Lemma and-assoc: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof p5-use-assoc: VALID")));
+    // Part 6: Finale
+    assert!(results.iter().any(|r| r.contains("Proof p6-distribute: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof p6-distribute-comm: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof p6-compose-reflected: VALID")));
+}

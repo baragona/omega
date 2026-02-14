@@ -52,12 +52,67 @@ Define sorts, term constructors, operators with custom binding specifications, a
     :conclusion (proves (eq ?b ?a))))
 ```
 
+### Five Layers of Proof
+
+Omega has five mechanisms for building proofs, each making the next one easier. You never have to write verbose proof trees once you've built up your toolbox.
+
+**1. Raw derivation trees** — explicit, verbose, trusted by the kernel:
+```lisp
+;; A ∧ B → B ∧ A (5 nodes):
+(proof and-comm
+  :theory MyLogic
+  :goal (proves (imp (and ?A ?B) (and ?B ?A)))
+  :derivation
+    (imp-intro (and-intro (and-elim-r (assumption)) (and-elim-l (assumption)))))
+```
+
+**2. Tactics** — backward reasoning, the engine builds the tree for you:
+```lisp
+;; auto finds the proof by brute-force search:
+(proof auto-swap
+  :theory MyLogic
+  :goal (proves (and q p))
+  :assumptions ((proves p) (proves q))
+  :tactics (auto 3))
+```
+
+**3. Lemmas** — prove once, reuse as a one-step rule (the Cut rule):
+```lisp
+(lemma and-assoc
+  :theory MyLogic
+  :premises ((proves (and (and ?A ?B) ?C)))
+  :conclusion (proves (and ?A (and ?B ?C)))
+  :derivation ...)  ;; verified once, then and-assoc is a new rule
+```
+
+**4. Metatheorems** — prove properties *about* derivations via case analysis:
+```lisp
+(meta-theorem and-comm-meta
+  :theory MyLogic
+  :forall ((D (proves (and ?A ?B))))
+  :exists  ((D' (proves (and ?B ?A))))
+  :proof (case-analysis D
+    (case and-intro (D1 D2) (by-rule and-intro D2 D1))))
+```
+
+**5. Reflection** — turn a metatheorem into a first-class rule:
+```lisp
+(reflect and-comm-meta :as and-comm :theory MyLogic)
+
+;; Now and-comm is a one-step rule. The original 5-node proof becomes:
+(proof and-comm-easy
+  :goal (proves (imp (and ?A ?B) (and ?B ?A)))
+  :derivation (imp-intro (and-comm (assumption))))
+```
+
+> See `examples/full-demo.omega` for a complete walkthrough that builds all five layers from scratch and proves distributivity of conjunction over disjunction.
+
 ### Constraint-Based Elaboration
 
 Omega's elaborator infers implicit arguments via first-order unification with occurs check, deferred constraints, and transitive fixpoint resolution. Proof terms stay concise.
 
 ```lisp
-;; eq-trans declares ?b as implicit:
+;; eq-trans declares ?b as implicit — the middle term is inferred:
 (rule eq-trans
   :premises ((proves (eq ?a ?b)) (proves (eq ?b ?c)))
   :conclusion (proves (eq ?a ?c))
@@ -65,35 +120,20 @@ Omega's elaborator infers implicit arguments via first-order unification with oc
 
 ;; The user writes a derivation without the middle term:
 (eq-trans (eq-refl) (eq-refl))
-
-;; The elaborator creates a fresh meta for ?b and solves it
-;; via unification against the sub-derivation conclusions.
 ```
 
-### Proof by Reflection
+### Theory-to-Rust Compiler
 
-Prove a metatheorem about a theory's rules via case analysis, then **reflect** it as a new inference rule. The kernel verifies the metatheorem; the driver installs the derived rule.
+`omega kompile` extracts a verified theory into a Rust crate. Sorts become enums, constructors become variants, rewrite rules become `match` functions, and effect sorts become traits.
 
-```lisp
-;; 1. Prove commutativity of 'and' as a metatheorem:
-(meta-theorem and-comm-meta
-  :theory SimpleLogic
-  :forall ((D (proves (and ?A ?B))))
-  :exists ((D' (proves (and ?B ?A))))
-  :proof (case-analysis D
-    (case and-intro (D1 D2)
-      (by-rule and-intro D2 D1))))
+```bash
+# Compile a verified calculator to Rust:
+omega kompile examples/calc.omega --theory CalcTheory -o calc-crate/
 
-;; 2. Reflect it as a new rule:
-(reflect and-comm-meta :as proves/and-comm :theory SimpleLogic)
-
-;; 3. Use the reflected rule in proofs:
-(proof comm-test
-  :theory SimpleLogic
-  :assumptions ((proves (and p q)))
-  :goal (proves (and q p))
-  :derivation (proves/and-comm (assumption)))
+# The generated crate has types, functions, and Cargo.toml — ready to use.
 ```
+
+The generated code preserves the semantics proved in Omega: a `step(state, event)` function proven to maintain safety invariants compiles to a Rust function with the same guarantee. See `examples/tcp-state.omega`, `examples/calc.omega`, and `examples/rate-limiter.omega`.
 
 ## Comparison
 
@@ -163,6 +203,12 @@ cargo run --release -- check examples/torture.omega
 
 ### Examples
 
+#### Start Here
+
+**`examples/full-demo.omega`** — A Complete Tour (17 proofs)
+
+The best way to learn Omega. Builds propositional logic from scratch and demonstrates all five proof mechanisms in sequence: raw derivation trees, tactics, metatheorems, reflection, and lemmas. Culminates in proving distributivity of conjunction over disjunction, using reflected commutativity rules to make the proof concise.
+
 #### Foundations
 
 **`examples/prop-logic.omega`** — Propositional Logic (5 proofs)
@@ -228,6 +274,14 @@ The most famous unprovable statement. Gödel (1938): CH is consistent — the co
 **`examples/club-filter.omega`** — Club Filter & Fodor's Lemma (10 proofs)
 
 Combinatorial set theory: club sets (closed + unbounded) form a filter on regular cardinals. Clubs are stationary, stationary sets meet every club, and the filter is closed under intersection. Fodor's pressing-down lemma: a regressive function on a stationary set is constant on a stationary subset — "if everyone tries to move to a smaller room, an infinite crowd ends up in the same room."
+
+**`examples/ultrafinite.omega`** — Ultrafinite Arithmetic (12 proofs)
+
+Ultrafinitism where only "feasibly constructible" numbers truly exist. Numbers exist as syntax (computation works on all terms), but feasibility is a separate certification closed under tame operations. Computation on infeasible numbers proceeds normally — you just can't *prove* they're feasible.
+
+**`examples/hyperfinite.omega`** — Hyperfinite Analysis (12 proofs)
+
+Robinson's nonstandard analysis with infinitely large hypernaturals and infinitely small infinitesimals. Transfer principle, overspill, and hyperfinite sets that are "internally finite" despite infinite cardinality. The infinitesimal `ε` satisfying `0 < ε < 1/n` for all standard `n`.
 
 **`examples/sequent-calc.omega`** — Sequent Calculus (8 proofs)
 
@@ -548,14 +602,14 @@ omega-cli              Command-line interface
 ## Testing & Coverage
 
 ```bash
-# Run all tests (219 tests: 126 integration + 67 unit + 26 syntax/elaborate)
+# Run all tests
 cargo test --workspace
 
 # Run just integration tests (example files + negative tests + kompile + bench)
 cargo test --test integration
 
 # Run a specific example test
-cargo test --test integration -- zfc_honest
+cargo test --test integration -- full_demo
 
 # Code coverage (requires cargo-llvm-cov: cargo install cargo-llvm-cov)
 cargo llvm-cov --workspace --summary-only   # Per-file line coverage
@@ -563,7 +617,7 @@ cargo llvm-cov --workspace --html           # HTML report in target/llvm-cov/htm
 cargo llvm-cov --workspace --open           # Generate and open in browser
 ```
 
-Coverage is ~79% overall (~84% for omega-core). Untestable code (interactive REPL, CLI main) is excluded from targets. Negative tests exercise error paths: duplicate declarations, goal mismatches, affine violations, rewrite meta escape, and more.
+Coverage is ~80% overall (~84% for omega-core). Untestable code (interactive REPL, CLI main) is excluded from targets. Negative tests exercise error paths: duplicate declarations, goal mismatches, affine violations, rewrite meta escape, and more.
 
 ## Roadmap
 

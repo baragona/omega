@@ -1,0 +1,304 @@
+;;; full-demo.omega — A Complete Tour of Omega's Proof Features
+;;;
+;;; We build up propositional logic from scratch and prove distributivity
+;;; of conjunction over disjunction.  Each section introduces a new proof
+;;; mechanism, and each one makes the next section's proofs shorter.
+;;;
+;;;   Part 1: Raw Derivation Trees  — explicit, verbose, trustworthy
+;;;   Part 2: Tactics               — backward reasoning, less writing
+;;;   Part 3: Metatheorems          — prove properties of derivations
+;;;   Part 4: Reflection            — turn metatheorems into rules
+;;;   Part 5: Lemmas                — prove once, use as a one-step rule
+;;;   Part 6: Finale                — everything combined
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;;  THE THEORY
+;;; ═══════════════════════════════════════════════════════════════
+;;;
+;;; Standard natural-deduction rules for propositional logic.
+;;; Context extensions on imp-intro and or-elim give us
+;;; hypothetical reasoning (assume A, then prove B).
+
+(theory PropDemo
+  (sort Prop)
+
+  ;; Connectives
+  (constructor and  : (-> Prop Prop Prop))
+  (constructor or   : (-> Prop Prop Prop))
+  (constructor imp  : (-> Prop Prop Prop))
+  (constructor true : Prop)
+  (constructor bot  : Prop)
+
+  (judgment (proves ?P) :where P : Prop)
+
+  ;; ── Conjunction ──
+  (rule and-intro
+    :premises ((proves ?A) (proves ?B))
+    :conclusion (proves (and ?A ?B)))
+  (rule and-elim-l
+    :premises ((proves (and ?A ?B)))
+    :conclusion (proves ?A))
+  (rule and-elim-r
+    :premises ((proves (and ?A ?B)))
+    :conclusion (proves ?B))
+
+  ;; ── Disjunction ──
+  (rule or-intro-l
+    :premises ((proves ?A))
+    :conclusion (proves (or ?A ?B)))
+  (rule or-intro-r
+    :premises ((proves ?B))
+    :conclusion (proves (or ?A ?B)))
+  (rule or-elim
+    :premises ((proves (or ?A ?B)) (proves ?C) (proves ?C))
+    :context ((1 (proves ?A)) (2 (proves ?B)))
+    :conclusion (proves ?C))
+
+  ;; ── Implication ──
+  ;; imp-intro: assume A (added to context of premise 0), then prove B.
+  (rule imp-intro
+    :premises ((proves ?B))
+    :context ((0 (proves ?A)))
+    :conclusion (proves (imp ?A ?B)))
+  (rule imp-elim
+    :premises ((proves (imp ?A ?B)) (proves ?A))
+    :conclusion (proves ?B))
+
+  ;; ── Constants ──
+  (rule true-intro
+    :premises ()
+    :conclusion (proves true))
+  (rule ex-falso
+    :premises ((proves bot))
+    :conclusion (proves ?A)))
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;;  PART 1: RAW DERIVATION TREES
+;;; ═══════════════════════════════════════════════════════════════
+;;;
+;;; You build the full proof tree by hand.  Every node names the
+;;; rule used and provides sub-proofs for each premise.
+;;; Explicit, but verbose.
+
+;; A → A  (2 nodes: imp-intro, then assumption closes it)
+(proof p1-identity
+  :theory PropDemo
+  :goal (proves (imp ?A ?A))
+  :derivation (imp-intro (assumption)))
+
+;; A → B → A  (3 nodes: two nested imp-intros)
+(proof p1-weakening
+  :theory PropDemo
+  :goal (proves (imp ?A (imp ?B ?A)))
+  :derivation (imp-intro (imp-intro (assumption))))
+
+;; A ∧ B → B ∧ A  (5 nodes — imp-intro, and-intro, two elims, assumption)
+;;
+;; This is the proof we'll keep making easier in later sections.
+(proof p1-and-comm
+  :theory PropDemo
+  :goal (proves (imp (and ?A ?B) (and ?B ?A)))
+  :derivation
+    (imp-intro
+      (and-intro
+        (and-elim-r (assumption))
+        (and-elim-l (assumption)))))
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;;  PART 2: TACTICS
+;;; ═══════════════════════════════════════════════════════════════
+;;;
+;;; Instead of writing the full tree, give high-level commands.
+;;; The tactic engine works backward from the goal:
+;;;   (apply rule)   — match rule's conclusion against goal, create subgoals
+;;;   assumption     — close a goal that matches something in context
+;;;   (auto N)       — brute-force search up to depth N
+;;;
+;;; The engine elaborates tactics into a full derivation tree, then
+;;; the kernel verifies it.  Convenience without sacrificing soundness.
+
+;; Step-by-step: apply a rule, then close subgoals with assumption.
+;; (apply and-intro) creates two subgoals: (proves p) and (proves q).
+;; Each is closed by assumption.
+(proof p2-apply-and-intro
+  :theory PropDemo
+  :goal (proves (and p q))
+  :assumptions ((proves p) (proves q))
+  :tactics (apply and-intro) assumption assumption)
+
+;; auto finds the proof automatically by brute-force search.
+;; It even figures out to swap p and q!
+(proof p2-auto-swap
+  :theory PropDemo
+  :goal (proves (and q p))
+  :assumptions ((proves p) (proves q))
+  :tactics (auto 3))
+
+;; Chaining tactics: build a conjunction the other way round.
+(proof p2-tactic-chain
+  :theory PropDemo
+  :goal (proves (and q p))
+  :assumptions ((proves q) (proves p))
+  :tactics (apply and-intro) assumption assumption)
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;;  PART 3: METATHEOREMS
+;;; ═══════════════════════════════════════════════════════════════
+;;;
+;;; A metatheorem is a proof ABOUT derivations — not just
+;;; "A∧B implies B∧A" but "for ANY derivation that concludes A∧B,
+;;; I can mechanically transform it into a derivation of B∧A."
+;;;
+;;; The proof works by exhaustive case analysis on how the input
+;;; derivation could have been constructed.  The kernel checks:
+;;;   1. Every possible introduction rule is covered (exhaustiveness)
+;;;   2. Each case correctly constructs the output (soundness)
+;;;   3. Recursive calls are on smaller sub-derivations (termination)
+
+;; Metatheorem: conjunction is commutative.
+;;
+;; The only rule that can INTRODUCE (and ?A ?B) is and-intro.
+;; (Rules like imp-elim or ex-falso have generic conclusions —
+;; the kernel knows they don't structurally produce "and".)
+;; So there's exactly one case: and-intro(D1, D2) → and-intro(D2, D1).
+(meta-theorem and-comm-meta
+  :theory PropDemo
+  :forall ((D (proves (and ?A ?B))))
+  :exists  ((D' (proves (and ?B ?A))))
+  :proof (case-analysis D
+    (case and-intro (D1 D2)
+      (by-rule and-intro D2 D1))))
+
+;; Metatheorem: disjunction is commutative.
+;;
+;; Two introduction rules can produce (or ?A ?B):
+;;   or-intro-l(D1)  — D1 proves A
+;;   or-intro-r(D1)  — D1 proves B
+;; Each case swaps the side.
+(meta-theorem or-comm-meta
+  :theory PropDemo
+  :forall ((D (proves (or ?A ?B))))
+  :exists  ((D' (proves (or ?B ?A))))
+  :proof (case-analysis D
+    (case or-intro-l (D1)
+      (by-rule or-intro-r D1))
+    (case or-intro-r (D1)
+      (by-rule or-intro-l D1))))
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;;  PART 4: REFLECTION
+;;; ═══════════════════════════════════════════════════════════════
+;;;
+;;; Reflection turns a verified metatheorem into a first-class
+;;; inference rule.  The kernel verifies the metatheorem once,
+;;; then trusts the derived rule forever.
+;;;
+;;; After reflection, using and-comm is ONE step — no elimination
+;;; rules, no reconstruction.  The metatheorem guarantees it's sound.
+
+(reflect and-comm-meta :as and-comm :theory PropDemo)
+(reflect or-comm-meta  :as or-comm  :theory PropDemo)
+
+;; Now and-comm and or-comm are rules in PropDemo.
+;; Compare to Part 1's p1-and-comm (5 nodes):
+
+(proof p4-and-comm
+  :theory PropDemo
+  :goal (proves (imp (and ?A ?B) (and ?B ?A)))
+  :derivation (imp-intro (and-comm (assumption))))
+
+(proof p4-or-comm
+  :theory PropDemo
+  :goal (proves (imp (or ?A ?B) (or ?B ?A)))
+  :derivation (imp-intro (or-comm (assumption))))
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;;  PART 5: LEMMAS
+;;; ═══════════════════════════════════════════════════════════════
+;;;
+;;; A lemma proves a theorem, then installs it as a new inference
+;;; rule in the theory.  This is the Cut rule: once something is
+;;; verified, its proof is discarded and only the signature
+;;; (premises → conclusion) remains.
+;;;
+;;; Key benefit: a 7-node proof becomes a 1-step rule.
+
+;; Prove ∧ is associative.  The kernel verifies the derivation
+;; tree, then installs the result as a new one-step rule.
+;;
+;; (A ∧ B) ∧ C  →  A ∧ (B ∧ C)
+(lemma and-assoc
+  :theory PropDemo
+  :premises ((proves (and (and ?A ?B) ?C)))
+  :conclusion (proves (and ?A (and ?B ?C)))
+  :derivation
+    (and-intro
+      (and-elim-l (and-elim-l (assumption)))
+      (and-intro
+        (and-elim-r (and-elim-l (assumption)))
+        (and-elim-r (assumption)))))
+
+;; Now and-assoc is a ONE-STEP rule.
+;; Before: would need 7 nodes.  After: 1 node.
+(proof p5-use-assoc
+  :theory PropDemo
+  :goal (proves (imp (and (and ?A ?B) ?C) (and ?A (and ?B ?C))))
+  :derivation (imp-intro (and-assoc (assumption))))
+
+
+;;; ═══════════════════════════════════════════════════════════════
+;;;  PART 6: FINALE — Everything Combined
+;;; ═══════════════════════════════════════════════════════════════
+;;;
+;;; With lemmas and reflected rules accumulated in the theory,
+;;; complex proofs become manageable.
+
+;; ── Distributivity: A ∧ (B ∨ C)  →  (A ∧ B) ∨ (A ∧ C) ──
+;;
+;; This is a real theorem.  The proof uses:
+;;   imp-intro    — hypothetical reasoning (assume A ∧ (B ∨ C))
+;;   or-elim      — case split on B ∨ C (with context extensions)
+;;   and-elim-l/r — extract components
+;;   and-intro    — rebuild conjunction
+;;   or-intro-l/r — inject into disjunction
+(proof p6-distribute
+  :theory PropDemo
+  :goal (proves (imp (and ?A (or ?B ?C)) (or (and ?A ?B) (and ?A ?C))))
+  :derivation
+    (imp-intro
+      (or-elim
+        (and-elim-r (assumption))
+        (or-intro-l (and-intro (and-elim-l (assumption)) (assumption)))
+        (or-intro-r (and-intro (and-elim-l (assumption)) (assumption))))))
+
+;; ── Distributivity + Commutativity ──
+;;
+;; A ∧ (B ∨ C)  →  (B ∧ A) ∨ (C ∧ A)
+;;
+;; Same structure, but and-comm (the REFLECTED metatheorem rule)
+;; flips each conjunct at the end.  Without reflection, each branch
+;; would need 3 extra nodes.  With it: just wrap in and-comm.
+(proof p6-distribute-comm
+  :theory PropDemo
+  :goal (proves (imp (and ?A (or ?B ?C)) (or (and ?B ?A) (and ?C ?A))))
+  :derivation
+    (imp-intro
+      (or-elim
+        (and-elim-r (assumption))
+        (or-intro-l (and-comm (and-intro (and-elim-l (assumption)) (assumption))))
+        (or-intro-r (and-comm (and-intro (and-elim-l (assumption)) (assumption)))))))
+
+;; ── Reflected rules compose freely with everything ──
+;;
+;; and-comm applied to close: given B ∧ A as an assumption,
+;; we get A ∧ B in one step via the reflected rule.
+(proof p6-compose-reflected
+  :theory PropDemo
+  :goal (proves (imp (and ?B ?A) (and ?A ?B)))
+  :derivation (imp-intro (and-comm (assumption))))
