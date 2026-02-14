@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use omega_core::binding::apply_meta_subst;
 use omega_core::derivation::{Context, Derivation};
-use omega_core::expr::Expr;
+use omega_core::expr::{Expr, Name};
 use omega_core::pattern::{match_expr, Substitution};
 use omega_core::theory::Theory;
 use omega_core::unify::UnificationState;
@@ -26,6 +26,8 @@ pub struct ProofState {
     pub goals: Vec<Goal>,
     /// The meta-variable substitution accumulated so far.
     pub subst: Substitution,
+    /// Counter for freshening rule meta-variables (monotonically increasing per path).
+    fresh_counter: usize,
 }
 
 impl ProofState {
@@ -37,6 +39,7 @@ impl ProofState {
                 context,
             }],
             subst: HashMap::new(),
+            fresh_counter: 0,
         }
     }
 
@@ -105,6 +108,53 @@ impl ProofState {
         }
     }
 
+    /// Collect all meta-variable names from a rule (conclusion + premises + context extensions).
+    fn collect_rule_metas(rule: &omega_core::judgment::Rule) -> Vec<Name> {
+        let mut metas = rule.meta_vars(); // covers conclusion + premises
+        for (_, ext) in rule.context_extensions() {
+            for m in ext.meta_vars() {
+                if !metas.contains(&m) {
+                    metas.push(m);
+                }
+            }
+        }
+        metas
+    }
+
+    /// Freshen all meta-variables in a rule to avoid collision with the proof state's
+    /// accumulated substitution. Returns (freshened_conclusion, freshened_premises, new_counter).
+    fn freshen_rule(
+        &self,
+        rule: &omega_core::judgment::Rule,
+    ) -> (Expr, Vec<Expr>, usize) {
+        let all_metas = Self::collect_rule_metas(rule);
+
+        if all_metas.is_empty() {
+            return (
+                rule.conclusion().clone(),
+                rule.premises().to_vec(),
+                self.fresh_counter,
+            );
+        }
+
+        let next_counter = self.fresh_counter + 1;
+        let suffix = format!("${}", next_counter);
+
+        let mut fresh_subst = Substitution::new();
+        for m in &all_metas {
+            fresh_subst.insert(m.clone(), Expr::Meta(format!("{}{}", m, suffix).into()));
+        }
+
+        let conclusion = apply_meta_subst(rule.conclusion(), &fresh_subst);
+        let premises: Vec<Expr> = rule
+            .premises()
+            .iter()
+            .map(|p| apply_meta_subst(p, &fresh_subst))
+            .collect();
+
+        (conclusion, premises, next_counter)
+    }
+
     fn apply_rule(&self, rule_name: &str, theory: &Theory) -> Result<ProofState, String> {
         let rule = theory
             .get_rule(rule_name)
@@ -113,57 +163,42 @@ impl ProofState {
         let goal = &self.goals[0];
         let goal_resolved = apply_meta_subst(&goal.target, &self.subst);
 
+        // Freshen ALL rule metas to avoid collision with the proof state's substitution.
+        // This mirrors the kernel's freshen_interned_rule: each application gets unique names.
+        let (conclusion, premises, next_counter) = self.freshen_rule(rule);
+
         // Use constraint-based unification for matching
         let mut unifier = UnificationState::new();
-
-        // Create fresh meta-variables for implicit arguments
-        let mut implicit_subst = Substitution::new();
-        for arg_name in rule.implicit_args() {
-            let fresh = unifier.fresh_meta(arg_name);
-            implicit_subst.insert(arg_name.clone(), fresh);
-        }
-
-        // Instantiate the rule conclusion with fresh implicits
-        let conclusion = if implicit_subst.is_empty() {
-            rule.conclusion().clone()
-        } else {
-            apply_meta_subst(rule.conclusion(), &implicit_subst)
-        };
-
-        // Add unification constraint: rule conclusion = goal
-        unifier.unify(conclusion, goal_resolved.clone());
+        unifier.unify(conclusion.clone(), goal_resolved.clone());
 
         // Solve initial constraints
         match unifier.solve() {
-            Ok(()) => {}
+            Ok(()) => {
+                let mut local_subst = Substitution::new();
+                for (k, v) in &unifier.subst {
+                    local_subst.insert(k.clone(), v.clone());
+                }
+                self.make_premise_goals(goal, &premises, local_subst, next_counter)
+            }
             Err(_) => {
-                // Fallback to simple pattern matching
-                let local_subst = match_expr(rule.conclusion(), &goal_resolved)
+                // Fallback to simple pattern matching (using freshened conclusion)
+                let local_subst = match_expr(&conclusion, &goal_resolved)
                     .map_err(|e| format!("rule {} doesn't match goal: {}", rule_name, e))?;
-
-                return self.apply_rule_with_subst(rule_name, rule, goal, local_subst);
+                self.make_premise_goals(goal, &premises, local_subst, next_counter)
             }
         }
-
-        // Merge unifier results into local_subst
-        let mut local_subst = Substitution::new();
-        for (k, v) in &unifier.subst {
-            local_subst.insert(k.clone(), v.clone());
-        }
-
-        self.apply_rule_with_subst(rule_name, rule, goal, local_subst)
     }
 
-    fn apply_rule_with_subst(
+    /// Create sub-goals from freshened premises, merge bindings, and advance the counter.
+    fn make_premise_goals(
         &self,
-        _rule_name: &str,
-        rule: &omega_core::judgment::Rule,
         goal: &Goal,
+        premises: &[Expr],
         local_subst: Substitution,
+        fresh_counter: usize,
     ) -> Result<ProofState, String> {
-        // Create new goals for each premise
         let mut new_goals: Vec<Goal> = Vec::new();
-        for premise in rule.premises() {
+        for premise in premises {
             let premise_goal = apply_meta_subst(premise, &local_subst);
             let premise_goal = apply_meta_subst(&premise_goal, &self.subst);
             new_goals.push(Goal {
@@ -184,6 +219,7 @@ impl ProofState {
         Ok(ProofState {
             goals: remaining,
             subst: new_subst,
+            fresh_counter,
         })
     }
 
@@ -256,6 +292,7 @@ impl ProofState {
                                 return Ok(ProofState {
                                     goals: new_goals,
                                     subst: self.subst.clone(),
+                                    fresh_counter: self.fresh_counter,
                                 });
                             }
                         }
