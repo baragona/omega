@@ -1,5 +1,5 @@
 /// Source location tracking for error messages.
-
+///
 /// A position in the source text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Pos {

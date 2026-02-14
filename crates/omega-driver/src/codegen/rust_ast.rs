@@ -1,6 +1,6 @@
 /// Lightweight Rust AST for code generation.
 /// Pure data types — no logic.
-
+///
 /// A complete generated Rust crate.
 pub struct RustCrate {
     pub name: String,

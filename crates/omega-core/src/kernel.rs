@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 
 use crate::derivation::{Context, Derivation};
-use crate::error::{OmegaError, Result};
+use crate::error::{DeclKind, OmegaError, Result};
 use crate::expr::Name;
 use crate::expr::Expr;
 use crate::interned_check;
@@ -38,11 +38,12 @@ impl Kernel {
         }
     }
 
-    /// Operation 1: Register and validate a theory.
+    /// Operation 1: Register a validated theory.
+    ///
+    /// The theory must have been created via [`TheoryBuilder::build()`],
+    /// which validates and hashes it. No redundant validation here.
     pub fn register_theory(&mut self, theory: Theory) -> Result<()> {
-        theory.validate()?;
-
-        let name = theory.name().to_string();
+        let name: Name = theory.name().into();
         self.interned_cache
             .insert(name.clone(), interned_check::InternedTheory::new(&theory));
         self.theories.insert(name, theory);
@@ -60,7 +61,7 @@ impl Kernel {
         let theory = self
             .theories
             .get(theory_name)
-            .ok_or_else(|| OmegaError::UnknownName { kind: "theory".into(), name: theory_name.to_string() })?;
+            .ok_or_else(|| OmegaError::UnknownName { kind: DeclKind::Theory, name: theory_name.into() })?;
 
         if let Some(cached) = self.interned_cache.get_mut(theory_name) {
             cached.check(goal, deriv, ctx)
@@ -75,7 +76,7 @@ impl Kernel {
         let theory = self
             .theories
             .get(&mt.theory_name)
-            .ok_or_else(|| OmegaError::UnknownName { kind: "theory".into(), name: mt.theory_name.clone() })?;
+            .ok_or_else(|| OmegaError::UnknownName { kind: DeclKind::Theory, name: mt.theory_name.clone() })?;
 
         // Check no self-strengthening
         reflection::check_no_self_strengthening(&mt, theory)?;
@@ -94,7 +95,7 @@ impl Kernel {
         let theory = self
             .theories
             .get_mut(theory_name)
-            .ok_or_else(|| OmegaError::UnknownName { kind: "theory".into(), name: theory_name.to_string() })?;
+            .ok_or_else(|| OmegaError::UnknownName { kind: DeclKind::Theory, name: theory_name.into() })?;
 
         if let Some(cached) = self.interned_cache.get_mut(theory_name) {
             cached.add_rule(&rule);
@@ -233,7 +234,7 @@ mod tests {
         let ctx = Context::new();
         assert!(matches!(
             kernel.check_derivation("Nonexistent", &goal, &deriv, &ctx),
-            Err(OmegaError::UnknownName { kind, .. }) if kind == "theory"
+            Err(OmegaError::UnknownName { kind, .. }) if kind == DeclKind::Theory
         ));
     }
 }

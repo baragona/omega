@@ -24,6 +24,17 @@
 /// - Dynamic scope (where the body doesn't actually capture)
 use crate::expr::Name;
 
+/// Usage constraint on a binder's bound variable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BinderMode {
+    /// No usage constraints (default: contraction and weakening allowed).
+    Standard,
+    /// Bound variable must be used exactly once.
+    Linear,
+    /// Bound variable can be used at most once (weakening allowed, contraction banned).
+    Affine,
+}
+
 /// A user-defined binding specification.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BindingSpec {
@@ -35,10 +46,8 @@ pub struct BindingSpec {
     /// (where the bound variables are in scope).
     /// Indices refer to positions in the constructor parameter list.
     pub body_positions: Vec<usize>,
-    /// Whether this binding is linear (each bound var used exactly once).
-    pub linear: bool,
-    /// Whether this binding is affine (each bound var used at most once).
-    pub affine: bool,
+    /// Usage constraint on the bound variable.
+    pub mode: BinderMode,
     /// An optional display pattern for pretty-printing.
     pub display: Option<String>,
 }
@@ -47,11 +56,10 @@ impl BindingSpec {
     /// Create a standard binding spec (one variable, one body).
     pub fn standard(name: &str) -> Self {
         BindingSpec {
-            name: name.to_string(),
+            name: name.into(),
             arity: 1,
             body_positions: vec![],
-            linear: false,
-            affine: false,
+            mode: BinderMode::Standard,
             display: None,
         }
     }
@@ -59,11 +67,10 @@ impl BindingSpec {
     /// Create a binding spec for a let-binding (binds one var, has a definition and a body).
     pub fn let_bind(name: &str) -> Self {
         BindingSpec {
-            name: name.to_string(),
+            name: name.into(),
             arity: 1,
             body_positions: vec![1], // second param is the body
-            linear: false,
-            affine: false,
+            mode: BinderMode::Standard,
             display: None,
         }
     }
@@ -71,11 +78,10 @@ impl BindingSpec {
     /// Create a linear binding spec.
     pub fn linear(name: &str) -> Self {
         BindingSpec {
-            name: name.to_string(),
+            name: name.into(),
             arity: 1,
             body_positions: vec![],
-            linear: true,
-            affine: false,
+            mode: BinderMode::Linear,
             display: None,
         }
     }
@@ -83,11 +89,10 @@ impl BindingSpec {
     /// Create an affine binding spec.
     pub fn affine(name: &str) -> Self {
         BindingSpec {
-            name: name.to_string(),
+            name: name.into(),
             arity: 1,
             body_positions: vec![],
-            linear: false,
-            affine: true,
+            mode: BinderMode::Affine,
             display: None,
         }
     }
@@ -102,26 +107,28 @@ pub fn check_binding_usage(
     body: &crate::expr::Expr,
     bound_index: usize,
 ) -> Result<(), BindingViolation> {
-    if !spec.linear && !spec.affine {
-        return Ok(()); // No usage constraints
-    }
-
-    let count = count_bound_occurrences(body, bound_index);
-
-    if spec.linear && count != 1 {
-        return Err(BindingViolation::LinearityViolation {
-            spec: spec.name.clone(),
-            expected: 1,
-            actual: count,
-        });
-    }
-
-    if spec.affine && count > 1 {
-        return Err(BindingViolation::AffinityViolation {
-            spec: spec.name.clone(),
-            max: 1,
-            actual: count,
-        });
+    match spec.mode {
+        BinderMode::Standard => return Ok(()),
+        BinderMode::Linear => {
+            let count = count_bound_occurrences(body, bound_index);
+            if count != 1 {
+                return Err(BindingViolation::LinearityViolation {
+                    spec: spec.name.clone(),
+                    expected: 1,
+                    actual: count,
+                });
+            }
+        }
+        BinderMode::Affine => {
+            let count = count_bound_occurrences(body, bound_index);
+            if count > 1 {
+                return Err(BindingViolation::AffinityViolation {
+                    spec: spec.name.clone(),
+                    max: 1,
+                    actual: count,
+                });
+            }
+        }
     }
 
     Ok(())

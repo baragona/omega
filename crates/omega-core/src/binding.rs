@@ -4,6 +4,8 @@
 /// - `close`: replace a free var with bound var `index` (leaving a scope)
 /// - `shift`: adjust all bound var indices (for substitution under binders)
 /// - `subst`: replace a free variable with an expression
+use std::collections::HashSet;
+
 use crate::expr::{Expr, Name};
 
 /// Replace all occurrences of `Bound(index)` with `replacement` in `expr`.
@@ -65,7 +67,8 @@ pub fn shift(expr: &Expr, cutoff: usize, amount: isize) -> Expr {
     match expr {
         Expr::Bound(i) => {
             if *i >= cutoff {
-                let new_idx = (*i as isize + amount) as usize;
+                let new_idx = i.checked_add_signed(amount)
+                    .expect("de Bruijn index underflow in shift");
                 Expr::Bound(new_idx)
             } else {
                 expr.clone()
@@ -171,8 +174,10 @@ pub fn abstract_over(expr: &Expr, target: &Expr, depth: usize) -> Expr {
 /// Defaults to treating only `lambda` as substitutive.
 pub fn whnf(expr: &Expr) -> Expr {
     use std::collections::HashSet;
-    let default: HashSet<Name> = [crate::expr::LAMBDA.to_string()].into();
-    whnf_with(expr, &default)
+    use std::sync::OnceLock;
+    static DEFAULT_BINDERS: OnceLock<HashSet<Name>> = OnceLock::new();
+    let default = DEFAULT_BINDERS.get_or_init(|| [Name::from(crate::expr::LAMBDA)].into());
+    whnf_with(expr, default)
 }
 
 /// Configurable WHNF with custom substitutive binders.
@@ -209,11 +214,17 @@ pub fn whnf_with(expr: &Expr, substitutive_binders: &std::collections::HashSet<N
 /// Full beta-normalize: reduce ALL beta-redexes everywhere (innermost strategy).
 /// Only used for definitional equality and display, NOT in the unifier.
 /// Fuel-limited to prevent non-termination.
-/// Defaults to treating only `lambda` as substitutive, with 10,000 fuel.
+/// Default fuel for beta normalization (prevents non-termination in user-defined rewrites).
+const DEFAULT_BETA_FUEL: usize = 10_000;
+
+/// Defaults to treating only `lambda` as substitutive, with DEFAULT_BETA_FUEL fuel.
 pub fn beta_normalize(expr: &Expr) -> Expr {
     use std::collections::HashSet;
-    let default: HashSet<Name> = [crate::expr::LAMBDA.to_string()].into();
-    beta_normalize_with(expr, &default, &mut 10_000)
+    use std::sync::OnceLock;
+    static DEFAULT_BINDERS: OnceLock<HashSet<Name>> = OnceLock::new();
+    let default = DEFAULT_BINDERS.get_or_init(|| [Name::from(crate::expr::LAMBDA)].into());
+    let mut fuel = DEFAULT_BETA_FUEL;
+    beta_normalize_with(expr, default, &mut fuel)
 }
 
 /// Configurable beta-normalize with custom substitutive binders and fuel.
@@ -261,58 +272,49 @@ pub fn beta_normalize_with(expr: &Expr, substitutive_binders: &std::collections:
 
 /// Collect all free variable names in an expression.
 pub fn free_vars(expr: &Expr) -> Vec<Name> {
+    let mut seen = HashSet::new();
     let mut vars = Vec::new();
-    collect_free_vars(expr, &mut vars);
-    vars.sort();
-    vars.dedup();
-    vars
-}
-
-fn collect_free_vars(expr: &Expr, acc: &mut Vec<Name>) {
-    match expr {
-        Expr::Free(n) => {
-            if !acc.contains(n) {
-                acc.push(n.clone());
-            }
-        }
-        Expr::Bound(_) | Expr::Meta(_) | Expr::Sym(_) => {}
-        Expr::App(args) => {
-            for a in args {
-                collect_free_vars(a, acc);
-            }
-        }
-        Expr::Binder { ty, body, .. } => {
-            collect_free_vars(ty, acc);
-            collect_free_vars(body, acc);
-        }
-    }
+    collect_vars(expr, &mut seen, &mut vars, false);
+    vars.into_iter().filter_map(|e| match e {
+        Expr::Free(n) => Some(n),
+        _ => None,
+    }).collect()
 }
 
 /// Collect all variable-like names (Free and Meta) from an expression.
 /// Used by Miller matching where Meta variables in the target can serve
 /// as abstraction targets (since goal metas represent universally-quantified variables).
 pub fn abstractable_vars(expr: &Expr) -> Vec<Expr> {
+    let mut seen = HashSet::new();
     let mut vars = Vec::new();
-    collect_abstractable(expr, &mut vars);
+    collect_vars(expr, &mut seen, &mut vars, true);
     vars
 }
 
-fn collect_abstractable(expr: &Expr, acc: &mut Vec<Expr>) {
+/// Shared traversal for free_vars and abstractable_vars.
+/// When `include_metas` is false, collects only Free variables.
+/// When true, collects both Free and Meta as full Expr values.
+fn collect_vars(expr: &Expr, seen: &mut HashSet<Expr>, acc: &mut Vec<Expr>, include_metas: bool) {
     match expr {
-        Expr::Free(_) | Expr::Meta(_) => {
-            if !acc.contains(expr) {
+        Expr::Free(_) => {
+            if seen.insert(expr.clone()) {
                 acc.push(expr.clone());
             }
         }
-        Expr::Bound(_) | Expr::Sym(_) => {}
+        Expr::Meta(_) if include_metas => {
+            if seen.insert(expr.clone()) {
+                acc.push(expr.clone());
+            }
+        }
+        Expr::Bound(_) | Expr::Meta(_) | Expr::Sym(_) => {}
         Expr::App(args) => {
             for a in args {
-                collect_abstractable(a, acc);
+                collect_vars(a, seen, acc, include_metas);
             }
         }
         Expr::Binder { ty, body, .. } => {
-            collect_abstractable(ty, acc);
-            collect_abstractable(body, acc);
+            collect_vars(ty, seen, acc, include_metas);
+            collect_vars(body, seen, acc, include_metas);
         }
     }
 }

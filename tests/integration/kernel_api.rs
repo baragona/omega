@@ -8,28 +8,25 @@ use omega_core::reflection;
 use omega_core::theory::Theory;
 
 fn make_minimal_logic() -> Theory {
-    let mut theory = Theory::new("MinLogic");
+    let mut tb = Theory::builder("MinLogic");
 
-    theory.add_sort(SortDecl {
-        name: "Prop".to_string(),
-    });
-    theory.add_constructor(ConstructorDecl {
-        name: "and".to_string(),
-        ty: Expr::app(vec![
+    tb.add_sort(SortDecl::new("Prop"));
+    tb.add_constructor(ConstructorDecl::new(
+        "and",
+        Expr::app(vec![
             Expr::sym("->"),
             Expr::sym("Prop"),
             Expr::sym("Prop"),
             Expr::sym("Prop"),
         ]),
+    ));
+    tb.add_judgment(JudgmentForm::new(
+        "proves",
+        Expr::app(vec![Expr::sym("proves"), Expr::meta("P")]),
+        vec![("P".into(), "Prop".into())],
+    ));
 
-    });
-    theory.add_judgment(JudgmentForm {
-        name: "proves".to_string(),
-        pattern: Expr::app(vec![Expr::sym("proves"), Expr::meta("P")]),
-        constraints: vec![("P".to_string(), "Prop".to_string())],
-    });
-
-    theory.push_rule(Rule::new(
+    tb.push_rule(Rule::new(
         "and-intro",
         vec![
             Expr::app(vec![Expr::sym("proves"), Expr::meta("A")]),
@@ -41,7 +38,7 @@ fn make_minimal_logic() -> Theory {
         ]),
     ));
 
-    theory.push_rule(Rule::new(
+    tb.push_rule(Rule::new(
         "and-elim-l",
         vec![Expr::app(vec![
             Expr::sym("proves"),
@@ -50,7 +47,7 @@ fn make_minimal_logic() -> Theory {
         Expr::app(vec![Expr::sym("proves"), Expr::meta("A")]),
     ));
 
-    theory.push_rule(Rule::new(
+    tb.push_rule(Rule::new(
         "and-elim-r",
         vec![Expr::app(vec![
             Expr::sym("proves"),
@@ -59,8 +56,7 @@ fn make_minimal_logic() -> Theory {
         Expr::app(vec![Expr::sym("proves"), Expr::meta("B")]),
     ));
 
-    theory.compute_hash();
-    theory
+    tb.build().unwrap()
 }
 
 #[test]
@@ -78,7 +74,7 @@ fn kernel_register_and_check() {
         Expr::app(vec![Expr::sym("proves"), Expr::free("q")]),
     ]);
     let deriv = Derivation::RuleApp {
-        rule_name: "and-intro".to_string(),
+        rule_name: "and-intro".into(),
         premises: vec![Derivation::Assumption, Derivation::Assumption],
     };
     kernel
@@ -93,32 +89,32 @@ fn kernel_full_reflection_pipeline() {
 
     // 1. Prove a metatheorem: and-comm
     let mt = MetaTheorem {
-        name: "and-comm".to_string(),
-        theory_name: "MinLogic".to_string(),
+        name: "and-comm".into(),
+        theory_name: "MinLogic".into(),
         forall: vec![(
-            "D".to_string(),
+            "D".into(),
             Expr::app(vec![
                 Expr::sym("proves"),
                 Expr::app(vec![Expr::sym("and"), Expr::meta("A"), Expr::meta("B")]),
             ]),
         )],
         exists: vec![(
-            "D'".to_string(),
+            "D'".into(),
             Expr::app(vec![
                 Expr::sym("proves"),
                 Expr::app(vec![Expr::sym("and"), Expr::meta("B"), Expr::meta("A")]),
             ]),
         )],
         proof: MetaProof::CaseAnalysis {
-            scrutinee: "D".to_string(),
+            scrutinee: "D".into(),
             cases: vec![MetaCase {
-                rule_name: "and-intro".to_string(),
-                premise_names: vec!["D1".to_string(), "D2".to_string()],
+                rule_name: "and-intro".into(),
+                premise_names: vec!["D1".into(), "D2".into()],
                 body: MetaProof::ByRule {
-                    rule_name: "and-intro".to_string(),
+                    rule_name: "and-intro".into(),
                     args: vec![
-                        MetaProof::Var("D2".to_string()),
-                        MetaProof::Var("D1".to_string()),
+                        MetaProof::Var("D2".into()),
+                        MetaProof::Var("D1".into()),
                     ],
                 },
             }],
@@ -142,7 +138,7 @@ fn kernel_full_reflection_pipeline() {
         Expr::app(vec![Expr::sym("and"), Expr::free("a"), Expr::free("b")]),
     ])]);
     let deriv = Derivation::RuleApp {
-        rule_name: "proves/and-comm".to_string(),
+        rule_name: "proves/and-comm".into(),
         premises: vec![Derivation::Assumption],
     };
     kernel
@@ -165,7 +161,7 @@ fn kernel_reject_invalid_derivation() {
         // Missing (proves q)!
     ]);
     let deriv = Derivation::RuleApp {
-        rule_name: "and-intro".to_string(),
+        rule_name: "and-intro".into(),
         premises: vec![Derivation::Assumption, Derivation::Assumption],
     };
     assert!(kernel
@@ -188,14 +184,14 @@ fn kernel_multi_step_derivation() {
         Expr::app(vec![Expr::sym("and"), Expr::free("p"), Expr::free("q")]),
     ])]);
     let deriv = Derivation::RuleApp {
-        rule_name: "and-intro".to_string(),
+        rule_name: "and-intro".into(),
         premises: vec![
             Derivation::RuleApp {
-                rule_name: "and-elim-r".to_string(),
+                rule_name: "and-elim-r".into(),
                 premises: vec![Derivation::Assumption],
             },
             Derivation::RuleApp {
-                rule_name: "and-elim-l".to_string(),
+                rule_name: "and-elim-l".into(),
                 premises: vec![Derivation::Assumption],
             },
         ],

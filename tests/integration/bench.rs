@@ -40,39 +40,33 @@ fn bench_zfc() {
 // ---------------------------------------------------------------------------
 
 fn make_torture_theory() -> Theory {
-    let mut theory = Theory::new("TortureArith");
-    theory.add_sort(SortDecl {
-        name: "Nat".into(),
-    });
-    theory.add_constructor(ConstructorDecl {
-        name: "z".into(),
-        ty: Expr::sym("Nat"),
-    });
-    theory.add_constructor(ConstructorDecl {
-        name: "s".into(),
-        ty: Expr::app(vec![Expr::sym("->"), Expr::sym("Nat"), Expr::sym("Nat")]),
-    });
-    theory.add_constructor(ConstructorDecl {
-        name: "add".into(),
-        ty: Expr::app(vec![
+    let mut tb = Theory::builder("TortureArith");
+    tb.add_sort(SortDecl::new("Nat"));
+    tb.add_constructor(ConstructorDecl::new("z", Expr::sym("Nat")));
+    tb.add_constructor(ConstructorDecl::new(
+        "s",
+        Expr::app(vec![Expr::sym("->"), Expr::sym("Nat"), Expr::sym("Nat")]),
+    ));
+    tb.add_constructor(ConstructorDecl::new(
+        "add",
+        Expr::app(vec![
             Expr::sym("->"),
             Expr::sym("Nat"),
             Expr::sym("Nat"),
             Expr::sym("Nat"),
         ]),
-    });
-    theory.add_judgment(JudgmentForm {
-        name: "eq".into(),
-        pattern: Expr::app(vec![Expr::sym("eq"), Expr::meta("a"), Expr::meta("b")]),
-        constraints: vec![],
-    });
-    theory.push_rule(Rule::new(
+    ));
+    tb.add_judgment(JudgmentForm::new(
+        "eq",
+        Expr::app(vec![Expr::sym("eq"), Expr::meta("a"), Expr::meta("b")]),
+        vec![],
+    ));
+    tb.push_rule(Rule::new(
         "eq-refl",
         vec![],
         Expr::app(vec![Expr::sym("eq"), Expr::meta("a"), Expr::meta("a")]),
     ));
-    theory.compute_hash();
-    theory
+    tb.build().unwrap()
 }
 
 /// Compute tree node count from depth (avoids O(2^k) traversal).
@@ -151,39 +145,38 @@ fn torture_interned() {
 // ---------------------------------------------------------------------------
 
 fn make_peano_compute_theory() -> Theory {
-    let mut theory = Theory::new("PeanoCompute");
-    theory.add_sort(SortDecl { name: "Nat".into() });
-    theory.add_constructor(ConstructorDecl { name: "z".into(), ty: Expr::sym("Nat") });
-    theory.add_constructor(ConstructorDecl {
-        name: "s".into(),
-        ty: Expr::app(vec![Expr::sym("->"), Expr::sym("Nat"), Expr::sym("Nat")]),
-    });
-    theory.add_constructor(ConstructorDecl {
-        name: "add".into(),
-        ty: Expr::app(vec![Expr::sym("->"), Expr::sym("Nat"), Expr::sym("Nat"), Expr::sym("Nat")]),
-    });
-    theory.add_judgment(JudgmentForm {
-        name: "eq".into(),
-        pattern: Expr::app(vec![Expr::sym("eq"), Expr::meta("a"), Expr::meta("b")]),
-        constraints: vec![],
-    });
-    theory.push_rule(Rule::new(
+    let mut tb = Theory::builder("PeanoCompute");
+    tb.add_sort(SortDecl::new("Nat"));
+    tb.add_constructor(ConstructorDecl::new("z", Expr::sym("Nat")));
+    tb.add_constructor(ConstructorDecl::new(
+        "s",
+        Expr::app(vec![Expr::sym("->"), Expr::sym("Nat"), Expr::sym("Nat")]),
+    ));
+    tb.add_constructor(ConstructorDecl::new(
+        "add",
+        Expr::app(vec![Expr::sym("->"), Expr::sym("Nat"), Expr::sym("Nat"), Expr::sym("Nat")]),
+    ));
+    tb.add_judgment(JudgmentForm::new(
+        "eq",
+        Expr::app(vec![Expr::sym("eq"), Expr::meta("a"), Expr::meta("b")]),
+        vec![],
+    ));
+    tb.push_rule(Rule::new(
         "eq-refl",
         vec![],
         Expr::app(vec![Expr::sym("eq"), Expr::meta("a"), Expr::meta("a")]),
     ));
-    theory.add_rewrite(omega_core::judgment::RewriteRule {
-        name: "add-z".into(),
-        lhs: Expr::app(vec![Expr::sym("add"), Expr::sym("z"), Expr::meta("n")]),
-        rhs: Expr::meta("n"),
-    });
-    theory.add_rewrite(omega_core::judgment::RewriteRule {
-        name: "add-s".into(),
-        lhs: Expr::app(vec![Expr::sym("add"), Expr::app(vec![Expr::sym("s"), Expr::meta("n")]), Expr::meta("m")]),
-        rhs: Expr::app(vec![Expr::sym("s"), Expr::app(vec![Expr::sym("add"), Expr::meta("n"), Expr::meta("m")])]),
-    });
-    theory.compute_hash();
-    theory
+    tb.add_rewrite(omega_core::judgment::RewriteRule::new(
+        "add-z",
+        Expr::app(vec![Expr::sym("add"), Expr::sym("z"), Expr::meta("n")]),
+        Expr::meta("n"),
+    ));
+    tb.add_rewrite(omega_core::judgment::RewriteRule::new(
+        "add-s",
+        Expr::app(vec![Expr::sym("add"), Expr::app(vec![Expr::sym("s"), Expr::meta("n")]), Expr::meta("m")]),
+        Expr::app(vec![Expr::sym("s"), Expr::app(vec![Expr::sym("add"), Expr::meta("n"), Expr::meta("m")])]),
+    ));
+    tb.build().unwrap()
 }
 
 /// Build the Peano numeral for n: z, (s z), (s (s z)), ...

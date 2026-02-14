@@ -32,7 +32,7 @@ fn sanitize_keyword(s: &str) -> String {
 /// Convert a name like "syn-recvd" or "ev-listen" to PascalCase: "SynRecvd", "EvListen".
 fn to_pascal_case(s: &str) -> String {
     let raw: String = s
-        .split(|c: char| c == '-' || c == '_' || c == '.')
+        .split(['-', '_', '.'])
         .map(|part| {
             let mut chars = part.chars();
             match chars.next() {
@@ -102,8 +102,9 @@ fn collect_metas_ordered(expr: &Expr) -> Vec<String> {
 fn collect_metas_inner(expr: &Expr, acc: &mut Vec<String>) {
     match expr {
         Expr::Meta(n) => {
-            if !acc.contains(n) {
-                acc.push(n.clone());
+            let s = n.to_string();
+            if !acc.contains(&s) {
+                acc.push(s);
             }
         }
         Expr::App(args) => {
@@ -165,7 +166,7 @@ pub fn analyze(theory: &Theory) -> RustCrate {
     let sort_names: HashSet<&str> = theory
         .sorts()
         .iter()
-        .map(|s| s.name.as_str())
+        .map(|s| s.name().as_str())
         .filter(|s| !SKIP_SORTS.contains(s))
         .collect();
 
@@ -176,10 +177,10 @@ pub fn analyze(theory: &Theory) -> RustCrate {
             .constructors()
             .iter()
             .filter(|c| {
-                let (_, ret) = flatten_arrow(&c.ty);
+                let (_, ret) = flatten_arrow(c.ty());
                 sort_name(ret) == Some("Effect")
             })
-            .map(|c| c.name.as_str())
+            .map(|c| c.name().as_str())
             .collect()
     } else {
         HashSet::new()
@@ -189,7 +190,7 @@ pub fn analyze(theory: &Theory) -> RustCrate {
     let rewrite_heads: HashSet<&str> = theory
         .rewrites()
         .iter()
-        .filter_map(|rw| head_sym(&rw.lhs))
+        .filter_map(|rw| head_sym(rw.lhs()))
         .collect();
 
     // Build constructor → sort mapping (return type of the constructor).
@@ -197,12 +198,12 @@ pub fn analyze(theory: &Theory) -> RustCrate {
     // Build constructor → param sorts mapping (sort of each parameter).
     let mut ctor_param_sorts: HashMap<&str, Vec<Option<&str>>> = HashMap::new();
     for c in theory.constructors() {
-        let (params, ret) = flatten_arrow(&c.ty);
+        let (params, ret) = flatten_arrow(c.ty());
         if let Some(s) = sort_name(ret) {
-            ctor_sort.insert(c.name.as_str(), s);
+            ctor_sort.insert(c.name().as_str(), s);
         }
         let param_sorts: Vec<Option<&str>> = params.iter().map(|p| sort_name(p)).collect();
-        ctor_param_sorts.insert(c.name.as_str(), param_sorts);
+        ctor_param_sorts.insert(c.name().as_str(), param_sorts);
     }
 
     // Also skip constructors whose return sort is skipped, or used only for verification
@@ -210,23 +211,23 @@ pub fn analyze(theory: &Theory) -> RustCrate {
         .constructors()
         .iter()
         .filter(|c| {
-            let (_, ret) = flatten_arrow(&c.ty);
+            let (_, ret) = flatten_arrow(c.ty());
             match sort_name(ret) {
                 Some(s) => SKIP_SORTS.contains(&s),
                 None => true,
             }
         })
-        .map(|c| c.name.as_str())
+        .map(|c| c.name().as_str())
         .collect();
 
     // ── Build enums ──
     let mut enums: Vec<RustEnum> = Vec::new();
     for sort in theory.sorts() {
-        if SKIP_SORTS.contains(&sort.name.as_str()) {
+        if SKIP_SORTS.contains(&sort.name().as_str()) {
             continue;
         }
         // Effect sort becomes a trait, not an enum
-        if has_effect_sort && sort.name == "Effect" {
+        if has_effect_sort && sort.name() == "Effect" {
             continue;
         }
 
@@ -234,26 +235,26 @@ pub fn analyze(theory: &Theory) -> RustCrate {
             .constructors()
             .iter()
             .filter(|c| {
-                if rewrite_heads.contains(c.name.as_str()) {
+                if rewrite_heads.contains(c.name().as_str()) {
                     return false;
                 }
-                if skip_ctors.contains(c.name.as_str()) {
+                if skip_ctors.contains(c.name().as_str()) {
                     return false;
                 }
-                let (_, ret) = flatten_arrow(&c.ty);
-                sort_name(ret) == Some(&sort.name)
+                let (_, ret) = flatten_arrow(c.ty());
+                sort_name(ret) == Some(sort.name().as_str())
             })
             .map(|c| {
-                let (params, _) = flatten_arrow(&c.ty);
+                let (params, _) = flatten_arrow(c.ty());
                 let fields: Vec<RustField> = params
                     .iter()
                     .map(|p| {
-                        let ty = expr_to_rust_type(p, &sort.name, &sort_names);
+                        let ty = expr_to_rust_type(p, sort.name(), &sort_names);
                         RustField { ty }
                     })
                     .collect();
                 RustVariant {
-                    name: to_pascal_case(&c.name),
+                    name: to_pascal_case(c.name()),
                     fields,
                 }
             })
@@ -261,7 +262,7 @@ pub fn analyze(theory: &Theory) -> RustCrate {
 
         if !variants.is_empty() {
             enums.push(RustEnum {
-                name: to_pascal_case(&sort.name),
+                name: to_pascal_case(sort.name()),
                 variants,
             });
         }
@@ -271,7 +272,7 @@ pub fn analyze(theory: &Theory) -> RustCrate {
     // Group rewrites by head symbol
     let mut rewrite_groups: HashMap<&str, Vec<&omega_core::judgment::RewriteRule>> = HashMap::new();
     for rw in theory.rewrites() {
-        if let Some(head) = head_sym(&rw.lhs) {
+        if let Some(head) = head_sym(rw.lhs()) {
             if skip_ctors.contains(head) {
                 continue;
             }
@@ -286,7 +287,7 @@ pub fn analyze(theory: &Theory) -> RustCrate {
             Some(c) => c,
             None => continue,
         };
-        let (param_types, ret_type) = flatten_arrow(&ctor.ty);
+        let (param_types, ret_type) = flatten_arrow(ctor.ty());
         let ret_sort = match sort_name(ret_type) {
             Some(s) => s,
             None => continue,
@@ -382,14 +383,14 @@ pub fn analyze(theory: &Theory) -> RustCrate {
             .iter()
             .filter(|c| {
                 // Only pure effect constructors (not rewrite heads — those become functions)
-                if rewrite_heads.contains(c.name.as_str()) {
+                if rewrite_heads.contains(c.name().as_str()) {
                     return false;
                 }
-                let (_, ret) = flatten_arrow(&c.ty);
+                let (_, ret) = flatten_arrow(c.ty());
                 sort_name(ret) == Some("Effect")
             })
             .map(|c| {
-                let (params, _) = flatten_arrow(&c.ty);
+                let (params, _) = flatten_arrow(c.ty());
                 let mut name_seen: HashMap<String, usize> = HashMap::new();
                 let method_params: Vec<RustParam> = params
                     .iter()
@@ -399,7 +400,7 @@ pub fn analyze(theory: &Theory) -> RustCrate {
                     })
                     .collect();
                 RustMethod {
-                    name: to_snake_case(&c.name),
+                    name: to_snake_case(c.name()),
                     params: method_params,
                     ret: None,
                 }
@@ -476,14 +477,14 @@ fn build_match_arm(
     effect_ctors: &HashSet<&str>,
 ) -> RustMatchArm {
     // Extract arguments from LHS: (head arg1 arg2 ...)
-    let lhs_args = match &rw.lhs {
+    let lhs_args = match rw.lhs() {
         Expr::App(args) if args.len() >= 2 => &args[1..],
         _ => &[] as &[Expr],
     };
 
     // Collect metas in LHS and detect non-linear (repeated) ones
-    let lhs_metas = collect_metas_ordered(&rw.lhs);
-    let rhs_metas_set: HashSet<String> = rw.rhs.meta_vars().into_iter().collect();
+    let lhs_metas = collect_metas_ordered(rw.lhs());
+    let rhs_metas_set: HashSet<String> = rw.rhs().meta_vars().into_iter().map(|n| n.to_string()).collect();
     let unused_metas: HashSet<&str> = lhs_metas
         .iter()
         .filter(|m| !rhs_metas_set.contains(*m))
@@ -491,7 +492,7 @@ fn build_match_arm(
         .collect();
     let mut meta_counts: HashMap<&str, usize> = HashMap::new();
     for m in &lhs_metas {
-        let count = count_meta(&rw.lhs, m);
+        let count = count_meta(rw.lhs(), m);
         meta_counts.insert(m.as_str(), count);
     }
 
@@ -546,14 +547,14 @@ fn build_match_arm(
     // Compute how many times each meta is used in the RHS
     let mut rhs_usage: HashMap<String, usize> = HashMap::new();
     for m in bound_metas.keys() {
-        rhs_usage.insert(m.clone(), count_var_in_expr(&rw.rhs, m));
+        rhs_usage.insert(m.clone(), count_var_in_expr(rw.rhs(), m));
     }
 
     // Track remaining uses for clone insertion
     let mut remaining_uses: HashMap<String, usize> = rhs_usage.clone();
 
     let body = expr_to_rust_expr(
-        &rw.rhs,
+        rw.rhs(),
         sort_names,
         rewrite_heads,
         ctor_sort,
@@ -592,17 +593,17 @@ fn expr_to_pattern(
             let count = meta_counts.get(n.as_str()).copied().unwrap_or(1);
             let var_name = to_snake_case(n);
             if count > 1 {
-                if let Some(first_name) = bound_metas.get(n) {
+                if let Some(first_name) = bound_metas.get(n.as_str()) {
                     // Second (or later) occurrence — bind a new name and add guard
                     let new_name = format!("{}_1", var_name);
                     non_linear_guards.push((first_name.clone(), new_name.clone()));
                     RustPattern::Var(new_name)
                 } else {
-                    bound_metas.insert(n.clone(), var_name.clone());
+                    bound_metas.insert(n.to_string(), var_name.clone());
                     RustPattern::Var(var_name)
                 }
             } else {
-                bound_metas.insert(n.clone(), var_name.clone());
+                bound_metas.insert(n.to_string(), var_name.clone());
                 RustPattern::Var(var_name)
             }
         }
@@ -685,15 +686,15 @@ fn expr_to_rust_expr(
     match expr {
         Expr::Meta(n) => {
             let var_name = bound_metas
-                .get(n)
+                .get(n.as_str())
                 .cloned()
                 .unwrap_or_else(|| to_snake_case(n));
-            let total = rhs_usage.get(n).copied().unwrap_or(1);
-            let remaining = remaining_uses.get(n).copied().unwrap_or(1);
+            let total = rhs_usage.get(n.as_str()).copied().unwrap_or(1);
+            let remaining = remaining_uses.get(n.as_str()).copied().unwrap_or(1);
 
             // Decrement remaining uses
             if remaining > 0 {
-                remaining_uses.insert(n.clone(), remaining - 1);
+                remaining_uses.insert(n.to_string(), remaining - 1);
             }
 
             if total > 1 && remaining > 1 {

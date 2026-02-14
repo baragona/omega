@@ -12,11 +12,7 @@ pub fn run_repl<R: LineReader>(session: &mut Session, reader: &mut R) -> Result<
     println!("Omega Logical Framework v0.1.0");
     println!("Type :help for available commands, :quit to exit.\n");
 
-    loop {
-        let line = match reader.read_line("omega> ") {
-            Some(line) => line,
-            None => break, // EOF
-        };
+    while let Some(line) = reader.read_line("omega> ") {
 
         let line = line.trim();
         if line.is_empty() {

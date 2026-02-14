@@ -5,7 +5,7 @@
 /// (case analysis) on the input derivation.
 use std::collections::HashSet;
 
-use crate::error::{OmegaError, Result};
+use crate::error::{DeclKind, OmegaError, Result};
 use crate::expr::{Expr, Name};
 use crate::theory::Theory;
 
@@ -101,10 +101,7 @@ fn verify_proof(
         MetaProof::CaseAnalysis { scrutinee, cases } => {
             // The scrutinee must be a universally-quantified variable
             let scrutinee_judgment = forall_vars.get(scrutinee).ok_or_else(|| {
-                OmegaError::MalformedDerivation(format!(
-                    "case analysis on unknown variable {}",
-                    scrutinee
-                ))
+                OmegaError::UnknownScrutinee { var: scrutinee.clone() }
             })?;
 
             // Find all rules whose conclusion could match the scrutinee's judgment
@@ -128,7 +125,7 @@ fn verify_proof(
             for case in cases {
                 // Ensure the rule exists
                 let rule = theory.get_rule(&case.rule_name).ok_or_else(|| {
-                    OmegaError::UnknownName { kind: "rule".into(), name: case.rule_name.clone() }
+                    OmegaError::UnknownName { kind: DeclKind::Rule, name: case.rule_name.clone() }
                 })?;
 
                 // The premise names are structurally smaller
@@ -140,7 +137,7 @@ fn verify_proof(
                 // Extend forall_vars with the premise names and their types
                 let mut extended_forall = forall_vars.clone();
                 for (pname, premise_pattern) in
-                    case.premise_names.iter().zip(rule.premises.iter())
+                    case.premise_names.iter().zip(rule.premises().iter())
                 {
                     extended_forall.insert(pname.clone(), premise_pattern.clone());
                 }
@@ -160,13 +157,13 @@ fn verify_proof(
         MetaProof::ByRule { rule_name, args } => {
             // The rule must exist in the theory
             let rule = theory.get_rule(rule_name).ok_or_else(|| {
-                OmegaError::UnknownName { kind: "rule".into(), name: rule_name.clone() }
+                OmegaError::UnknownName { kind: DeclKind::Rule, name: rule_name.clone() }
             })?;
 
-            if args.len() != rule.premises.len() {
+            if args.len() != rule.premises().len() {
                 return Err(OmegaError::PremiseCountMismatch {
                     rule: rule_name.clone(),
-                    expected: rule.premises.len(),
+                    expected: rule.premises().len(),
                     got: args.len(),
                 });
             }
@@ -186,7 +183,7 @@ fn verify_proof(
             // Must be calling itself
             if called_name != metatheorem_name {
                 return Err(OmegaError::NonStructuralRecursion {
-                    metatheorem: metatheorem_name.to_string(),
+                    metatheorem: metatheorem_name.into(),
                     detail: format!(
                         "inductive call to {} but proving {}",
                         called_name, metatheorem_name
@@ -197,7 +194,7 @@ fn verify_proof(
             // The argument must be structurally smaller
             if !smaller_vars.contains(arg) {
                 return Err(OmegaError::NonStructuralRecursion {
-                    metatheorem: metatheorem_name.to_string(),
+                    metatheorem: metatheorem_name.into(),
                     detail: format!(
                         "argument {} is not structurally smaller than the scrutinee",
                         arg
@@ -211,10 +208,7 @@ fn verify_proof(
         MetaProof::Var(name) => {
             // The variable must be in scope
             if !forall_vars.contains_key(name) {
-                return Err(OmegaError::MalformedDerivation(format!(
-                    "unknown derivation variable {}",
-                    name
-                )));
+                return Err(OmegaError::UnknownDerivationVar { var: name.clone() });
             }
             Ok(())
         }
@@ -244,7 +238,7 @@ fn find_applicable_rules(theory: &Theory, judgment: &Expr) -> Vec<Name> {
     let mut result = Vec::new();
     for rule in theory.rules() {
         if conclusion_could_introduce(rule, judgment) {
-            result.push(rule.name.clone());
+            result.push(rule.name().clone());
         }
     }
     result
@@ -257,7 +251,7 @@ fn find_applicable_rules(theory: &Theory, judgment: &Expr) -> Vec<Name> {
 /// conclusion at a position where the judgment has a constructor means the
 /// rule does NOT introduce that constructor — it merely passes through.
 fn conclusion_could_introduce(rule: &crate::judgment::Rule, judgment: &Expr) -> bool {
-    structurally_compatible(&rule.conclusion, judgment)
+    structurally_compatible(rule.conclusion(), judgment)
 }
 
 /// Check structural compatibility: at each position, either both sides agree

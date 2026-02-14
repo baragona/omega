@@ -237,7 +237,7 @@ fn try_miller_match(
                 // Check linearity (no duplicate args)
                 if arg_values.contains(arg) {
                     return Err(MatchError::Deferred {
-                        meta: meta_name.to_string(),
+                        meta: meta_name.into(),
                         reason: format!("duplicate argument at position {}", i),
                     });
                 }
@@ -266,13 +266,13 @@ fn try_miller_match(
                     }
                     if !found {
                         return Err(MatchError::Deferred {
-                            meta: meta_name.to_string(),
+                            meta: meta_name.into(),
                             reason: format!("no variable candidate for ?{}", m),
                         });
                     }
                 } else {
                     return Err(MatchError::Deferred {
-                        meta: meta_name.to_string(),
+                        meta: meta_name.into(),
                         reason: format!("unsolved meta ?{} with no candidates", m),
                     });
                 }
@@ -280,7 +280,7 @@ fn try_miller_match(
             _ => {
                 // Compound expression: not in Miller fragment, defer
                 return Err(MatchError::Deferred {
-                    meta: meta_name.to_string(),
+                    meta: meta_name.into(),
                     reason: format!("argument {} is compound, not a variable", arg),
                 });
             }
@@ -302,8 +302,8 @@ fn try_miller_match(
     for (i, _arg_val) in arg_values.iter().enumerate().rev() {
         let hint = format!("x{}", i);
         result = Expr::Binder {
-            kind: crate::expr::LAMBDA.to_string(),
-            hint,
+            kind: crate::expr::LAMBDA.into(),
+            hint: hint.into(),
             ty: Box::new(Expr::sym("_")),
             body: Box::new(result),
         };
@@ -315,13 +315,13 @@ fn try_miller_match(
             Ok(())
         } else {
             Err(MatchError::Conflict {
-                meta: meta_name.to_string(),
+                meta: meta_name.into(),
                 existing: existing.clone(),
                 new: result,
             })
         }
     } else {
-        subst.insert(meta_name.to_string(), result);
+        subst.insert(meta_name.into(), result);
         Ok(())
     }
 }

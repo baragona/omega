@@ -10,12 +10,20 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::derivation::{Context, Derivation};
-use crate::error::{OmegaError, Result};
+use crate::error::{DeclKind, OmegaError, Result};
 use crate::expr::{Expr, Name};
 use crate::intern::{Arena, HExpr};
 use crate::theory::{ContextMode, Theory};
 
 type HSubst = HashMap<Name, HExpr>;
+
+/// Maximum iterations for meta-substitution fixpoint (prevents divergence from
+/// cross-proof meta bindings that form transitive chains).
+const FIXPOINT_ITERATION_LIMIT: usize = 100;
+
+/// Default fuel for rewrite-rule normalization (number of reduction steps
+/// before the normalizer gives up, preventing infinite loops in user-defined rewrites).
+const DEFAULT_REDUCE_FUEL: usize = 10_000;
 
 /// A pre-interned rewrite rule for normalization.
 struct InternedRewrite {
@@ -27,7 +35,7 @@ struct InternedRewrite {
 /// Build once, reuse for many proof checks to avoid re-interning overhead.
 pub struct InternedTheory {
     arena: Arena,
-    rule_cache: HashMap<String, InternedRule>,
+    rule_cache: HashMap<Name, InternedRule>,
     rewrites: Vec<InternedRewrite>,
     reduce_cache: HashMap<HExpr, HExpr>,
     pub reduce_fuel: usize,
@@ -38,30 +46,30 @@ pub struct InternedTheory {
 impl InternedTheory {
     /// Build an interned theory from a regular theory.
     pub fn new(theory: &Theory) -> Self {
-        let mut arena = Arena::new();
-        // Thread AC/ACI symbols from theory attributes into arena
+        use crate::intern::ArenaConfig;
+        use crate::theory::Attribute;
+        let mut config = ArenaConfig::default();
         for (name, attrs) in theory.attributes() {
-            use crate::theory::Attribute;
             if attrs.contains(&Attribute::ACI) {
-                arena.aci_symbols.insert(name.clone());
+                config.aci_symbols.insert(name.clone());
             } else if attrs.contains(&Attribute::AC) {
-                arena.ac_symbols.insert(name.clone());
+                config.ac_symbols.insert(name.clone());
             }
         }
-        // Thread binder behavior flags from theory into arena
-        arena.substitutive_binders = theory.substitutive_binders().clone();
-        arena.eta_binders = theory.eta_binders().clone();
-        arena.linear_binders = theory.linear_binders().clone();
-        arena.affine_binders = theory.affine_binders().clone();
+        config.substitutive_binders = theory.substitutive_binders().clone();
+        config.eta_binders = theory.eta_binders().clone();
+        config.linear_binders = theory.linear_binders().clone();
+        config.affine_binders = theory.affine_binders().clone();
+        let mut arena = Arena::with_config(config);
 
-        let mut rule_cache: HashMap<String, InternedRule> = HashMap::new();
+        let mut rule_cache: HashMap<Name, InternedRule> = HashMap::new();
         for rule in theory.rules() {
-            rule_cache.insert(rule.name.clone(), intern_rule(&mut arena, rule));
+            rule_cache.insert(rule.name().clone(), intern_rule(&mut arena, rule));
         }
         let mut rewrites = Vec::new();
         for rw in theory.rewrites() {
-            let lhs = arena.from_expr(&rw.lhs);
-            let rhs = arena.from_expr(&rw.rhs);
+            let lhs = arena.from_expr(rw.lhs());
+            let rhs = arena.from_expr(rw.rhs());
             rewrites.push(InternedRewrite { lhs, rhs });
         }
 
@@ -70,7 +78,7 @@ impl InternedTheory {
             rule_cache,
             rewrites,
             reduce_cache: HashMap::new(),
-            reduce_fuel: 10_000,
+            reduce_fuel: DEFAULT_REDUCE_FUEL,
             fresh_counter: 0,
             context_mode: theory.context_mode(),
         }
@@ -79,7 +87,7 @@ impl InternedTheory {
     /// Add a new rule (e.g., from reflection) to the cached theory.
     pub fn add_rule(&mut self, rule: &crate::judgment::Rule) {
         let ir = intern_rule(&mut self.arena, rule);
-        self.rule_cache.insert(rule.name.clone(), ir);
+        self.rule_cache.insert(rule.name().clone(), ir);
     }
 
     /// Check a derivation using the cached arena and rules.
@@ -91,7 +99,7 @@ impl InternedTheory {
     ) -> Result<()> {
         let h_goal = self.arena.from_expr(goal);
         let h_assumptions: Vec<HExpr> =
-            ctx.assumptions.iter().map(|a| self.arena.from_expr(a)).collect();
+            ctx.assumptions().iter().map(|a| self.arena.from_expr(a)).collect();
         let mut global_subst = HashMap::new();
         let mut consumed = HashSet::new();
         let mut state = CheckState {
@@ -163,10 +171,10 @@ struct InternedRule {
 
 /// Intern a single rule into the arena, collecting all meta-variable names.
 fn intern_rule(arena: &mut Arena, rule: &crate::judgment::Rule) -> InternedRule {
-    let h_conclusion = arena.from_expr(&rule.conclusion);
-    let h_premises: Vec<HExpr> = rule.premises.iter().map(|p| arena.from_expr(p)).collect();
+    let h_conclusion = arena.from_expr(rule.conclusion());
+    let h_premises: Vec<HExpr> = rule.premises().iter().map(|p| arena.from_expr(p)).collect();
     let h_context_extensions: Vec<(usize, HExpr)> = rule
-        .context_extensions
+        .context_extensions()
         .iter()
         .map(|(idx, expr)| (*idx, arena.from_expr(expr)))
         .collect();
@@ -186,10 +194,10 @@ fn intern_rule(arena: &mut Arena, rule: &crate::judgment::Rule) -> InternedRule 
         }
     }
     InternedRule {
-        name: rule.name.clone(),
+        name: rule.name().clone(),
         conclusion: h_conclusion,
         premises: h_premises,
-        implicit_args: rule.implicit_args.clone(),
+        implicit_args: rule.implicit_args().to_vec(),
         meta_names,
         context_extensions: h_context_extensions,
     }
@@ -230,9 +238,9 @@ fn freshen_interned_rule(
         implicit_args: rule
             .implicit_args
             .iter()
-            .map(|a| format!("{}{}", a, suffix))
+            .map(|a| Name::from(format!("{}{}", a, suffix)))
             .collect(),
-        meta_names: rule.meta_names.iter().map(|m| format!("{}{}", m, suffix)).collect(),
+        meta_names: rule.meta_names.iter().map(|m| Name::from(format!("{}{}", m, suffix))).collect(),
         context_extensions: rule.context_extensions
             .iter()
             .map(|(idx, h)| (*idx, arena.apply_meta_subst(*h, &rename)))
@@ -244,7 +252,7 @@ fn freshen_interned_rule(
 /// Capped at 100 iterations to prevent divergence from cross-proof meta bindings.
 fn apply_fixpoint(arena: &mut Arena, h: HExpr, subst: &HSubst) -> HExpr {
     let mut result = arena.apply_meta_subst(h, subst);
-    for _ in 0..100 {
+    for _ in 0..FIXPOINT_ITERATION_LIMIT {
         let next = arena.apply_meta_subst(result, subst);
         if next == result {
             return result;
@@ -341,7 +349,7 @@ fn normalize(
 /// Mutable state threaded through derivation checking.
 struct CheckState<'a> {
     arena: &'a mut Arena,
-    rule_cache: &'a HashMap<String, InternedRule>,
+    rule_cache: &'a HashMap<Name, InternedRule>,
     rewrites: &'a [InternedRewrite],
     reduce_cache: &'a mut HashMap<HExpr, HExpr>,
     reduce_fuel: usize,
@@ -349,6 +357,41 @@ struct CheckState<'a> {
     global_subst: &'a mut HSubst,
     fresh_counter: &'a mut usize,
     consumed: &'a mut HashSet<usize>,
+}
+
+/// Try to match a single assumption against a normalized goal.
+/// Returns `true` if the assumption matches (and updates global_subst + consumed).
+fn try_match_assumption(
+    state: &mut CheckState,
+    goal_norm: HExpr,
+    assumption: HExpr,
+    idx: usize,
+    affine: bool,
+) -> bool {
+    let mut fuel = state.reduce_fuel;
+    let assumption_resolved = apply_fixpoint(state.arena, assumption, state.global_subst);
+    let assumption_norm = normalize(
+        state.arena, state.rewrites, state.reduce_cache, assumption_resolved, &mut fuel,
+    );
+
+    // O(1) equality check
+    if assumption_norm == goal_norm {
+        if affine { state.consumed.insert(idx); }
+        return true;
+    }
+
+    if let Ok(sub) = state.arena.match_expr(assumption_norm, goal_norm) {
+        for (k, v) in sub { state.global_subst.insert(k, v); }
+        if affine { state.consumed.insert(idx); }
+        return true;
+    }
+    if let Ok(sub) = state.arena.match_expr(goal_norm, assumption_norm) {
+        for (k, v) in sub { state.global_subst.insert(k, v); }
+        if affine { state.consumed.insert(idx); }
+        return true;
+    }
+
+    false
 }
 
 fn check_inner(
@@ -370,33 +413,7 @@ fn check_inner(
                 if affine && state.consumed.contains(&idx) {
                     continue;
                 }
-                let assumption_resolved = apply_fixpoint(state.arena, assumptions[idx], state.global_subst);
-                let assumption_norm = normalize(state.arena, state.rewrites, state.reduce_cache, assumption_resolved, &mut fuel);
-
-                // O(1) equality check!
-                if assumption_norm == goal_norm {
-                    if affine {
-                        state.consumed.insert(idx);
-                    }
-                    return Ok(());
-                }
-
-                if let Ok(sub) = state.arena.match_expr(assumption_norm, goal_norm) {
-                    for (k, v) in sub {
-                        state.global_subst.insert(k, v);
-                    }
-                    if affine {
-                        state.consumed.insert(idx);
-                    }
-                    return Ok(());
-                }
-                if let Ok(sub) = state.arena.match_expr(goal_norm, assumption_norm) {
-                    for (k, v) in sub {
-                        state.global_subst.insert(k, v);
-                    }
-                    if affine {
-                        state.consumed.insert(idx);
-                    }
+                if try_match_assumption(state, goal_norm, assumptions[idx], idx, affine) {
                     return Ok(());
                 }
             }
@@ -418,35 +435,14 @@ fn check_inner(
                     expr: state.arena.to_expr(assumptions[*idx]),
                 });
             }
-            let assumption = apply_fixpoint(state.arena, assumptions[*idx], state.global_subst);
-            let assumption_norm = normalize(state.arena, state.rewrites, state.reduce_cache, assumption, &mut fuel);
             let goal_resolved = apply_fixpoint(state.arena, goal, state.global_subst);
             let goal_norm = normalize(state.arena, state.rewrites, state.reduce_cache, goal_resolved, &mut fuel);
 
-            if assumption_norm == goal_norm {
-                if affine {
-                    state.consumed.insert(*idx);
-                }
+            if try_match_assumption(state, goal_norm, assumptions[*idx], *idx, affine) {
                 return Ok(());
             }
-            if let Ok(sub) = state.arena.match_expr(goal_norm, assumption_norm) {
-                for (k, v) in sub {
-                    state.global_subst.insert(k, v);
-                }
-                if affine {
-                    state.consumed.insert(*idx);
-                }
-                return Ok(());
-            }
-            if let Ok(sub) = state.arena.match_expr(assumption_norm, goal_norm) {
-                for (k, v) in sub {
-                    state.global_subst.insert(k, v);
-                }
-                if affine {
-                    state.consumed.insert(*idx);
-                }
-                return Ok(());
-            }
+            let assumption_resolved = apply_fixpoint(state.arena, assumptions[*idx], state.global_subst);
+            let assumption_norm = normalize(state.arena, state.rewrites, state.reduce_cache, assumption_resolved, &mut fuel);
             Err(OmegaError::GoalMismatch {
                 expected: state.arena.to_expr(goal_norm),
                 got: state.arena.to_expr(assumption_norm),
@@ -459,7 +455,7 @@ fn check_inner(
         } => {
             let orig_rule = state.rule_cache
                 .get(rule_name)
-                .ok_or_else(|| OmegaError::UnknownName { kind: "rule".into(), name: rule_name.clone() })?;
+                .ok_or_else(|| OmegaError::UnknownName { kind: DeclKind::Rule, name: rule_name.clone() })?;
 
             if premises.len() != orig_rule.premises.len() {
                 return Err(OmegaError::PremiseCountMismatch {
@@ -558,7 +554,7 @@ fn check_inner(
                 check_inner(state, premise_goal, premise_derivation, premise_assumptions)
                     .map_err(|e| {
                         OmegaError::PremiseCheckFailed {
-                            rule: rule_name.to_string(),
+                            rule: rule_name.clone(),
                             premise: i,
                             cause: Box::new(e),
                         }
@@ -572,11 +568,11 @@ fn check_inner(
             }
 
             // Validate linear/affine binder usage in the goal
-            if !state.arena.linear_binders.is_empty() || !state.arena.affine_binders.is_empty() {
+            if state.arena.has_linear_or_affine_binders() {
                 let resolved_goal = apply_fixpoint(state.arena, goal, state.global_subst);
                 state.arena.validate_binder_usage(resolved_goal).map_err(|msg| {
                     OmegaError::BinderUsageViolation {
-                        rule: rule_name.to_string(),
+                        rule: rule_name.clone(),
                         detail: msg,
                     }
                 })?;
@@ -593,7 +589,7 @@ fn check_inner(
 
 fn infer_conclusion_h(
     arena: &mut Arena,
-    rule_cache: &HashMap<String, InternedRule>,
+    rule_cache: &HashMap<Name, InternedRule>,
     derivation: &Derivation,
     assumptions: &[HExpr],
     subst: &HSubst,

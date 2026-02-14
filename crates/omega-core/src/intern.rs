@@ -49,16 +49,9 @@ enum HNode {
     },
 }
 
-/// The hash-consing arena.
-pub struct Arena {
-    /// All stored nodes, indexed by HExpr.
-    nodes: Vec<HNode>,
-    /// Reverse lookup: node → index.
-    dedup: HashMap<HNode, u32>,
-    /// Cached: which nodes contain meta-variables.
-    has_metas_cache: Vec<Option<bool>>,
-    /// Structural hash per node — for stable AC ordering.
-    structural_hash: Vec<u64>,
+/// Configuration for Arena behavior (AC symbols, binder semantics).
+#[derive(Clone, Default)]
+pub struct ArenaConfig {
     /// Symbols declared as associative-commutative.
     pub ac_symbols: HashSet<Name>,
     /// Symbols declared as AC + idempotent.
@@ -73,6 +66,20 @@ pub struct Arena {
     pub affine_binders: HashSet<Name>,
 }
 
+/// The hash-consing arena.
+pub struct Arena {
+    /// All stored nodes, indexed by HExpr.
+    nodes: Vec<HNode>,
+    /// Reverse lookup: node → index.
+    dedup: HashMap<HNode, u32>,
+    /// Cached: which nodes contain meta-variables.
+    has_metas_cache: Vec<Option<bool>>,
+    /// Structural hash per node — for stable AC ordering.
+    structural_hash: Vec<u64>,
+    /// Arena configuration (AC symbols, binder behavior).
+    config: ArenaConfig,
+}
+
 impl Arena {
     pub fn new() -> Self {
         Arena {
@@ -80,13 +87,24 @@ impl Arena {
             dedup: HashMap::new(),
             has_metas_cache: Vec::new(),
             structural_hash: Vec::new(),
-            ac_symbols: HashSet::new(),
-            aci_symbols: HashSet::new(),
-            substitutive_binders: HashSet::new(),
-            eta_binders: HashSet::new(),
-            linear_binders: HashSet::new(),
-            affine_binders: HashSet::new(),
+            config: ArenaConfig::default(),
         }
+    }
+
+    /// Create an arena with pre-configured behavior (AC symbols, binder semantics).
+    pub fn with_config(config: ArenaConfig) -> Self {
+        Arena {
+            nodes: Vec::new(),
+            dedup: HashMap::new(),
+            has_metas_cache: Vec::new(),
+            structural_hash: Vec::new(),
+            config,
+        }
+    }
+
+    /// Whether any linear or affine binder constraints are configured.
+    pub fn has_linear_or_affine_binders(&self) -> bool {
+        !self.config.linear_binders.is_empty() || !self.config.affine_binders.is_empty()
     }
 
     /// Intern a node, returning its handle. If it already exists, returns the existing one.
@@ -135,7 +153,7 @@ impl Arena {
 
     /// Create a free variable.
     pub fn free(&mut self, name: &str) -> HExpr {
-        self.intern(HNode::Free(name.to_string()))
+        self.intern(HNode::Free(name.into()))
     }
 
     /// Create a bound variable.
@@ -145,12 +163,12 @@ impl Arena {
 
     /// Create a meta-variable.
     pub fn meta(&mut self, name: &str) -> HExpr {
-        self.intern(HNode::Meta(name.to_string()))
+        self.intern(HNode::Meta(name.into()))
     }
 
     /// Create a symbol.
     pub fn sym(&mut self, name: &str) -> HExpr {
-        self.intern(HNode::Sym(name.to_string()))
+        self.intern(HNode::Sym(name.into()))
     }
 
     /// Create an application. If the head is an AC/ACI symbol, canonicalize.
@@ -158,8 +176,8 @@ impl Arena {
         // Check for AC/ACI canonicalization: binary op App([head, a, b])
         if args.len() == 3 {
             if let HNode::Sym(ref name) = self.nodes[args[0].0 as usize] {
-                let is_aci = self.aci_symbols.contains(name);
-                let is_ac = is_aci || self.ac_symbols.contains(name);
+                let is_aci = self.config.aci_symbols.contains(name);
+                let is_ac = is_aci || self.config.ac_symbols.contains(name);
                 if is_ac {
                     let op_name = name.clone();
                     return self.intern_app_ac(&op_name, vec![args[1], args[2]], is_aci);
@@ -314,7 +332,7 @@ impl Arena {
     pub fn validate_binder_usage(&self, h: HExpr) -> std::result::Result<(), String> {
         match &self.nodes[h.0 as usize] {
             HNode::Binder { kind, body, ty, .. } => {
-                if self.linear_binders.contains(kind) {
+                if self.config.linear_binders.contains(kind) {
                     let count = self.count_bound_h(*body, 0);
                     if count != 1 {
                         return Err(format!(
@@ -323,7 +341,7 @@ impl Arena {
                         ));
                     }
                 }
-                if self.affine_binders.contains(kind) {
+                if self.config.affine_binders.contains(kind) {
                     let count = self.count_bound_h(*body, 0);
                     if count > 1 {
                         return Err(format!(
@@ -350,7 +368,7 @@ impl Arena {
     /// `(kind (x:T) (f x))` → `f` when `x ∉ FV(f)`.
     pub fn binder(&mut self, kind: BinderKind, hint: &str, ty: HExpr, body: HExpr) -> HExpr {
         // Eta-contraction: (kind (x:T) (f x)) → f  when x ∉ FV(f)
-        if self.eta_binders.contains(&kind) {
+        if self.config.eta_binders.contains(&kind) {
             if let HNode::App(ref args) = self.nodes[body.0 as usize] {
                 if args.len() >= 2 {
                     let last_arg = *args.last().unwrap();
@@ -371,7 +389,7 @@ impl Arena {
         }
         self.intern(HNode::Binder {
             kind,
-            hint: hint.to_string(),
+            hint: hint.into(),
             ty,
             body,
         })
@@ -510,7 +528,7 @@ impl Arena {
                 // Check if this is a binary AC/ACI operator — try swapped order on failure
                 let is_binary_ac = aa.len() == 3 && {
                     if let HNode::Sym(ref name) = self.nodes[aa[0].0 as usize] {
-                        self.ac_symbols.contains(name) || self.aci_symbols.contains(name)
+                        self.config.ac_symbols.contains(name) || self.config.aci_symbols.contains(name)
                     } else {
                         false
                     }
@@ -619,13 +637,13 @@ impl Arena {
         for (i, _) in arg_values.iter().enumerate().rev() {
             let hint = format!("x{}", i);
             let ty = self.sym("_");
-            result = self.binder(crate::expr::LAMBDA.to_string(),&hint, ty, result);
+            result = self.binder(Name::from(crate::expr::LAMBDA),&hint, ty, result);
         }
 
         if let Some(&existing) = subst.get(meta_name) {
             existing == result
         } else {
-            subst.insert(meta_name.to_string(), result);
+            subst.insert(Name::from(meta_name), result);
             true
         }
     }
@@ -806,7 +824,7 @@ impl Arena {
                 // Check if this is a binary AC/ACI operator — try swapped order on failure
                 let is_binary_ac = pa.len() == 3 && {
                     if let HNode::Sym(ref name) = self.nodes[pa[0].0 as usize] {
-                        self.ac_symbols.contains(name) || self.aci_symbols.contains(name)
+                        self.config.ac_symbols.contains(name) || self.config.aci_symbols.contains(name)
                     } else {
                         false
                     }
@@ -940,7 +958,7 @@ impl Arena {
         for (i, _) in arg_values.iter().enumerate().rev() {
             let hint = format!("x{}", i);
             let ty = self.sym("_");
-            result = self.binder(crate::expr::LAMBDA.to_string(),&hint, ty, result);
+            result = self.binder(Name::from(crate::expr::LAMBDA),&hint, ty, result);
         }
 
         // Check existing binding
@@ -951,7 +969,7 @@ impl Arena {
                 Err(format!("meta ?{} conflict", meta_name))
             }
         } else {
-            subst.insert(meta_name.to_string(), result);
+            subst.insert(Name::from(meta_name), result);
             Ok(())
         }
     }
@@ -959,7 +977,7 @@ impl Arena {
     /// Construct a lambda binder.
     pub fn make_lambda(&mut self, hint: &str, body: HExpr) -> HExpr {
         let ty = self.sym("_");
-        self.binder(crate::expr::LAMBDA.to_string(),hint, ty, body)
+        self.binder(Name::from(crate::expr::LAMBDA),hint, ty, body)
     }
 
     /// Replace all occurrences of `target` in `expr` with Bound(depth).
@@ -1045,7 +1063,8 @@ impl Arena {
         match self.nodes[expr.0 as usize].clone() {
             HNode::Bound(i) => {
                 if i >= cutoff {
-                    self.bound((i as i32 + amount) as usize)
+                    self.bound(i.checked_add_signed(amount as isize)
+                        .expect("de Bruijn index underflow in shift"))
                 } else {
                     expr
                 }
@@ -1080,7 +1099,7 @@ impl Arena {
             HNode::App(args) if args.len() >= 2 => {
                 let head = self.whnf(args[0]);
                 match self.nodes[head.0 as usize].clone() {
-                    HNode::Binder { ref kind, body, .. } if self.substitutive_binders.contains(kind) => {
+                    HNode::Binder { ref kind, body, .. } if self.config.substitutive_binders.contains(kind) => {
                         let reduced = self.open(body, 0, args[1]);
                         if args.len() == 2 {
                             self.whnf(reduced)
@@ -1123,7 +1142,7 @@ impl Arena {
                     if let HNode::Binder { ref kind, body, .. } =
                         self.nodes[normalized[0].0 as usize].clone()
                     {
-                        if self.substitutive_binders.contains(kind) {
+                        if self.config.substitutive_binders.contains(kind) {
                             let reduced = self.open(body, 0, normalized[1]);
                             if normalized.len() == 2 {
                                 return self.beta_normalize(reduced, fuel);
@@ -1220,13 +1239,18 @@ impl Arena {
         self.nodes.len()
     }
 
+    /// Whether the arena contains no expressions.
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+
     /// Display an HExpr as a string.
     pub fn display(&self, h: HExpr) -> String {
         match self.node(h) {
-            HNode::Free(n) => n.clone(),
+            HNode::Free(n) => n.to_string(),
             HNode::Bound(i) => format!("#{}", i),
             HNode::Meta(n) => format!("?{}", n),
-            HNode::Sym(n) => n.clone(),
+            HNode::Sym(n) => n.to_string(),
             HNode::App(args) => {
                 let inner: Vec<String> = args.iter().map(|a| self.display(*a)).collect();
                 format!("({})", inner.join(" "))

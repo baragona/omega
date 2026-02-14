@@ -118,16 +118,16 @@ impl ProofState {
 
         // Create fresh meta-variables for implicit arguments
         let mut implicit_subst = Substitution::new();
-        for arg_name in &rule.implicit_args {
+        for arg_name in rule.implicit_args() {
             let fresh = unifier.fresh_meta(arg_name);
             implicit_subst.insert(arg_name.clone(), fresh);
         }
 
         // Instantiate the rule conclusion with fresh implicits
         let conclusion = if implicit_subst.is_empty() {
-            rule.conclusion.clone()
+            rule.conclusion().clone()
         } else {
-            apply_meta_subst(&rule.conclusion, &implicit_subst)
+            apply_meta_subst(rule.conclusion(), &implicit_subst)
         };
 
         // Add unification constraint: rule conclusion = goal
@@ -138,7 +138,7 @@ impl ProofState {
             Ok(()) => {}
             Err(_) => {
                 // Fallback to simple pattern matching
-                let local_subst = match_expr(&rule.conclusion, &goal_resolved)
+                let local_subst = match_expr(rule.conclusion(), &goal_resolved)
                     .map_err(|e| format!("rule {} doesn't match goal: {}", rule_name, e))?;
 
                 return self.apply_rule_with_subst(rule_name, rule, goal, local_subst);
@@ -163,7 +163,7 @@ impl ProofState {
     ) -> Result<ProofState, String> {
         // Create new goals for each premise
         let mut new_goals: Vec<Goal> = Vec::new();
-        for premise in &rule.premises {
+        for premise in rule.premises() {
             let premise_goal = apply_meta_subst(premise, &local_subst);
             let premise_goal = apply_meta_subst(&premise_goal, &self.subst);
             new_goals.push(Goal {
@@ -191,7 +191,7 @@ impl ProofState {
         let goal = &self.goals[0];
         let goal_resolved = apply_meta_subst(&goal.target, &self.subst);
 
-        for assumption in &goal.context.assumptions {
+        for assumption in goal.context.assumptions() {
             let assumption_resolved = apply_meta_subst(assumption, &self.subst);
             if assumption_resolved == goal_resolved {
                 let mut new_state = self.clone();

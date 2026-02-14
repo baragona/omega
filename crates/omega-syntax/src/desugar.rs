@@ -1,10 +1,10 @@
 /// Desugaring: Sexp → Core types (Theory, Derivation, MetaTheorem, etc.)
-use omega_core::binding_spec::BindingSpec;
+use omega_core::binding_spec::{BinderMode, BindingSpec};
 use omega_core::derivation::Derivation;
 use omega_core::expr::Expr;
 use omega_core::judgment::{ConstructorDecl, JudgmentForm, RewriteRule, Rule, SortDecl};
 use omega_core::metatheorem::{MetaCase, MetaProof, MetaTheorem};
-use omega_core::theory::{ContextMode, Import, Theory};
+use omega_core::theory::{ContextMode, Import, Theory, TheoryBuilder};
 
 use crate::sexp::Sexp;
 use crate::span::Span;
@@ -27,8 +27,8 @@ type Result<T> = std::result::Result<T, DesugarError>;
 /// A top-level command parsed from the source.
 #[derive(Debug, Clone)]
 pub enum Command {
-    /// A theory definition.
-    TheoryDef(Theory),
+    /// A theory definition (still under construction; call `.build()` after import resolution).
+    TheoryDef(TheoryBuilder),
     /// Check a theory.
     CheckTheory(String),
     /// A proof with an explicit derivation.
@@ -147,30 +147,22 @@ fn desugar_command(sexp: &Sexp) -> Result<Command> {
 
 /// Parse a single sort/constructor/judgment/rule/rewrite declaration and push it onto the theory.
 /// Shared between the main theory loop and mutual blocks.
-fn parse_single_declaration(theory: &mut Theory, decl: &[Sexp]) -> Result<()> {
+fn parse_single_declaration(theory: &mut TheoryBuilder, decl: &[Sexp]) -> Result<()> {
     let kind = expect_atom(&decl[0])?;
     match kind {
         "sort" => {
             let sort_name = expect_atom(&decl[1])?;
-            theory.add_sort(SortDecl {
-                name: sort_name.to_string(),
-            });
+            theory.add_sort(SortDecl::new(sort_name));
         }
         "constructor" => {
             let ctor_name = expect_atom(&decl[1])?;
             // (constructor name : type)
             if decl.len() >= 4 && expect_atom(&decl[2]).ok() == Some(":") {
                 let ty = desugar_expr(&decl[3])?;
-                theory.add_constructor(ConstructorDecl {
-                    name: ctor_name.to_string(),
-                    ty,
-                });
+                theory.add_constructor(ConstructorDecl::new(ctor_name, ty));
             } else {
                 // Just a name, no explicit type
-                theory.add_constructor(ConstructorDecl {
-                    name: ctor_name.to_string(),
-                    ty: Expr::sym("_"),
-                });
+                theory.add_constructor(ConstructorDecl::new(ctor_name, Expr::sym("_")));
             }
         }
         "judgment" => {
@@ -181,10 +173,10 @@ fn parse_single_declaration(theory: &mut Theory, decl: &[Sexp]) -> Result<()> {
             let jname = match &pattern {
                 Expr::App(args) if !args.is_empty() => match &args[0] {
                     Expr::Sym(n) => n.clone(),
-                    _ => "unnamed".to_string(),
+                    _ => "unnamed".into(),
                 },
                 Expr::Sym(n) => n.clone(),
-                _ => "unnamed".to_string(),
+                _ => "unnamed".into(),
             };
 
             // Parse :where constraints
@@ -201,7 +193,7 @@ fn parse_single_declaration(theory: &mut Theory, decl: &[Sexp]) -> Result<()> {
                             break;
                         }
                         let sort = expect_atom(&decl[i + 2])?;
-                        constraints.push((var.to_string(), sort.to_string()));
+                        constraints.push((var.into(), sort.into()));
                         i += 3;
                     }
                 } else {
@@ -209,11 +201,7 @@ fn parse_single_declaration(theory: &mut Theory, decl: &[Sexp]) -> Result<()> {
                 }
             }
 
-            theory.add_judgment(JudgmentForm {
-                name: jname,
-                pattern,
-                constraints,
-            });
+            theory.add_judgment(JudgmentForm::new(jname, pattern, constraints));
         }
         "rule" => {
             let rule = desugar_rule(decl)?;
@@ -230,11 +218,7 @@ fn parse_single_declaration(theory: &mut Theory, decl: &[Sexp]) -> Result<()> {
             let rw_name = expect_atom(&decl[1])?;
             let lhs = desugar_expr(&decl[2])?;
             let rhs = desugar_expr(&decl[3])?;
-            theory.add_rewrite(RewriteRule {
-                name: rw_name.to_string(),
-                lhs,
-                rhs,
-            });
+            theory.add_rewrite(RewriteRule::new(rw_name, lhs, rhs));
         }
         _ => {
             return Err(DesugarError {
@@ -255,7 +239,7 @@ fn desugar_theory(items: &[Sexp], span: Span) -> Result<Command> {
     }
 
     let name = expect_atom(&items[1])?;
-    let mut theory = Theory::new(name);
+    let mut theory = Theory::builder(name);
 
     // Check for :params keyword before declarations
     let decl_start = if items.len() > 3 && items[2].is_keyword(":params") {
@@ -276,7 +260,7 @@ fn desugar_theory(items: &[Sexp], span: Span) -> Result<Command> {
             }
             let param_name = expect_atom(&pair[0])?;
             let param_ty = desugar_expr(&pair[1])?;
-            theory.add_param(param_name.to_string(), param_ty);
+            theory.add_param(param_name.into(), param_ty);
         }
         4 // declarations start after :params and the param list
     } else {
@@ -361,7 +345,7 @@ fn desugar_theory(items: &[Sexp], span: Span) -> Result<Command> {
                                 span: decl[ii - 1].span(),
                             });
                         }
-                        alias = Some(expect_atom(&decl[ii])?.to_string());
+                        alias = Some(expect_atom(&decl[ii])?.into());
                         ii += 1;
                     } else {
                         args.push(desugar_expr(&decl[ii])?);
@@ -375,7 +359,7 @@ fn desugar_theory(items: &[Sexp], span: Span) -> Result<Command> {
                     });
                 }
                 theory.add_import(Import {
-                    theory_name: import_name.to_string(),
+                    theory_name: import_name.into(),
                     args,
                     alias,
                 });
@@ -392,10 +376,10 @@ fn desugar_theory(items: &[Sexp], span: Span) -> Result<Command> {
                 for flag_sexp in &decl[2..] {
                     let flag = expect_atom(flag_sexp)?;
                     match flag {
-                        ":substitutive" => { theory.add_substitutive_binder(binder_name.to_string()); }
-                        ":eta" => { theory.add_eta_binder(binder_name.to_string()); }
-                        ":linear" => { theory.add_linear_binder(binder_name.to_string()); }
-                        ":affine" => { theory.add_affine_binder(binder_name.to_string()); }
+                        ":substitutive" => { theory.add_substitutive_binder(binder_name.into()); }
+                        ":eta" => { theory.add_eta_binder(binder_name.into()); }
+                        ":linear" => { theory.add_linear_binder(binder_name.into()); }
+                        ":affine" => { theory.add_affine_binder(binder_name.into()); }
                         _ => {
                             return Err(DesugarError {
                                 message: format!("unknown binder-behavior flag: {} (expected :substitutive, :eta, :linear, :affine)", flag),
@@ -425,7 +409,7 @@ fn desugar_theory(items: &[Sexp], span: Span) -> Result<Command> {
                         });
                     }
                 };
-                theory.add_attribute(sym_name.to_string(), attr);
+                theory.add_attribute(sym_name.into(), attr);
             }
             _ => {
                 return Err(DesugarError {
@@ -437,8 +421,7 @@ fn desugar_theory(items: &[Sexp], span: Span) -> Result<Command> {
     }
 
     // Auto-register "lambda" as substitutive (triggers beta-reduction)
-    theory.add_substitutive_binder(omega_core::expr::LAMBDA.to_string());
-    theory.compute_hash();
+    theory.add_substitutive_binder(omega_core::expr::LAMBDA.into());
     Ok(Command::TheoryDef(theory))
 }
 
@@ -469,7 +452,7 @@ fn desugar_rule(items: &[Sexp]) -> Result<Rule> {
             if let Some(ilist) = items[i].as_list() {
                 for item in ilist {
                     if let Some(a) = item.as_atom() {
-                        implicit_args.push(a.to_string());
+                        implicit_args.push(a.into());
                     }
                 }
             }
@@ -512,8 +495,7 @@ fn desugar_binding_spec(items: &[Sexp]) -> Result<BindingSpec> {
     let name = expect_atom(&items[1])?;
     let mut arity = 1;
     let mut body_positions = Vec::new();
-    let mut linear = false;
-    let mut affine = false;
+    let mut mode = BinderMode::Standard;
     let mut display = None;
 
     let mut i = 2;
@@ -548,10 +530,10 @@ fn desugar_binding_spec(items: &[Sexp]) -> Result<BindingSpec> {
             }
             i += 1;
         } else if items[i].is_keyword(":linear") {
-            linear = true;
+            mode = BinderMode::Linear;
             i += 1;
         } else if items[i].is_keyword(":affine") {
-            affine = true;
+            mode = BinderMode::Affine;
             i += 1;
         } else if items[i].is_keyword(":display") {
             i += 1;
@@ -564,11 +546,10 @@ fn desugar_binding_spec(items: &[Sexp]) -> Result<BindingSpec> {
     }
 
     Ok(BindingSpec {
-        name: name.to_string(),
+        name: name.into(),
         arity,
         body_positions,
-        linear,
-        affine,
+        mode,
         display,
     })
 }
@@ -758,7 +739,7 @@ fn desugar_derivation(sexp: &Sexp) -> Result<Derivation> {
                 premises.push(desugar_derivation(item)?);
             }
             Ok(Derivation::RuleApp {
-                rule_name: head.to_string(),
+                rule_name: head.into(),
                 premises,
             })
         }
@@ -831,7 +812,7 @@ fn desugar_metatheorem(items: &[Sexp], span: Span) -> Result<Command> {
     while i < items.len() {
         if items[i].is_keyword(":theory") {
             i += 1;
-            theory_name = Some(expect_atom(&items[i])?.to_string());
+            theory_name = Some(expect_atom(&items[i])?.into());
             i += 1;
         } else if items[i].is_keyword(":forall") {
             i += 1;
@@ -843,7 +824,7 @@ fn desugar_metatheorem(items: &[Sexp], span: Span) -> Result<Command> {
                     })?;
                     let var = expect_atom(&pair[0])?;
                     let judgment = desugar_expr(&pair[1])?;
-                    forall.push((var.to_string(), judgment));
+                    forall.push((var.into(), judgment));
                 }
             }
             i += 1;
@@ -857,7 +838,7 @@ fn desugar_metatheorem(items: &[Sexp], span: Span) -> Result<Command> {
                     })?;
                     let var = expect_atom(&pair[0])?;
                     let judgment = desugar_expr(&pair[1])?;
-                    exists.push((var.to_string(), judgment));
+                    exists.push((var.into(), judgment));
                 }
             }
             i += 1;
@@ -880,7 +861,7 @@ fn desugar_metatheorem(items: &[Sexp], span: Span) -> Result<Command> {
     })?;
 
     Ok(Command::MetaTheoremDef(MetaTheorem {
-        name: name.to_string(),
+        name: name.into(),
         theory_name,
         forall,
         exists,
@@ -904,7 +885,7 @@ fn desugar_metaproof(sexp: &Sexp) -> Result<MetaProof> {
     let head = expect_atom(&items[0])?;
     match head {
         "case-analysis" => {
-            let scrutinee = expect_atom(&items[1])?.to_string();
+            let scrutinee = expect_atom(&items[1])?.into();
             let mut cases = Vec::new();
             for item in &items[2..] {
                 cases.push(desugar_metacase(item)?);
@@ -912,7 +893,7 @@ fn desugar_metaproof(sexp: &Sexp) -> Result<MetaProof> {
             Ok(MetaProof::CaseAnalysis { scrutinee, cases })
         }
         "by-rule" => {
-            let rule_name = expect_atom(&items[1])?.to_string();
+            let rule_name = expect_atom(&items[1])?.into();
             let mut args = Vec::new();
             for item in &items[2..] {
                 args.push(desugar_metaproof_atom(item)?);
@@ -920,15 +901,15 @@ fn desugar_metaproof(sexp: &Sexp) -> Result<MetaProof> {
             Ok(MetaProof::ByRule { rule_name, args })
         }
         "inductive" => {
-            let mt_name = expect_atom(&items[1])?.to_string();
-            let arg = expect_atom(&items[2])?.to_string();
+            let mt_name = expect_atom(&items[1])?.into();
+            let arg = expect_atom(&items[2])?.into();
             Ok(MetaProof::Inductive {
                 metatheorem_name: mt_name,
                 arg,
             })
         }
         "var" => {
-            let name = expect_atom(&items[1])?.to_string();
+            let name = expect_atom(&items[1])?.into();
             Ok(MetaProof::Var(name))
         }
         _ => {
@@ -943,7 +924,7 @@ fn desugar_metaproof(sexp: &Sexp) -> Result<MetaProof> {
 
 fn desugar_metaproof_atom(sexp: &Sexp) -> Result<MetaProof> {
     match sexp {
-        Sexp::Atom(s, _) => Ok(MetaProof::Var(s.clone())),
+        Sexp::Atom(s, _) => Ok(MetaProof::Var(s.as_str().into())),
         _ => desugar_metaproof(sexp),
     }
 }
@@ -971,13 +952,13 @@ fn desugar_metacase(sexp: &Sexp) -> Result<MetaCase> {
         });
     }
 
-    let rule_name = expect_atom(&items[1])?.to_string();
+    let rule_name = expect_atom(&items[1])?.into();
 
     // Check if items[2] is a list of premise names or a proof body
     if items.len() == 4 {
         // (case rule-name (premise-names) body)
         let premise_names = if let Some(plist) = items[2].as_list() {
-            plist.iter().map(|s| expect_atom(s).map(|a| a.to_string())).collect::<Result<Vec<_>>>()?
+            plist.iter().map(|s| expect_atom(s).map(omega_core::expr::Name::from)).collect::<Result<Vec<_>>>()?
         } else {
             return Err(DesugarError {
                 message: "expected list of premise names".to_string(),
@@ -1107,17 +1088,17 @@ pub fn desugar_expr(sexp: &Sexp) -> Result<Expr> {
     match sexp {
         Sexp::Atom(s, _) => {
             if let Some(meta_name) = s.strip_prefix('?') {
-                Ok(Expr::Meta(meta_name.to_string()))
-            } else if s.starts_with('#') {
+                Ok(Expr::Meta(meta_name.into()))
+            } else if let Some(rest) = s.strip_prefix('#') {
                 // de Bruijn index — only if the rest is a valid integer
-                if let Ok(idx) = s[1..].parse::<usize>() {
+                if let Ok(idx) = rest.parse::<usize>() {
                     Ok(Expr::Bound(idx))
                 } else {
-                    Ok(Expr::Sym(s.clone()))
+                    Ok(Expr::Sym(s.as_str().into()))
                 }
             } else {
                 // Treat as symbol by default (constructors, sort names, etc.)
-                Ok(Expr::Sym(s.clone()))
+                Ok(Expr::Sym(s.as_str().into()))
             }
         }
         Sexp::List(items, span) => {
@@ -1161,7 +1142,7 @@ pub fn desugar_expr(sexp: &Sexp) -> Result<Expr> {
             // General application
             let exprs: Vec<Expr> = items
                 .iter()
-                .map(|item| desugar_expr(item))
+                .map(desugar_expr)
                 .collect::<Result<Vec<_>>>()?;
             Ok(Expr::app(exprs))
         }
@@ -1169,7 +1150,7 @@ pub fn desugar_expr(sexp: &Sexp) -> Result<Expr> {
 }
 
 /// Shared binder desugaring for lambda, forall, and custom binder kinds.
-fn desugar_binder_impl(items: &[Sexp], kind: String, span: Span) -> Result<Expr> {
+fn desugar_binder_impl(items: &[Sexp], kind: omega_core::expr::Name, span: Span) -> Result<Expr> {
     if items.len() != 3 {
         return Err(DesugarError {
             message: "binder needs exactly a binding and a body".to_string(),
@@ -1183,9 +1164,9 @@ fn desugar_binder_impl(items: &[Sexp], kind: String, span: Span) -> Result<Expr>
     })?;
 
     let (hint, ty) = if binding.len() == 3 && binding[1].is_keyword(":") {
-        (expect_atom(&binding[0])?.to_string(), desugar_expr(&binding[2])?)
+        (omega_core::expr::Name::from(expect_atom(&binding[0])?), desugar_expr(&binding[2])?)
     } else if binding.len() == 1 {
-        (expect_atom(&binding[0])?.to_string(), Expr::sym("_"))
+        (omega_core::expr::Name::from(expect_atom(&binding[0])?), Expr::sym("_"))
     } else {
         return Err(DesugarError {
             message: "binding must be (x : T) or (x)".to_string(),
@@ -1205,16 +1186,16 @@ fn desugar_binder_impl(items: &[Sexp], kind: String, span: Span) -> Result<Expr>
 
 fn desugar_binder(items: &[Sexp], span: Span) -> Result<Expr> {
     let kind_str = expect_atom(&items[0])?;
-    let kind = match kind_str {
-        "lambda" => omega_core::expr::LAMBDA.to_string(),
-        "forall" => omega_core::expr::FORALL.to_string(),
+    let kind: omega_core::expr::Name = match kind_str {
+        "lambda" => omega_core::expr::LAMBDA.into(),
+        "forall" => omega_core::expr::FORALL.into(),
         _ => unreachable!(),
     };
     desugar_binder_impl(items, kind, span)
 }
 
 fn desugar_custom_binder(items: &[Sexp], span: Span) -> Result<Expr> {
-    let kind = expect_atom(&items[0])?.to_string();
+    let kind: omega_core::expr::Name = expect_atom(&items[0])?.into();
     desugar_binder_impl(items, kind, span)
 }
 
@@ -1223,7 +1204,7 @@ fn desugar_arrow(items: &[Sexp], span: Span) -> Result<Expr> {
     // Represented as nested Binder with kind "->"
     let types: Vec<Expr> = items[1..]
         .iter()
-        .map(|item| desugar_expr(item))
+        .map(desugar_expr)
         .collect::<Result<Vec<_>>>()?;
 
     if types.len() < 2 {
@@ -1237,8 +1218,8 @@ fn desugar_arrow(items: &[Sexp], span: Span) -> Result<Expr> {
     let mut result = types.last().unwrap().clone();
     for ty in types[..types.len() - 1].iter().rev() {
         result = Expr::Binder {
-            kind: omega_core::expr::ARROW.to_string(),
-            hint: "_".to_string(),
+            kind: omega_core::expr::ARROW.into(),
+            hint: "_".into(),
             ty: Box::new(ty.clone()),
             body: Box::new(result),
         };
@@ -1249,7 +1230,7 @@ fn desugar_arrow(items: &[Sexp], span: Span) -> Result<Expr> {
 
 // desugar_level removed — universe levels are now regular expressions
 
-fn expect_atom<'a>(sexp: &'a Sexp) -> Result<&'a str> {
+fn expect_atom(sexp: &Sexp) -> Result<&str> {
     sexp.as_atom().ok_or_else(|| DesugarError {
         message: "expected an atom".to_string(),
         span: sexp.span(),
@@ -1267,7 +1248,7 @@ mod tests {
         let expr = desugar_expr(&sexps[0]).unwrap();
         assert_eq!(
             expr,
-            Expr::app(vec![Expr::sym("proves"), Expr::Meta("A".to_string())])
+            Expr::app(vec![Expr::sym("proves"), Expr::Meta("A".into())])
         );
     }
 
@@ -1275,7 +1256,7 @@ mod tests {
     fn desugar_meta_vars() {
         let sexps = parser::parse("?X").unwrap();
         let expr = desugar_expr(&sexps[0]).unwrap();
-        assert_eq!(expr, Expr::Meta("X".to_string()));
+        assert_eq!(expr, Expr::Meta("X".into()));
     }
 
     #[test]
@@ -1342,8 +1323,7 @@ mod tests {
             assert_eq!(theory.binding_specs()[0].name, "lin-lam");
             assert_eq!(theory.binding_specs()[0].arity, 1);
             assert_eq!(theory.binding_specs()[0].body_positions, vec![0]);
-            assert!(theory.binding_specs()[0].linear);
-            assert!(!theory.binding_specs()[0].affine);
+            assert_eq!(theory.binding_specs()[0].mode, BinderMode::Linear);
         } else {
             panic!("expected TheoryDef");
         }

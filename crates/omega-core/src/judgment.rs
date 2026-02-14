@@ -7,60 +7,76 @@ use crate::expr::{Expr, Name};
 /// A judgment form declaration, e.g. `(judgment (proves P) :where P : Prop)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JudgmentForm {
-    /// The name of the judgment form, e.g. "proves"
-    pub name: Name,
-    /// The pattern for this judgment, e.g. `(proves ?P)`
-    pub pattern: Expr,
-    /// Sort constraints on meta-variables, e.g. `[("P", "Prop")]`
-    pub constraints: Vec<(Name, Name)>,
+    name: Name,
+    pattern: Expr,
+    constraints: Vec<(Name, Name)>,
+}
+
+impl JudgmentForm {
+    pub fn new(name: impl Into<Name>, pattern: Expr, constraints: Vec<(Name, Name)>) -> Self {
+        JudgmentForm { name: name.into(), pattern, constraints }
+    }
+    pub fn name(&self) -> &Name { &self.name }
+    pub fn pattern(&self) -> &Expr { &self.pattern }
+    pub fn constraints(&self) -> &[(Name, Name)] { &self.constraints }
 }
 
 /// An inference rule.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rule {
-    /// The name of this rule, e.g. "and-intro"
-    pub name: Name,
-    /// The premises (each is a judgment expression)
-    pub premises: Vec<Expr>,
-    /// The conclusion (a judgment expression)
-    pub conclusion: Expr,
-    /// Whether this rule was produced by reflection
-    pub reflected: bool,
-    /// If reflected, the metatheorem that justified it
-    pub provenance: Option<Name>,
-    /// Meta-variables that are implicit (inferred by unification).
-    /// When a user applies this rule, they don't need to specify these.
-    pub implicit_args: Vec<Name>,
-    /// Context extension: assumptions this rule adds for its premises.
-    /// For rules like imp-intro, this says "add (proves ?A) to context for premise 0".
-    pub context_extensions: Vec<(usize, Expr)>,
+    name: Name,
+    premises: Vec<Expr>,
+    conclusion: Expr,
+    reflected: bool,
+    provenance: Option<Name>,
+    implicit_args: Vec<Name>,
+    context_extensions: Vec<(usize, Expr)>,
 }
 
 /// A sort declaration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SortDecl {
-    pub name: Name,
+    name: Name,
+}
+
+impl SortDecl {
+    pub fn new(name: impl Into<Name>) -> Self {
+        SortDecl { name: name.into() }
+    }
+    pub fn name(&self) -> &Name { &self.name }
 }
 
 /// A constructor declaration, e.g. `(constructor and : (-> Prop Prop Prop))`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConstructorDecl {
-    pub name: Name,
-    /// The type of this constructor. For simple constructors, this is just a sort name.
-    /// For constructors with arguments, this is an arrow type.
-    pub ty: Expr,
+    name: Name,
+    ty: Expr,
+}
+
+impl ConstructorDecl {
+    pub fn new(name: impl Into<Name>, ty: Expr) -> Self {
+        ConstructorDecl { name: name.into(), ty }
+    }
+    pub fn name(&self) -> &Name { &self.name }
+    pub fn ty(&self) -> &Expr { &self.ty }
 }
 
 /// A rewrite rule for definitional equality via delta reduction.
 /// The kernel normalizes terms using these rules before equality checking.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RewriteRule {
-    /// Name of this rewrite rule, e.g. "add-zero"
-    pub name: Name,
-    /// Left-hand side pattern with metas, e.g. `(add z ?n)`
-    pub lhs: Expr,
-    /// Right-hand side replacement, e.g. `?n`
-    pub rhs: Expr,
+    name: Name,
+    lhs: Expr,
+    rhs: Expr,
+}
+
+impl RewriteRule {
+    pub fn new(name: impl Into<Name>, lhs: Expr, rhs: Expr) -> Self {
+        RewriteRule { name: name.into(), lhs, rhs }
+    }
+    pub fn name(&self) -> &Name { &self.name }
+    pub fn lhs(&self) -> &Expr { &self.lhs }
+    pub fn rhs(&self) -> &Expr { &self.rhs }
 }
 
 impl Rule {
@@ -79,6 +95,17 @@ impl Rule {
         }
     }
 
+    // --- Accessors ---
+    pub fn name(&self) -> &Name { &self.name }
+    pub fn premises(&self) -> &[Expr] { &self.premises }
+    pub fn conclusion(&self) -> &Expr { &self.conclusion }
+    pub fn reflected(&self) -> bool { self.reflected }
+    pub fn provenance(&self) -> Option<&Name> { self.provenance.as_ref() }
+    pub fn implicit_args(&self) -> &[Name] { &self.implicit_args }
+    pub fn context_extensions(&self) -> &[(usize, Expr)] { &self.context_extensions }
+
+    // --- Builders ---
+
     /// Builder: set implicit arguments.
     pub fn with_implicit(mut self, args: Vec<Name>) -> Self {
         self.implicit_args = args;
@@ -91,18 +118,31 @@ impl Rule {
         self
     }
 
-    /// Collect all meta-variables mentioned in this rule.
+    /// Builder: mark as reflected.
+    pub fn with_reflected(mut self) -> Self {
+        self.reflected = true;
+        self
+    }
+
+    /// Builder: set provenance.
+    pub fn with_provenance(mut self, prov: impl Into<Name>) -> Self {
+        self.provenance = Some(prov.into());
+        self
+    }
+
+    /// Collect all meta-variables mentioned in this rule (insertion order, deduplicated).
     pub fn meta_vars(&self) -> Vec<Name> {
+        let mut seen = std::collections::HashSet::new();
         let mut vars = Vec::new();
         for p in &self.premises {
             for m in p.meta_vars() {
-                if !vars.contains(&m) {
+                if seen.insert(m.clone()) {
                     vars.push(m);
                 }
             }
         }
         for m in self.conclusion.meta_vars() {
-            if !vars.contains(&m) {
+            if seen.insert(m.clone()) {
                 vars.push(m);
             }
         }

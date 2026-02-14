@@ -13,9 +13,9 @@ use crate::session::{ProvenTheorem, Session};
 /// Process a single command, returning a human-readable result message.
 pub fn process_command(session: &mut Session, cmd: Command) -> Result<String, String> {
     match cmd {
-        Command::TheoryDef(mut theory) => {
+        Command::TheoryDef(mut builder) => {
             // Resolve imports: merge declarations from imported theories
-            let imports = theory.imports().to_vec();
+            let imports = builder.imports().to_vec();
             for import in &imports {
                 let imported = session
                     .kernel
@@ -25,21 +25,24 @@ pub fn process_command(session: &mut Session, cmd: Command) -> Result<String, St
 
                 if import.args.is_empty() && import.alias.is_none() {
                     // Simple import, no alias: merge as-is (existing behavior)
-                    theory
+                    builder
                         .merge_from(&imported)
-                        .map_err(|e| format!("import error in theory {}: {}", theory.name(), e))?;
+                        .map_err(|e| format!("import error in theory {}: {}", builder.name(), e))?;
                 } else {
                     // Parameterized or aliased import: instantiate then merge
                     let alias = import.alias.as_deref().unwrap_or(&import.theory_name);
                     let instance = imported
                         .instantiate(&import.args, alias)
-                        .map_err(|e| format!("import error in theory {}: {}", theory.name(), e))?;
-                    theory
+                        .map_err(|e| format!("import error in theory {}: {}", builder.name(), e))?;
+                    builder
                         .merge_from(&instance)
-                        .map_err(|e| format!("import error in theory {}: {}", theory.name(), e))?;
+                        .map_err(|e| format!("import error in theory {}: {}", builder.name(), e))?;
                 }
             }
-            let name = theory.name().to_string();
+            let name = builder.name().to_string();
+            let theory = builder
+                .build()
+                .map_err(|e| format!("Error registering theory: {}", e))?;
             session
                 .kernel
                 .register_theory(theory)
@@ -85,32 +88,9 @@ pub fn process_command(session: &mut Session, cmd: Command) -> Result<String, St
             tactics,
             assumptions,
         } => {
-            let theory = session
-                .kernel
-                .get_theory(&theory_name)
-                .ok_or_else(|| format!("Unknown theory: {}", theory_name))?
-                .clone();
-
             let ctx = Context::with_assumptions(assumptions);
+            let derivation = elaborate_tactics(session, &theory_name, &goal, &ctx, tactics, &name)?;
 
-            // Convert tactic commands to Tactic values
-            let tactics: Vec<Tactic> = tactics
-                .into_iter()
-                .map(|tc| convert_tactic(tc))
-                .collect::<Result<Vec<_>, _>>()?;
-
-            // Elaborate tactics into a derivation
-            let derivation = elaborate(&tactics, goal.clone(), ctx.clone(), &theory)
-                .map_err(|e| format!("Tactic elaboration failed for {}: {}", name, e))?;
-
-            if session.verbose {
-                eprintln!(
-                    "  Elaborated derivation: {}",
-                    printer::print_derivation(&derivation)
-                );
-            }
-
-            // Verify the derivation with the kernel
             session
                 .kernel
                 .check_derivation(&theory_name, &goal, &derivation, &ctx)
@@ -194,28 +174,8 @@ pub fn process_command(session: &mut Session, cmd: Command) -> Result<String, St
             conclusion,
             tactics,
         } => {
-            let theory = session
-                .kernel
-                .get_theory(&theory_name)
-                .ok_or_else(|| format!("Unknown theory: {}", theory_name))?
-                .clone();
-
             let ctx = Context::with_assumptions(premises.clone());
-
-            let tactics: Vec<Tactic> = tactics
-                .into_iter()
-                .map(|tc| convert_tactic(tc))
-                .collect::<Result<Vec<_>, _>>()?;
-
-            let derivation = elaborate(&tactics, conclusion.clone(), ctx.clone(), &theory)
-                .map_err(|e| format!("Tactic elaboration failed for lemma {}: {}", name, e))?;
-
-            if session.verbose {
-                eprintln!(
-                    "  Elaborated derivation: {}",
-                    printer::print_derivation(&derivation)
-                );
-            }
+            let derivation = elaborate_tactics(session, &theory_name, &conclusion, &ctx, tactics, &format!("lemma {}", name))?;
 
             session
                 .kernel
@@ -244,6 +204,39 @@ pub fn process_command(session: &mut Session, cmd: Command) -> Result<String, St
     }
 }
 
+/// Elaborate tactic commands into a verified derivation.
+fn elaborate_tactics(
+    session: &Session,
+    theory_name: &str,
+    goal: &Expr,
+    ctx: &Context,
+    tactics: Vec<TacticCmd>,
+    proof_name: &str,
+) -> Result<omega_core::derivation::Derivation, String> {
+    let theory = session
+        .kernel
+        .get_theory(theory_name)
+        .ok_or_else(|| format!("Unknown theory: {}", theory_name))?
+        .clone();
+
+    let tactics: Vec<Tactic> = tactics
+        .into_iter()
+        .map(convert_tactic)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let derivation = elaborate(&tactics, goal.clone(), ctx.clone(), &theory)
+        .map_err(|e| format!("Tactic elaboration failed for {}: {}", proof_name, e))?;
+
+    if session.verbose {
+        eprintln!(
+            "  Elaborated derivation: {}",
+            printer::print_derivation(&derivation)
+        );
+    }
+
+    Ok(derivation)
+}
+
 /// Shared logic for finishing a lemma: register derived rule + record as proven.
 fn finish_lemma(
     session: &mut Session,
@@ -252,8 +245,8 @@ fn finish_lemma(
     premises: Vec<Expr>,
     conclusion: Expr,
 ) -> Result<(), String> {
-    let mut rule = Rule::new(name.to_string(), premises, conclusion.clone());
-    rule.provenance = Some(format!("lemma:{}", name));
+    let rule = Rule::new(name.to_string(), premises, conclusion.clone())
+        .with_provenance(format!("lemma:{}", name));
     session
         .kernel
         .add_rule(theory_name, rule)
@@ -286,9 +279,9 @@ fn flatten_rope(expr: &Expr, buf: &mut String) {
 
 fn convert_tactic(tc: TacticCmd) -> Result<Tactic, String> {
     match tc {
-        TacticCmd::Apply(name) => Ok(Tactic::Apply(name)),
+        TacticCmd::Apply(name) => Ok(Tactic::Apply(name.into())),
         TacticCmd::Assumption => Ok(Tactic::Assumption),
-        TacticCmd::Intro(name) => Ok(Tactic::Intro(name)),
+        TacticCmd::Intro(name) => Ok(Tactic::Intro(name.map(Into::into))),
         TacticCmd::Exact(deriv) => Ok(Tactic::Exact(deriv)),
         TacticCmd::Auto(depth) => Ok(Tactic::Auto(depth.unwrap_or(5))),
         TacticCmd::Qed => Ok(Tactic::Assumption), // Qed is just a marker

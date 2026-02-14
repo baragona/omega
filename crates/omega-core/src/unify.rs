@@ -64,7 +64,7 @@ impl UnificationState {
     /// Create a fresh unification variable.
     pub fn fresh_uvar(&mut self, prefix: &str) -> UVar {
         self.fresh_counter += 1;
-        format!("{}${}", prefix, self.fresh_counter)
+        format!("{}${}", prefix, self.fresh_counter).into()
     }
 
     /// Create a fresh meta-expression.

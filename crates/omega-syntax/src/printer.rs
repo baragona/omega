@@ -7,12 +7,12 @@ use omega_core::theory::Theory;
 /// Print an expression as an S-expression string.
 pub fn print_expr(expr: &Expr) -> String {
     match expr {
-        Expr::Free(n) => n.clone(),
+        Expr::Free(n) => n.to_string(),
         Expr::Bound(i) => format!("#{}", i),
         Expr::Meta(n) => format!("?{}", n),
-        Expr::Sym(n) => n.clone(),
+        Expr::Sym(n) => n.to_string(),
         Expr::App(args) => {
-            let inner: Vec<String> = args.iter().map(|a| print_expr(a)).collect();
+            let inner: Vec<String> = args.iter().map(print_expr).collect();
             format!("({})", inner.join(" "))
         }
         Expr::Binder {
@@ -63,7 +63,7 @@ pub fn print_derivation(deriv: &Derivation) -> String {
             if premises.is_empty() {
                 format!("({})", rule_name)
             } else {
-                let args: Vec<String> = premises.iter().map(|p| print_derivation(p)).collect();
+                let args: Vec<String> = premises.iter().map(print_derivation).collect();
                 format!("({} {})", rule_name, args.join(" "))
             }
         }
@@ -72,11 +72,11 @@ pub fn print_derivation(deriv: &Derivation) -> String {
 
 /// Print a rule.
 pub fn print_rule(rule: &Rule) -> String {
-    let premises: Vec<String> = rule.premises.iter().map(|p| print_expr(p)).collect();
-    let conclusion = print_expr(&rule.conclusion);
+    let premises: Vec<String> = rule.premises().iter().map(print_expr).collect();
+    let conclusion = print_expr(rule.conclusion());
 
-    let mut s = format!("(rule {}", rule.name);
-    if !rule.premises.is_empty() {
+    let mut s = format!("(rule {}", rule.name());
+    if !rule.premises().is_empty() {
         s.push_str(&format!("\n    :premises ({})", premises.join(" ")));
     }
     s.push_str(&format!("\n    :conclusion {})", conclusion));
@@ -92,14 +92,14 @@ pub fn print_theory_summary(theory: &Theory) -> String {
     s.push_str(&format!("  Rules: {}\n", theory.rules().len()));
 
     for sort in theory.sorts() {
-        s.push_str(&format!("  sort {}\n", sort.name));
+        s.push_str(&format!("  sort {}\n", sort.name()));
     }
     for ctor in theory.constructors() {
-        s.push_str(&format!("  constructor {} : {}\n", ctor.name, print_expr(&ctor.ty)));
+        s.push_str(&format!("  constructor {} : {}\n", ctor.name(), print_expr(ctor.ty())));
     }
     for rule in theory.rules() {
-        let reflected = if rule.reflected { " [reflected]" } else { "" };
-        s.push_str(&format!("  rule {}{}\n", rule.name, reflected));
+        let reflected = if rule.reflected() { " [reflected]" } else { "" };
+        s.push_str(&format!("  rule {}{}\n", rule.name(), reflected));
     }
 
     s

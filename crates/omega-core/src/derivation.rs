@@ -24,9 +24,9 @@ pub enum Derivation {
 }
 
 /// Context for proof checking: a list of assumed judgments.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Context {
-    pub assumptions: Vec<Expr>,
+    assumptions: Vec<Expr>,
 }
 
 impl Context {
@@ -42,6 +42,11 @@ impl Context {
 
     pub fn push(&mut self, assumption: Expr) {
         self.assumptions.push(assumption);
+    }
+
+    /// Read-only access to the assumption list.
+    pub fn assumptions(&self) -> &[Expr] {
+        &self.assumptions
     }
 }
 
@@ -90,9 +95,9 @@ pub fn normalize_expr(expr: &Expr, rewrites: &[RewriteRule], fuel: &mut usize) -
         }
         let mut matched = false;
         for rw in rewrites {
-            if let Ok(subst) = match_expr(&rw.lhs, &current) {
+            if let Ok(subst) = match_expr(rw.lhs(), &current) {
                 *fuel = fuel.saturating_sub(1);
-                let replaced = apply_meta_subst(&rw.rhs, &subst);
+                let replaced = apply_meta_subst(rw.rhs(), &subst);
                 current = normalize_expr(&replaced, rewrites, fuel);
                 matched = true;
                 break;

@@ -4,7 +4,7 @@
 /// reconstructs a Derivation tree that can be verified by the kernel.
 use omega_core::binding::apply_meta_subst;
 use omega_core::derivation::{Context, Derivation};
-use omega_core::expr::Expr;
+use omega_core::expr::{Expr, Name};
 use omega_core::pattern::match_expr;
 use omega_core::theory::Theory;
 
@@ -68,7 +68,7 @@ fn reconstruct(
     goal: &Expr,
     context: &Context,
     theory: &Theory,
-    subst: &std::collections::HashMap<String, Expr>,
+    subst: &std::collections::HashMap<Name, Expr>,
 ) -> Result<Derivation, String> {
     // Simple reconstruction: walk the steps and build the tree
     let mut step_iter = steps.iter().peekable();
@@ -80,7 +80,7 @@ fn reconstruct_goal<'a>(
     goal: &Expr,
     context: &Context,
     theory: &Theory,
-    subst: &std::collections::HashMap<String, Expr>,
+    subst: &std::collections::HashMap<Name, Expr>,
 ) -> Result<Derivation, String> {
     let step = steps.next().ok_or("ran out of tactic steps during reconstruction")?;
 
@@ -92,7 +92,7 @@ fn reconstruct_goal<'a>(
                 .ok_or_else(|| format!("unknown rule: {}", rule_name))?;
 
             let goal_resolved = apply_meta_subst(goal, subst);
-            let local_subst = match_expr(&rule.conclusion, &goal_resolved)
+            let local_subst = match_expr(rule.conclusion(), &goal_resolved)
                 .map_err(|e| format!("reconstruction: rule {} doesn't match: {}", rule_name, e))?;
 
             let mut merged_subst = subst.clone();
@@ -101,7 +101,7 @@ fn reconstruct_goal<'a>(
             }
 
             let mut premises = Vec::new();
-            for premise_pattern in &rule.premises {
+            for premise_pattern in rule.premises() {
                 let premise_goal = apply_meta_subst(premise_pattern, &merged_subst);
                 let sub_deriv =
                     reconstruct_goal(steps, &premise_goal, context, theory, &merged_subst)?;
@@ -134,31 +134,25 @@ mod tests {
     #[test]
     fn elaborate_with_implicit_args() {
         // Test that the tactic engine can handle rules with implicit arguments
-        let mut theory = Theory::new("EqLogic");
-        theory.add_sort(SortDecl {
-            name: "Tm".to_string(),
-        });
-        theory.add_constructor(ConstructorDecl {
-            name: "eq".to_string(),
-            ty: Expr::sym("Tm"),
-
-        });
-        theory.add_judgment(JudgmentForm {
-            name: "proves".to_string(),
-            pattern: Expr::app(vec![Expr::sym("proves"), Expr::meta("P")]),
-            constraints: vec![],
-        });
+        let mut tb = Theory::builder("EqLogic");
+        tb.add_sort(SortDecl::new("Tm"));
+        tb.add_constructor(ConstructorDecl::new("eq", Expr::sym("Tm")));
+        tb.add_judgment(JudgmentForm::new(
+            "proves",
+            Expr::app(vec![Expr::sym("proves"), Expr::meta("P")]),
+            vec![],
+        ));
 
         // eq-refl: proves (eq ?a ?a) with ?a implicit
-        theory.push_rule(Rule::new(
+        tb.push_rule(Rule::new(
             "eq-refl",
             vec![],
             Expr::app(vec![
                 Expr::sym("proves"),
                 Expr::app(vec![Expr::sym("eq"), Expr::meta("a"), Expr::meta("a")]),
             ]),
-        ).with_implicit(vec!["a".to_string()]));
-        theory.compute_hash();
+        ).with_implicit(vec!["a".into()]));
+        let theory = tb.build().unwrap();
 
         let goal = Expr::app(vec![
             Expr::sym("proves"),

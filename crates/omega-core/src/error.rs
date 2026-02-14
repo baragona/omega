@@ -4,20 +4,54 @@ use std::fmt;
 use crate::expr::{Expr, Name};
 use crate::pattern::MatchError;
 
+/// The kind of a named declaration (for error reporting).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeclKind {
+    Sort,
+    Constructor,
+    Rule,
+    Judgment,
+    BindingSpec,
+    Rewrite,
+    Theory,
+}
+
+impl fmt::Display for DeclKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DeclKind::Sort => write!(f, "sort"),
+            DeclKind::Constructor => write!(f, "constructor"),
+            DeclKind::Rule => write!(f, "rule"),
+            DeclKind::Judgment => write!(f, "judgment"),
+            DeclKind::BindingSpec => write!(f, "binding-spec"),
+            DeclKind::Rewrite => write!(f, "rewrite"),
+            DeclKind::Theory => write!(f, "theory"),
+        }
+    }
+}
+
 /// All errors that can originate from the kernel.
 #[derive(Debug, Clone)]
 pub enum OmegaError {
     // --- Theory errors ---
     /// A named declaration was duplicated.
-    DuplicateName { kind: String, name: Name },
+    DuplicateName { kind: DeclKind, name: Name },
     /// A named declaration was not found.
-    UnknownName { kind: String, name: Name },
+    UnknownName { kind: DeclKind, name: Name },
     /// Theory has no rules.
     EmptyTheory(Name),
 
     // --- Derivation errors ---
-    /// The derivation tree is malformed (catch-all for rare cases).
-    MalformedDerivation(String),
+    /// A rewrite rule's RHS references a meta-variable not present in its LHS.
+    RewriteMetaEscape { rule: Name, meta: Name },
+    /// A parameterized theory was instantiated with the wrong number of arguments.
+    ParamCountMismatch { theory: Name, expected: usize, got: usize },
+    /// Case analysis on a variable not in scope.
+    UnknownScrutinee { var: Name },
+    /// A derivation variable is not in scope.
+    UnknownDerivationVar { var: Name },
+    /// Metatheorem has no existential witness to reflect.
+    NoExistential { metatheorem: Name },
     /// An assumption index is out of bounds.
     AssumptionIndexOutOfBounds { index: usize, count: usize },
     /// A premise sub-derivation failed during proof checking.
@@ -77,8 +111,6 @@ pub enum OmegaError {
     },
 
     // --- General ---
-    /// Internal error (should never happen in correct code).
-    Internal(String),
 }
 
 impl fmt::Display for OmegaError {
@@ -91,7 +123,21 @@ impl fmt::Display for OmegaError {
                 write!(f, "unknown {}: {}", kind, name)
             }
             OmegaError::EmptyTheory(n) => write!(f, "theory {} has no rules", n),
-            OmegaError::MalformedDerivation(s) => write!(f, "malformed derivation: {}", s),
+            OmegaError::RewriteMetaEscape { rule, meta } => {
+                write!(f, "rewrite rule {}: RHS meta-variable ?{} not in LHS", rule, meta)
+            }
+            OmegaError::ParamCountMismatch { theory, expected, got } => {
+                write!(f, "theory {} expects {} parameters, got {}", theory, expected, got)
+            }
+            OmegaError::UnknownScrutinee { var } => {
+                write!(f, "case analysis on unknown variable {}", var)
+            }
+            OmegaError::UnknownDerivationVar { var } => {
+                write!(f, "unknown derivation variable {}", var)
+            }
+            OmegaError::NoExistential { metatheorem } => {
+                write!(f, "metatheorem {} has no existential (nothing to reflect)", metatheorem)
+            }
             OmegaError::AssumptionIndexOutOfBounds { index, count } => {
                 write!(f, "assumption index {} out of bounds ({} assumptions)", index, count)
             }
@@ -191,7 +237,6 @@ impl fmt::Display for OmegaError {
                     theory, metatheorem
                 )
             }
-            OmegaError::Internal(s) => write!(f, "internal error: {}", s),
         }
     }
 }

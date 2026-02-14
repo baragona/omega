@@ -5,7 +5,7 @@
 /// 2. The reflected rule records its provenance
 /// 3. Reflected rules cannot be used in their own metatheorem proof
 /// 4. Staleness detection via theory content hash
-use crate::error::{OmegaError, Result};
+use crate::error::{DeclKind, OmegaError, Result};
 use crate::expr::{Expr, Name};
 use crate::judgment::Rule;
 use crate::metatheorem::MetaTheorem;
@@ -38,13 +38,13 @@ pub fn reflect(
     if theory.name() != metatheorem.theory_name {
         return Err(OmegaError::RuleNotInTheory {
             rule: metatheorem.name.clone(),
-            theory: theory.name().to_string(),
+            theory: theory.name().into(),
         });
     }
 
     // Check that the rule name doesn't already exist
     if theory.get_rule(rule_name).is_some() {
-        return Err(OmegaError::DuplicateName { kind: "rule".into(), name: rule_name.to_string() });
+        return Err(OmegaError::DuplicateName { kind: DeclKind::Rule, name: rule_name.into() });
     }
 
     // Build the rule from the metatheorem's forall/exists
@@ -53,22 +53,22 @@ pub fn reflect(
         metatheorem.exists[0].1.clone()
     } else if metatheorem.exists.is_empty() {
         // A metatheorem with no existential is weird but handle it
-        return Err(OmegaError::MalformedDerivation(
-            "metatheorem has no existential (nothing to reflect)".to_string(),
-        ));
+        return Err(OmegaError::NoExistential {
+            metatheorem: metatheorem.name.clone(),
+        });
     } else {
         // Multiple existentials: for now, take the first one
         metatheorem.exists[0].1.clone()
     };
 
-    let mut rule = Rule::new(rule_name, premises, conclusion);
-    rule.reflected = true;
-    rule.provenance = Some(metatheorem.name.clone());
+    let rule = Rule::new(rule_name, premises, conclusion)
+        .with_reflected()
+        .with_provenance(metatheorem.name.clone());
 
     let record = ReflectionRecord {
         metatheorem_name: metatheorem.name.clone(),
-        rule_name: rule_name.to_string(),
-        theory_name: theory.name().to_string(),
+        rule_name: rule_name.into(),
+        theory_name: theory.name().into(),
         theory_hash: theory.content_hash(),
     };
 
@@ -98,8 +98,8 @@ pub fn check_no_self_strengthening(
     let reflected_rules: Vec<&str> = theory
         .rules()
         .iter()
-        .filter(|r| r.reflected)
-        .map(|r| r.name.as_str())
+        .filter(|r| r.reflected())
+        .map(|r| r.name().as_str())
         .collect();
 
     check_proof_no_reflected(&metatheorem.proof, &reflected_rules, &metatheorem.name)
@@ -118,7 +118,7 @@ fn check_proof_no_reflected(
                 if reflected_rules.contains(&case.rule_name.as_str()) {
                     return Err(OmegaError::SelfStrengthening {
                         reflected_rule: case.rule_name.clone(),
-                        metatheorem: metatheorem_name.to_string(),
+                        metatheorem: metatheorem_name.into(),
                     });
                 }
                 check_proof_no_reflected(&case.body, reflected_rules, metatheorem_name)?;
@@ -129,7 +129,7 @@ fn check_proof_no_reflected(
             if reflected_rules.contains(&rule_name.as_str()) {
                 return Err(OmegaError::SelfStrengthening {
                     reflected_rule: rule_name.clone(),
-                    metatheorem: metatheorem_name.to_string(),
+                    metatheorem: metatheorem_name.into(),
                 });
             }
             for arg in args {
@@ -187,9 +187,9 @@ mod tests {
         };
 
         let (rule, record) = reflect(&mt, "proves/and-comm", &theory).unwrap();
-        assert_eq!(rule.name, "proves/and-comm");
-        assert!(rule.reflected);
-        assert_eq!(rule.provenance, Some("and-comm".to_string()));
+        assert_eq!(rule.name(), "proves/and-comm");
+        assert!(rule.reflected());
+        assert_eq!(rule.provenance(), Some(&Name::from("and-comm")));
         assert_eq!(record.theory_name, "PropLogic");
     }
 

@@ -28,7 +28,7 @@ pub enum Tactic {
 
 impl Tactic {
     pub fn apply(rule: &str) -> Self {
-        Tactic::Apply(rule.to_string())
+        Tactic::Apply(rule.into())
     }
 
     pub fn auto(depth: usize) -> Self {

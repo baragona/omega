@@ -4,10 +4,101 @@
 /// - Bound variables are de Bruijn indices (structural alpha-equivalence)
 /// - Free variables are named (readable error messages)
 /// - Meta-variables are named with `?` prefix (used in rule patterns)
+use std::borrow::Borrow;
 use std::fmt;
+use std::ops::Deref;
+use std::sync::Arc;
 
 /// A name for free variables and identifiers.
-pub type Name = String;
+/// Wraps `Arc<str>` for O(1) cloning.
+#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Name(Arc<str>);
+
+impl Name {
+    /// Create a name from anything string-like.
+    pub fn new(s: impl Into<String>) -> Self {
+        let s = s.into();
+        Name(Arc::from(s.as_str()))
+    }
+
+    /// View as a string slice.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Deref for Name {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Borrow<str> for Name {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AsRef<str> for Name {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for Name {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl fmt::Debug for Name {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl From<&str> for Name {
+    fn from(s: &str) -> Self {
+        Name(Arc::from(s))
+    }
+}
+
+impl From<String> for Name {
+    fn from(s: String) -> Self {
+        Name(Arc::from(s.as_str()))
+    }
+}
+
+impl PartialEq<str> for Name {
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl PartialEq<&str> for Name {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl PartialEq<String> for Name {
+    fn eq(&self, other: &String) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl PartialEq<Name> for str {
+    fn eq(&self, other: &Name) -> bool {
+        self == other.as_str()
+    }
+}
+
+impl PartialEq<Name> for &str {
+    fn eq(&self, other: &Name) -> bool {
+        *self == other.as_str()
+    }
+}
 
 /// De Bruijn index for bound variables (0-based, counting from the innermost binder).
 pub type DeBruijnIndex = usize;
@@ -56,17 +147,17 @@ pub const ARROW: &str = "->";
 impl Expr {
     /// Convenience: create a symbol.
     pub fn sym(s: &str) -> Expr {
-        Expr::Sym(s.to_string())
+        Expr::Sym(s.into())
     }
 
     /// Convenience: create a free variable.
     pub fn free(s: &str) -> Expr {
-        Expr::Free(s.to_string())
+        Expr::Free(s.into())
     }
 
     /// Convenience: create a meta-variable.
     pub fn meta(s: &str) -> Expr {
-        Expr::Meta(s.to_string())
+        Expr::Meta(s.into())
     }
 
     /// Convenience: create an application.
@@ -89,27 +180,30 @@ impl Expr {
         }
     }
 
-    /// Collect all meta-variable names in this expression.
+    /// Collect all meta-variable names in this expression (insertion order, deduplicated).
     pub fn meta_vars(&self) -> Vec<Name> {
+        let mut seen = std::collections::HashSet::new();
         let mut vars = Vec::new();
-        self.collect_metas(&mut vars);
-        vars.sort();
-        vars.dedup();
+        self.collect_metas(&mut vars, &mut seen);
         vars
     }
 
-    fn collect_metas(&self, acc: &mut Vec<Name>) {
+    fn collect_metas(&self, acc: &mut Vec<Name>, seen: &mut std::collections::HashSet<Name>) {
         match self {
-            Expr::Meta(n) => acc.push(n.clone()),
+            Expr::Meta(n) => {
+                if seen.insert(n.clone()) {
+                    acc.push(n.clone());
+                }
+            }
             Expr::Free(_) | Expr::Bound(_) | Expr::Sym(_) => {}
             Expr::App(args) => {
                 for a in args {
-                    a.collect_metas(acc);
+                    a.collect_metas(acc, seen);
                 }
             }
             Expr::Binder { ty, body, .. } => {
-                ty.collect_metas(acc);
-                body.collect_metas(acc);
+                ty.collect_metas(acc, seen);
+                body.collect_metas(acc, seen);
             }
         }
     }

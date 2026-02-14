@@ -41,7 +41,7 @@ pub fn auto_search(
 
     // Try each rule
     for rule in theory.rules() {
-        let tactic = Tactic::Apply(rule.name.clone());
+        let tactic = Tactic::Apply(rule.name().clone());
         if let Ok(new_state) = state.apply_tactic(&tactic, theory) {
             if new_state.is_complete() {
                 return Ok((new_state, vec![tactic]));
