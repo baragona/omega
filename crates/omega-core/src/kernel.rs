@@ -8,7 +8,7 @@
 /// driver level — it's proof engineering, not mathematical expressiveness.
 use std::collections::HashMap;
 
-use crate::derivation::{self, Context, Derivation};
+use crate::derivation::{Context, Derivation};
 use crate::error::{OmegaError, Result};
 use crate::expr::Name;
 use crate::expr::Expr;
@@ -24,8 +24,6 @@ pub struct Kernel {
     theories: HashMap<Name, Theory>,
     /// Verified metatheorems, keyed by name.
     verified_metatheorems: HashMap<Name, MetaTheorem>,
-    /// Use the interned (hash-consed) derivation checker for O(1) equality.
-    use_interned: bool,
     /// Cached interned theories for O(1) equality during proof checking.
     interned_cache: HashMap<Name, interned_check::InternedTheory>,
 }
@@ -36,14 +34,8 @@ impl Kernel {
         Kernel {
             theories: HashMap::new(),
             verified_metatheorems: HashMap::new(),
-            use_interned: true,
             interned_cache: HashMap::new(),
         }
-    }
-
-    /// Set whether to use the interned (hash-consed) derivation checker.
-    pub fn set_use_interned(&mut self, value: bool) {
-        self.use_interned = value;
     }
 
     /// Operation 1: Register and validate a theory.
@@ -51,10 +43,8 @@ impl Kernel {
         theory.validate()?;
 
         let name = theory.name.clone();
-        if self.use_interned {
-            self.interned_cache
-                .insert(name.clone(), interned_check::InternedTheory::new(&theory));
-        }
+        self.interned_cache
+            .insert(name.clone(), interned_check::InternedTheory::new(&theory));
         self.theories.insert(name, theory);
         Ok(())
     }
@@ -72,16 +62,11 @@ impl Kernel {
             .get(theory_name)
             .ok_or_else(|| OmegaError::UnknownName { kind: "theory".into(), name: theory_name.to_string() })?;
 
-        if self.use_interned {
-            // Use cached InternedTheory for amortized O(1) rule interning
-            if let Some(cached) = self.interned_cache.get_mut(theory_name) {
-                cached.check(goal, deriv, ctx)
-            } else {
-                // Fallback: create a fresh one (shouldn't happen if registered properly)
-                interned_check::check_derivation_interned(theory, goal, deriv, ctx)
-            }
+        if let Some(cached) = self.interned_cache.get_mut(theory_name) {
+            cached.check(goal, deriv, ctx)
         } else {
-            derivation::check_derivation(theory, goal, deriv, ctx)
+            // Fallback: create a fresh one (shouldn't happen if registered properly)
+            interned_check::check_derivation_interned(theory, goal, deriv, ctx)
         }
     }
 
@@ -111,10 +96,8 @@ impl Kernel {
             .get_mut(theory_name)
             .ok_or_else(|| OmegaError::UnknownName { kind: "theory".into(), name: theory_name.to_string() })?;
 
-        if self.use_interned {
-            if let Some(cached) = self.interned_cache.get_mut(theory_name) {
-                cached.add_rule(&rule);
-            }
+        if let Some(cached) = self.interned_cache.get_mut(theory_name) {
+            cached.add_rule(&rule);
         }
         theory.add_rule(rule)?;
         Ok(())

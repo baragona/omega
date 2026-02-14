@@ -61,7 +61,8 @@ pub struct Theory {
     /// Context mode: structural (default) or affine (at-most-once usage).
     pub context_mode: ContextMode,
     /// A hash of the theory content for staleness detection.
-    pub content_hash: u64,
+    /// Private: use `content_hash()` accessor. Recomputed by `compute_hash()`.
+    content_hash: u64,
     /// Import directives (resolved at registration time).
     pub imports: Vec<Import>,
     /// Theory parameters: (name, sort/type). Empty for non-parameterized theories.
@@ -165,6 +166,11 @@ impl Theory {
             }
         }
         Ok(())
+    }
+
+    /// Get the content hash for staleness detection.
+    pub fn content_hash(&self) -> u64 {
+        self.content_hash
     }
 
     /// Look up a rule by name.

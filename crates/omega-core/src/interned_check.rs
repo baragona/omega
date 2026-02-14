@@ -680,7 +680,7 @@ fn infer_conclusion_h(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::derivation::{check_derivation, Context, Derivation};
+    use crate::derivation::{Context, Derivation};
     use crate::expr::Expr;
     use crate::judgment::{ConstructorDecl, JudgmentForm, Rule, SortDecl};
     use crate::theory::Theory;
@@ -752,7 +752,6 @@ mod tests {
             Expr::app(vec![Expr::sym("proves"), Expr::free("q")]),
         ]);
 
-        assert!(check_derivation(&theory, &goal, &derivation, &ctx).is_ok());
         assert!(check_derivation_interned(&theory, &goal, &derivation, &ctx).is_ok());
     }
 
@@ -781,7 +780,6 @@ mod tests {
             ],
         };
 
-        assert!(check_derivation(&theory, &goal, &derivation, &ctx).is_ok());
         assert!(check_derivation_interned(&theory, &goal, &derivation, &ctx).is_ok());
     }
 
@@ -801,7 +799,6 @@ mod tests {
             Expr::app(vec![Expr::sym("proves"), Expr::free("p")]),
         ]);
 
-        assert!(check_derivation(&theory, &goal, &derivation, &ctx).is_err());
         assert!(check_derivation_interned(&theory, &goal, &derivation, &ctx).is_err());
     }
 }

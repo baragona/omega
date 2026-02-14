@@ -150,7 +150,16 @@ pub fn process_command(session: &mut Session, cmd: Command) -> Result<String, St
                 .kernel
                 .get_theory(&mt.theory_name)
                 .ok_or_else(|| format!("Reflection failed: unknown theory: {}", mt.theory_name))?;
-            let (rule, _record) = reflection::reflect(&mt, &rule_name, th)
+            let (rule, record) = reflection::reflect(&mt, &rule_name, th)
+                .map_err(|e| format!("Reflection failed: {}", e))?;
+            // Check that the theory hasn't changed since the metatheorem was proven.
+            // This prevents stale reflections where the metatheorem's assumptions
+            // no longer hold due to theory modifications.
+            let th = session
+                .kernel
+                .get_theory(&mt.theory_name)
+                .ok_or_else(|| format!("Reflection failed: unknown theory: {}", mt.theory_name))?;
+            reflection::check_reflection_validity(&record, th)
                 .map_err(|e| format!("Reflection failed: {}", e))?;
             session
                 .kernel

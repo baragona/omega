@@ -69,7 +69,7 @@ pub fn reflect(
         metatheorem_name: metatheorem.name.clone(),
         rule_name: rule_name.to_string(),
         theory_name: theory.name.clone(),
-        theory_hash: theory.content_hash,
+        theory_hash: theory.content_hash(),
     };
 
     Ok((rule, record))
@@ -80,7 +80,7 @@ pub fn check_reflection_validity(
     record: &ReflectionRecord,
     theory: &Theory,
 ) -> Result<()> {
-    if theory.content_hash != record.theory_hash {
+    if theory.content_hash() != record.theory_hash {
         return Err(OmegaError::StaleReflection {
             metatheorem: record.metatheorem_name.clone(),
             theory: record.theory_name.clone(),
@@ -231,7 +231,7 @@ mod tests {
     #[test]
     fn detect_stale_reflection() {
         let mut theory = make_prop_logic();
-        let hash_before = theory.content_hash;
+        let hash_before = theory.content_hash();
 
         let record = ReflectionRecord {
             metatheorem_name: "test".to_string(),

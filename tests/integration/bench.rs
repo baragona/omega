@@ -1,4 +1,4 @@
-/// Benchmark comparison: tree-based vs interned derivation checker.
+/// Benchmark: interned derivation checker performance.
 use std::time::Instant;
 
 use omega_core::derivation::{Context, Derivation};
@@ -14,7 +14,7 @@ use omega_driver::session::Session;
 // ---------------------------------------------------------------------------
 
 #[test]
-fn bench_zfc_interned_vs_tree() {
+fn bench_zfc() {
     let path = "examples/zfc.omega";
     let iterations = 20;
 
@@ -25,35 +25,13 @@ fn bench_zfc_interned_vs_tree() {
     let start = Instant::now();
     for _ in 0..iterations {
         let mut session = Session::new();
-        session.kernel.set_use_interned(true);
         batch::process_file_path(&mut session, path).unwrap();
     }
-    let interned_total = start.elapsed();
-
-    let start = Instant::now();
-    for _ in 0..iterations {
-        let mut session = Session::new();
-        session.kernel.set_use_interned(false);
-        batch::process_file_path(&mut session, path).unwrap();
-    }
-    let tree_total = start.elapsed();
-
-    let interned_avg = interned_total / iterations;
-    let tree_avg = tree_total / iterations;
+    let total = start.elapsed();
+    let avg = total / iterations;
 
     eprintln!("\n--- ZFC Benchmark ({} iterations) ---", iterations);
-    eprintln!("  Interned checker (cached): {:?} avg", interned_avg);
-    eprintln!("  Tree checker:              {:?} avg", tree_avg);
-    if tree_avg > interned_avg {
-        let speedup = tree_avg.as_nanos() as f64 / interned_avg.as_nanos() as f64;
-        eprintln!("  Speedup: {:.2}x faster with interning", speedup);
-    } else {
-        let ratio = interned_avg.as_nanos() as f64 / tree_avg.as_nanos() as f64;
-        eprintln!(
-            "  Ratio:   {:.2}x (tree faster — expected for small proofs)",
-            ratio
-        );
-    }
+    eprintln!("  Interned checker (cached): {:?} avg", avg);
     eprintln!("---");
 }
 
@@ -69,12 +47,10 @@ fn make_torture_theory() -> Theory {
     theory.constructors.push(ConstructorDecl {
         name: "z".into(),
         ty: Expr::sym("Nat"),
-
     });
     theory.constructors.push(ConstructorDecl {
         name: "s".into(),
         ty: Expr::app(vec![Expr::sym("->"), Expr::sym("Nat"), Expr::sym("Nat")]),
-
     });
     theory.constructors.push(ConstructorDecl {
         name: "add".into(),
@@ -84,7 +60,6 @@ fn make_torture_theory() -> Theory {
             Expr::sym("Nat"),
             Expr::sym("Nat"),
         ]),
-
     });
     theory.judgments.push(JudgmentForm {
         name: "eq".into(),
@@ -98,16 +73,6 @@ fn make_torture_theory() -> Theory {
     ));
     theory.compute_hash();
     theory
-}
-
-/// Build a term of depth k via doubling in tree form.
-/// At depth k, the tree has 3 * 2^k - 2 nodes.
-fn build_doubled_tree(depth: usize) -> Expr {
-    let mut term = Expr::sym("z");
-    for _ in 0..depth {
-        term = Expr::app(vec![Expr::sym("add"), term.clone(), term]);
-    }
-    term
 }
 
 /// Compute tree node count from depth (avoids O(2^k) traversal).
@@ -132,62 +97,14 @@ fn format_count(n: u64) -> String {
 }
 
 #[test]
-fn torture_interned_vs_tree() {
+fn torture_interned() {
     let theory = make_torture_theory();
     let eq_refl = Derivation::RuleApp {
         rule_name: "eq-refl".into(),
         premises: vec![],
     };
-    let empty_ctx = Context::new();
 
     eprintln!("\n=== Torture Test: Exponential Sharing via Doubling ===\n");
-
-    // ---------------------------------------------------------------
-    // Part 1: Same Expr input to both checkers (fair comparison)
-    // ---------------------------------------------------------------
-    eprintln!("Part 1: Tree-form Expr input (both checkers)");
-    eprintln!(
-        "{:<8} {:<14} {:<16} {:<16} {:<10}",
-        "Depth", "Tree nodes", "Tree check", "Interned check", "Speedup"
-    );
-
-    for &depth in &[10u32, 15, 18, 20] {
-        let big = build_doubled_tree(depth as usize);
-        let goal = Expr::app(vec![Expr::sym("eq"), big.clone(), big]);
-        let nodes = tree_node_count(depth);
-
-        // Tree checker
-        let start = Instant::now();
-        omega_core::derivation::check_derivation(&theory, &goal, &eq_refl, &empty_ctx).unwrap();
-        let tree_time = start.elapsed();
-
-        // Interned checker (includes interning the O(2^k) Expr tree)
-        let mut cached = InternedTheory::new(&theory);
-        let start = Instant::now();
-        cached.check(&goal, &eq_refl, &empty_ctx).unwrap();
-        let interned_time = start.elapsed();
-
-        let speedup = if interned_time.as_nanos() > 0 {
-            tree_time.as_nanos() as f64 / interned_time.as_nanos() as f64
-        } else {
-            f64::INFINITY
-        };
-
-        eprintln!(
-            "{:<8} {:<14} {:<16?} {:<16?} {:.1}x",
-            depth,
-            format_count(nodes),
-            tree_time,
-            interned_time,
-            speedup
-        );
-    }
-
-    // ---------------------------------------------------------------
-    // Part 2: Direct arena construction (only interned)
-    // The tree checker can't even construct the input at these depths.
-    // ---------------------------------------------------------------
-    eprintln!("\nPart 2: Direct arena construction (interned only)");
     eprintln!(
         "{:<8} {:<14} {:<14} {:<16}",
         "Depth", "Tree nodes*", "Arena nodes", "Check time"
@@ -240,12 +157,10 @@ fn make_peano_compute_theory() -> Theory {
     theory.constructors.push(ConstructorDecl {
         name: "s".into(),
         ty: Expr::app(vec![Expr::sym("->"), Expr::sym("Nat"), Expr::sym("Nat")]),
-
     });
     theory.constructors.push(ConstructorDecl {
         name: "add".into(),
         ty: Expr::app(vec![Expr::sym("->"), Expr::sym("Nat"), Expr::sym("Nat"), Expr::sym("Nat")]),
-
     });
     theory.judgments.push(JudgmentForm {
         name: "eq".into(),
@@ -290,31 +205,19 @@ fn bench_reduction() {
     let empty_ctx = Context::new();
 
     eprintln!("\n=== Reduction Benchmark: n + n = 2n via eq-refl ===\n");
-    eprintln!(
-        "{:<8} {:<16} {:<16}",
-        "n", "Interned check", "Tree check"
-    );
+    eprintln!("{:<8} {:<16}", "n", "Interned check");
 
     for &n in &[5, 10, 20, 50, 100] {
         let lhs = Expr::app(vec![Expr::sym("add"), peano_num(n), peano_num(n)]);
         let rhs = peano_num(n * 2);
         let goal = Expr::app(vec![Expr::sym("eq"), lhs, rhs]);
 
-        // Interned checker
         let mut cached = InternedTheory::new(&theory);
         let start = Instant::now();
         cached.check(&goal, &eq_refl, &empty_ctx).unwrap();
         let interned_time = start.elapsed();
 
-        // Tree checker
-        let start = Instant::now();
-        omega_core::derivation::check_derivation(&theory, &goal, &eq_refl, &empty_ctx).unwrap();
-        let tree_time = start.elapsed();
-
-        eprintln!(
-            "{:<8} {:<16?} {:<16?}",
-            n, interned_time, tree_time
-        );
+        eprintln!("{:<8} {:<16?}", n, interned_time);
     }
     eprintln!("\n=== End Reduction Benchmark ===");
 }

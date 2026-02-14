@@ -30,17 +30,20 @@ pub fn elaborate(
             break;
         }
 
-        let old_goal_count = state.goals.len();
-        let old_goal = state.goals[0].target.clone();
-
-        state = state.apply_tactic(tactic, theory)?;
-
-        steps.push(TacticStep {
-            tactic: tactic.clone(),
-            goal: old_goal,
-            new_goal_count: state.goals.len(),
-            old_goal_count,
-        });
+        // Option B desugaring: Auto is expanded into its primitive trace
+        // so reconstruction never sees Tactic::Auto — only Apply/Assumption.
+        if let Tactic::Auto(depth) = tactic {
+            let (new_state, trace) = crate::search::auto_search(&state, theory, *depth)?;
+            state = new_state;
+            for t in trace {
+                steps.push(TacticStep { tactic: t });
+            }
+        } else {
+            state = state.apply_tactic(tactic, theory)?;
+            steps.push(TacticStep {
+                tactic: tactic.clone(),
+            });
+        }
     }
 
     if !state.is_complete() {
@@ -57,12 +60,6 @@ pub fn elaborate(
 #[derive(Debug)]
 struct TacticStep {
     tactic: Tactic,
-    #[allow(dead_code)]
-    goal: Expr,
-    #[allow(dead_code)]
-    new_goal_count: usize,
-    #[allow(dead_code)]
-    old_goal_count: usize,
 }
 
 /// Reconstruct a derivation tree from tactic steps.
@@ -117,12 +114,6 @@ fn reconstruct_goal<'a>(
             })
         }
         Tactic::Exact(deriv) => Ok(deriv.clone()),
-        Tactic::Auto(_) => {
-            // Auto was already resolved during the forward pass;
-            // for reconstruction we'd need to record what auto did.
-            // For now, return a placeholder.
-            Ok(Derivation::Assumption)
-        }
         Tactic::Intro(_) => {
             // Intro modifies the context; the sub-derivation proves the new goal
             // For reconstruction, we need to wrap in the appropriate rule
@@ -230,6 +221,44 @@ mod tests {
             }
             _ => panic!("expected RuleApp"),
         }
+    }
+
+    #[test]
+    fn elaborate_auto_generates_kernel_checkable_proof() {
+        // Auto should find a multi-step proof and produce a derivation
+        // that the kernel can verify — not a placeholder.
+        let theory = make_prop_logic();
+
+        // Goal: prove (and p q) from assumptions (proves p) and (proves q)
+        // Requires: and-intro(assumption, assumption) — depth 2
+        let goal = Expr::app(vec![
+            Expr::sym("proves"),
+            Expr::app(vec![Expr::sym("and"), Expr::free("p"), Expr::free("q")]),
+        ]);
+
+        let ctx = Context::with_assumptions(vec![
+            Expr::app(vec![Expr::sym("proves"), Expr::free("p")]),
+            Expr::app(vec![Expr::sym("proves"), Expr::free("q")]),
+        ]);
+
+        let tactics = vec![Tactic::Auto(5)];
+        let deriv = elaborate(&tactics, goal.clone(), ctx.clone(), &theory).unwrap();
+
+        // The derivation must be a RuleApp (and-intro), not a bare Assumption
+        match &deriv {
+            Derivation::RuleApp { rule_name, premises } => {
+                assert_eq!(rule_name, "and-intro");
+                assert_eq!(premises.len(), 2);
+            }
+            _ => panic!("expected RuleApp from auto, got {:?}", deriv),
+        }
+
+        // Verify the kernel accepts this derivation
+        let mut kernel = omega_core::kernel::Kernel::new();
+        kernel.register_theory(theory).unwrap();
+        kernel
+            .check_derivation("PropLogic", &goal, &deriv, &ctx)
+            .expect("kernel should accept auto-elaborated proof");
     }
 
     #[test]

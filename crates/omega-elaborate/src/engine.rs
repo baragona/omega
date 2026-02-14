@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use omega_core::binding::apply_meta_subst;
 use omega_core::derivation::{Context, Derivation};
-use omega_core::expr::{Expr, Name};
+use omega_core::expr::Expr;
 use omega_core::pattern::{match_expr, Substitution};
 use omega_core::theory::Theory;
 use omega_core::unify::UnificationState;
@@ -26,30 +26,6 @@ pub struct ProofState {
     pub goals: Vec<Goal>,
     /// The meta-variable substitution accumulated so far.
     pub subst: Substitution,
-}
-
-/// Result of applying a tactic: either a new proof state or a completed derivation.
-pub enum TacticResult {
-    /// More goals remain.
-    Continue(ProofState, PartialDerivation),
-    /// The proof is complete.
-    Complete(Derivation),
-    /// The tactic failed.
-    Failed(String),
-}
-
-/// A partial derivation tree with holes for remaining goals.
-#[derive(Debug, Clone)]
-pub enum PartialDerivation {
-    /// A completed subtree.
-    Done(Derivation),
-    /// A hole that needs to be filled.
-    Hole(usize), // goal index
-    /// A rule application with partial sub-derivations.
-    RuleApp {
-        rule_name: Name,
-        premises: Vec<PartialDerivation>,
-    },
 }
 
 impl ProofState {
@@ -84,7 +60,10 @@ impl ProofState {
             Tactic::Assumption => self.apply_assumption(),
             Tactic::Intro(name) => self.apply_intro(name.as_deref(), theory),
             Tactic::Exact(deriv) => self.apply_exact(deriv),
-            Tactic::Auto(depth) => crate::search::auto_search(self, theory, *depth),
+            Tactic::Auto(depth) => {
+                let (state, _trace) = crate::search::auto_search(self, theory, *depth)?;
+                Ok(state)
+            }
             Tactic::Try(t) => {
                 match self.apply_tactic(t, theory) {
                     Ok(state) => Ok(state),
