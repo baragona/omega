@@ -1353,6 +1353,40 @@ fn zfc_honest_example() {
     assert!(results.iter().any(|r| r.contains("Lemma no-collapse-preserves: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma cardinal-preservation-aleph: VALID [DERIVED]")));
     assert!(results.iter().any(|r| r.contains("Lemma cohen-negates-ch: VALID [DERIVED]")));
+    // Phase 19 Wave 4: pipeline definition lemmas (auto-proved from imp-defs + mp)
+    // Gödel numbering pipeline (3)
+    assert!(results.iter().any(|r| r.contains("Lemma single-relation-gives-finite-language: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma finite-language-gives-enumerable-strings: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma enumerable-strings-give-godel-numbering: VALID [DERIVED]")));
+    // Birthday ordering pipeline (3)
+    assert!(results.iter().any(|r| r.contains("Lemma staged-hierarchy-gives-birthday: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma birthday-gives-ordinal-values: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma ordinal-birthdays-give-stage-ordering: VALID [DERIVED]")));
+    // Rasiowa-Sikorski pipeline (5)
+    assert!(results.iter().any(|r| r.contains("Lemma countable-dense-gives-listing: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma listing-gives-dense-enumeration: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma enum-gives-descending-chain: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma chain-gives-filter: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma filter-meets-all-dense: VALID [DERIVED]")));
+    // Delta-system → CCC pipeline (4)
+    assert!(results.iter().any(|r| r.contains("Lemma delta-system-has-common-root: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma common-root-gives-compatible-pairs: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma compatible-pairs-exclude-uncountable-antichain: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma no-uncountable-antichain-is-ccc: VALID [DERIVED]")));
+    // Cohen counting pipeline (4)
+    assert!(results.iter().any(|r| r.contains("Lemma cohen-generic-gives-slices: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma kappa-slices-give-kappa-reals: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma kappa-reals-are-subsets: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma kappa-subsets-give-card-ge: VALID [DERIVED]")));
+    // Antichain preserve pipeline (3)
+    assert!(results.iter().any(|r| r.contains("Lemma collapse-needs-uncountable-decisions: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma uncountable-decisions-need-large-antichain: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma blocked-collapse-gives-no-collapsing-map: VALID [DERIVED]")));
+    // CCC preservation pipeline (2)
+    assert!(results.iter().any(|r| r.contains("Lemma preserves-gives-aleph-values: VALID [DERIVED]")));
+    assert!(results.iter().any(|r| r.contains("Lemma aleph-values-give-gap: VALID [DERIVED]")));
+    // Cardinality pipeline (1)
+    assert!(results.iter().any(|r| r.contains("Lemma continuum-exceeds-gives-not-ch: VALID [DERIVED]")));
     // Cohen theorem (derived from forcing-preserves + generic + cohen-adds-reals)
     assert!(results.iter().any(|r| r.contains("Lemma cohen-theorem: VALID [DERIVED]")));
     // Tier 1: pure axiom derivations
@@ -1567,6 +1601,17 @@ fn coverage_unify_example() {
     assert!(results.iter().any(|r| r.contains("Proof tac-nested: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof tac-auto-impl: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof tac-mix: VALID")));
+}
+
+#[test]
+fn meta_freshen_example() {
+    let results = check_example("examples/meta-freshen.omega");
+    assert!(results.iter().any(|r| r.contains("Theory FreshenTest: registered OK")));
+    assert!(results.iter().any(|r| r.contains("Proof and-comm-auto: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof and-comm-explicit: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof nested-comm: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof elim-then-intro: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof deep-mixed: VALID")));
 }
 
 #[test]

@@ -1,0 +1,77 @@
+;;; Regression test for meta-variable freshening in tactic engine.
+;;;
+;;; Before the fix, applying two rules that share meta names (e.g. ?A, ?B)
+;;; would cross-contaminate: and-intro binds ?A=q, ?B=p, then and-elim-r
+;;; overwrites ?B with a different binding, corrupting the proof state.
+
+(theory FreshenTest
+  (sort Prop)
+  (constructor and : (-> Prop Prop Prop))
+  (constructor or  : (-> Prop Prop Prop))
+  (judgment (proves ?P) :where P : Prop)
+
+  (rule and-intro
+    :premises ((proves ?A) (proves ?B))
+    :conclusion (proves (and ?A ?B)))
+  (rule and-elim-l
+    :premises ((proves (and ?A ?B)))
+    :conclusion (proves ?A))
+  (rule and-elim-r
+    :premises ((proves (and ?A ?B)))
+    :conclusion (proves ?B))
+  (rule or-intro-l
+    :premises ((proves ?A))
+    :conclusion (proves (or ?A ?B)))
+  (rule or-intro-r
+    :premises ((proves ?B))
+    :conclusion (proves (or ?A ?B))))
+
+;;; 1. And-commutativity from compound assumption via auto.
+;;;    This was THE broken case: auto needs and-intro + and-elim-r + and-elim-l
+;;;    which all share ?A/?B. Without freshening, cross-contamination occurs.
+(proof and-comm-auto
+  :theory FreshenTest
+  :goal (proves (and q p))
+  :assumptions ((proves (and p q)))
+  :tactics (auto 5))
+
+;;; 2. Same proof via explicit tactics (also broken before the fix).
+(proof and-comm-explicit
+  :theory FreshenTest
+  :goal (proves (and q p))
+  :assumptions ((proves (and p q)))
+  :tactics
+    (apply and-intro)
+    (apply and-elim-r) assumption
+    (apply and-elim-l) assumption)
+
+;;; 3. Nested: prove (and (and q p) (and q p)) from (and p q).
+;;;    Requires three applications of and-intro, each needing fresh metas.
+(proof nested-comm
+  :theory FreshenTest
+  :goal (proves (and (and q p) (and q p)))
+  :assumptions ((proves (and p q)))
+  :tactics
+    (apply and-intro)
+    (apply and-intro) (apply and-elim-r) assumption (apply and-elim-l) assumption
+    (apply and-intro) (apply and-elim-r) assumption (apply and-elim-l) assumption)
+
+;;; 4. Mixed connectives: build (or p q) from (and p q) via elim + intro.
+;;;    Tests freshening across different rules that share ?A/?B.
+(proof elim-then-intro
+  :theory FreshenTest
+  :goal (proves (or p q))
+  :assumptions ((proves (and p q)))
+  :tactics
+    (apply or-intro-l) (apply and-elim-l) assumption)
+
+;;; 5. Deep nesting: (and (and q p) (or p q)) from (and p q).
+;;;    Exercises freshening counter advancing across sibling subgoals.
+(proof deep-mixed
+  :theory FreshenTest
+  :goal (proves (and (and q p) (or p q)))
+  :assumptions ((proves (and p q)))
+  :tactics
+    (apply and-intro)
+    (apply and-intro) (apply and-elim-r) assumption (apply and-elim-l) assumption
+    (apply or-intro-l) (apply and-elim-l) assumption)
