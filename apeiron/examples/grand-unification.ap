@@ -1,0 +1,50 @@
+;; Apeiron Example: The Grand Unification
+;; "Unified Mode" — Contextual + Oracle + Compute
+;;
+;; This verifies that the kernel correctly interleaves reduction and hashing.
+;;
+;; 1. We define a Context (Barrier).
+;; 2. We put a reducible term inside it.
+;; 3. We assert equality to the reduced form.
+;;
+;; IF the system is disjoint (Oracle only), this fails (because it sees App vs Result).
+;; IF the system is unified (Reduce -> Hash), this passes.
+
+[System UnifiedLogic
+  [@syntax [sort Term]]
+  [@binding contextual]
+  [@check oracle]
+]
+
+[Theory HybridCheck :in UnifiedLogic
+
+  [Scope A]
+
+  ;; === Test 1: The "Stuck" Case ===
+  ;; Scope A is NOT active. Physics cannot enter.
+  ;; The term remains [box A [app ...]].
+  ;; It should NOT equal [box A y].
+  [assert-neq blocked-reduction
+    [box A [app [lam x x] y]]
+    [box A y]
+  ]
+
+  ;; === Test 2: The "Transparent" Case (Oracle Power) ===
+  ;; Even though it is stuck, does the Oracle allow us to manually
+  ;; assert that the *structure* implies equality?
+  ;; NO. In a unified system, if A doesn't reduce to B, they aren't equal.
+  ;; This confirms we aren't hallucinating equalities.
+
+  ;; === Test 3: The "Active" Case ===
+  ;; We unlock Scope A.
+  ;; 1. Physics runs. It enters the box. It reduces (\x.x) y -> y.
+  ;; 2. Oracle runs. It hashes [box A y] and [box A y].
+  ;; 3. Result: Equal.
+
+  [with-scope A
+    [assert-eq active-reduction
+      [box A [app [lam x x] y]]
+      [box A y]
+    ]
+  ]
+]

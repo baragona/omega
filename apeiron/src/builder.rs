@@ -115,8 +115,8 @@ pub fn build_term(arena: &mut Arena, env: &mut BuildEnv, sexp: &Sexp) -> Port {
                 }
                 "app" | "App" if items.len() >= 3 => build_app(arena, env, &items[1], &items[2]),
 
-                // Barrier: [barrier ScopeName expr]
-                "barrier" if items.len() >= 3 => {
+                // Barrier: [barrier ScopeName expr] or [box ScopeName expr]
+                "barrier" | "box" if items.len() >= 3 => {
                     let scope_name = items[1].as_atom().unwrap_or("?");
                     let scope_id = env
                         .scope_ids
@@ -124,6 +124,10 @@ pub fn build_term(arena: &mut Arena, env: &mut BuildEnv, sexp: &Sexp) -> Port {
                         .copied()
                         .unwrap_or(0);
                     let barrier = arena.spawn(OpCode::Barrier { scope: scope_id });
+
+                    // Capture active pair count before building inner body
+                    let pairs_before = arena.active_pairs.len();
+
                     let inner_port = build_term(arena, env, &items[2]);
                     arena.connect(
                         barrier,
@@ -132,6 +136,21 @@ pub fn build_term(arena: &mut Arena, env: &mut BuildEnv, sexp: &Sexp) -> Port {
                         inner_port.slot,
                         WireColor::Blue,
                     );
+
+                    // If scope is inactive, suspend any active pairs created
+                    // during the inner build — the barrier is opaque.
+                    if !arena.active_scopes.contains(&scope_id) {
+                        let suspended: Vec<_> =
+                            arena.active_pairs.drain(pairs_before..).collect();
+                        if !suspended.is_empty() {
+                            arena
+                                .suspended_pairs
+                                .entry(scope_id)
+                                .or_default()
+                                .extend(suspended);
+                        }
+                    }
+
                     Port::new(barrier, 0, WireColor::Blue)
                 }
 

@@ -1,0 +1,87 @@
+;; Apeiron Example: Unified Logic
+;; "Normalize, Then Hash" — The Grand Unification
+;;
+;; Demonstrates the unified pipeline: Physics runs until stable (barriers
+;; block inner reduction), then Oracle compares stable normal forms.
+;;
+;; Key principle: You don't choose between Physics and Oracle. You run
+;; Physics UNTIL Stable, THEN Oracle.
+;;
+;; When a scope is inactive, its barrier is an opaque cryptographic seal:
+;; - No reduction fires inside the barrier body
+;; - Active pairs inside are suspended until the scope activates
+;; - The Oracle sees the frozen, unreduced structure
+;;
+;; When a scope is activated (with-scope), the seal opens:
+;; - Suspended pairs are released
+;; - The barrier dissolves when hit on its principal port
+;; - Physics resumes and reduces to normal form
+;;
+;; This is a genuine modal logic: Box is necessity, with-scope is unboxing.
+
+[System UnifiedLogic
+  [@syntax [sort Term]]
+  [@binding contextual]
+  [@check beta-reduction]
+]
+
+[Theory Unified :in UnifiedLogic
+
+  [Scope A]
+  [Scope B]
+
+  ;; === Test 1: Blocked reduction (inactive scope) ===
+  ;; [box A [app [lam x x] y]] != [box A y]
+  ;; Scope A is inactive → the App×Lam pair inside is suspended.
+  ;; Physics cannot enter the barrier. The LHS retains its unreduced form.
+  [assert-neq blocked-reduction
+    [box A [app [lam x x] y]]
+    [box A y]
+  ]
+
+  ;; === Test 2: Frozen structures are alpha-equal ===
+  ;; [box A [app [lam x x] y]] == [box B [app [lam z z] y]]
+  ;; Both barriers are opaque. The frozen structures are identical
+  ;; up to scope alpha (A→0 vs B→0) and variable alpha (x vs z).
+  [assert-eq alpha-blocked
+    [box A [app [lam x x] y]]
+    [box B [app [lam z z] y]]
+  ]
+
+  ;; === Test 3: Active scope allows reduction ===
+  ;; Activate scope A. Now the barrier dissolves and reduction proceeds.
+  ;; [app [box A [lam x x]] z] → z  (barrier dissolves, then beta fires)
+  [with-scope A
+    [assert-eq active-reduction
+      [app [box A [lam x x]] z]
+      z
+    ]
+  ]
+
+  ;; === Test 4: Scope activation releases inner pairs ===
+  ;; Inside with-scope A, building [box A [app [lam x x] y]] no longer
+  ;; suspends inner pairs — the scope is active, so reduction fires normally.
+  [with-scope A
+    [assert-eq inner-reduction-active
+      [box A [app [lam x x] y]]
+      [box A y]
+    ]
+  ]
+
+  ;; === Test 5: Unrelated scope stays blocked ===
+  ;; Activating A doesn't affect B's barriers.
+  [with-scope A
+    [assert-neq other-scope-still-blocked
+      [box B [app [lam x x] y]]
+      [box B y]
+    ]
+  ]
+
+  ;; === Test 6: Nested barrier with mixed scopes ===
+  ;; box(A, box(B, (\x.x) y)) — both scopes inactive
+  ;; Nothing reduces: the outer barrier blocks everything.
+  [assert-neq nested-blocked
+    [box A [box B [app [lam x x] y]]]
+    [box A [box B y]]
+  ]
+]

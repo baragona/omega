@@ -281,3 +281,106 @@ fn dup_sym_duplicates_constant() {
     let b_node = arena.get(b_port.target).unwrap();
     assert!(matches!(&b_node.kind, OpCode::Sym { name, .. } if name == "nat"));
 }
+
+// ================================================================
+// Example file tests
+// ================================================================
+
+fn run_example(path: &str) {
+    let source = std::fs::read_to_string(path)
+        .unwrap_or_else(|_| panic!("{} should exist", path));
+    let sexps = parser::parse(&source).unwrap();
+    let mut session = Session::new();
+
+    for sexp in &sexps {
+        match session.process(sexp) {
+            Ok(()) => {}
+            Err(e) => panic!("Error in {}: {}", path, e),
+        }
+    }
+
+    // Verify all assertions passed
+    let assert_lines: Vec<_> = session
+        .output
+        .iter()
+        .filter(|l| l.starts_with("[ASSERT]"))
+        .collect();
+    for line in &assert_lines {
+        assert!(line.contains("passed"), "assertion failed in {}: {}", path, line);
+    }
+}
+
+#[test]
+fn example_logic_programming() {
+    run_example("examples/logic-programming.ap");
+}
+
+#[test]
+fn example_streams() {
+    run_example("examples/streams.ap");
+}
+
+#[test]
+fn example_mixed_binding() {
+    run_example("examples/mixed-binding.ap");
+}
+
+#[test]
+fn example_inductive_types() {
+    run_example("examples/inductive-types.ap");
+}
+
+#[test]
+fn example_arithmetic() {
+    run_example("examples/arithmetic.ap");
+}
+
+#[test]
+fn example_church_numerals() {
+    run_example("examples/church-numerals.ap");
+}
+
+#[test]
+fn example_alpha_equivalence() {
+    run_example("examples/alpha-equivalence.ap");
+}
+
+#[test]
+fn example_modal_logic() {
+    run_example("examples/modal-logic.ap");
+}
+
+#[test]
+fn example_reflection() {
+    run_example("examples/reflection.ap");
+}
+
+#[test]
+fn example_linear_linter() {
+    run_example("examples/linear-linter.ap");
+}
+
+#[test]
+fn example_explicit_subst() {
+    run_example("examples/explicit-subst.ap");
+}
+
+#[test]
+fn example_contextual_alpha() {
+    run_example("examples/contextual-alpha.ap");
+}
+
+#[test]
+fn example_unified_logic() {
+    run_example("examples/unified-logic.ap");
+}
+
+#[test]
+fn example_grand_unification() {
+    run_example("examples/grand-unification.ap");
+}
+
+#[test]
+fn example_leibniz() {
+    run_example("examples/leibniz.ap");
+}

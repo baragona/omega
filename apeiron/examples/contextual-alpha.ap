@@ -1,0 +1,86 @@
+;; Apeiron Example: Contextual Alpha-Equivalence
+;; "Real Mode 6" — Contextual + Oracle (Relative Hashing)
+;;
+;; Proves that the identity of a context doesn't matter — only its structure.
+;; This is the "De Bruijn Levels for Scopes" concept.
+;;
+;; Relative topological hashing canonicalizes scope IDs by first-encounter
+;; order: the first scope encountered gets index 0, the second gets 1, etc.
+;; This achieves alpha-equivalence for contexts, the fundamental requirement
+;; for proof transfer across scope instances.
+;;
+;; Key features exercised:
+;; - Barrier nodes with different scope IDs but identical structure
+;; - Alpha-equivalence for both lambda variables AND scopes
+;; - Scope mixing trap: same-scope vs distinct-scope barriers differ
+;; - Nested stack alpha: different IDs but same relative stack
+
+[System ContextualOracle
+  [@syntax [sort Term]]
+  [@binding contextual]
+  [@check beta-reduction]
+]
+
+[Theory ScopeAlpha :in ContextualOracle
+
+  ;; Define distinct scopes
+  [Scope World_A]
+  [Scope World_B]
+  [Scope World_C]
+  [Scope World_D]
+
+  ;; === Test 1: Simple scope alpha ===
+  ;; box(A, \x.x) == box(B, \y.y)
+  ;; Different scope ID AND variable name, but structurally identical.
+  [assert-eq contextual-alpha
+    [box World_A [lam x x]]
+    [box World_B [lam y y]]
+  ]
+
+  ;; === Test 2: Deep structure with multi-variable body ===
+  ;; box(A, \x. app x x) == box(B, \z. app z z)
+  [assert-eq scope-alpha-nonlinear
+    [box World_A [lam x [app x x]]]
+    [box World_B [lam z [app z z]]]
+  ]
+
+  ;; === Test 3: Scope Mixing Trap ===
+  ;; box(A, box(B, \x.x))  !=  box(A, box(A, \x.x))
+  ;;
+  ;; LHS relative stack: A→0, B→1 (two distinct scopes)
+  ;; RHS relative stack: A→0, A→0 (same scope repeated)
+  ;; These are structurally DIFFERENT — the canonicalization preserves
+  ;; same-scope relationships.
+  [assert-neq scope-mixing-trap
+    [box World_A [box World_B [lam x x]]]
+    [box World_A [box World_A [lam x x]]]
+  ]
+
+  ;; === Test 4: Nested Stack Alpha (the mind-bender) ===
+  ;; box(A, box(C, \x.x))  ==  box(B, box(D, \y.y))
+  ;;
+  ;; LHS: A→0, C→1  (two fresh scopes in encounter order)
+  ;; RHS: B→0, D→1  (two fresh scopes in encounter order)
+  ;; Same relative stack [0,1] → structurally identical!
+  [assert-eq nested-stack-alpha
+    [box World_A [box World_C [lam x x]]]
+    [box World_B [box World_D [lam y y]]]
+  ]
+
+  ;; === Test 5: Constant body alpha ===
+  ;; box(A, \x. y) == box(B, \x. y)
+  ;; Scopes differ, but constant function structure is the same.
+  [assert-eq scope-alpha-constant
+    [box World_A [lam x y]]
+    [box World_B [lam x y]]
+  ]
+
+  ;; === Test 6: Opaque barrier blocks reduction ===
+  ;; box(A, (\x.x) y)  !=  box(A, y)
+  ;; The barrier is an opaque seal — beta reduction CANNOT fire inside
+  ;; when scope A is inactive. The LHS retains its unreduced structure.
+  [assert-neq opaque-blocks-beta
+    [box World_A [app [lam x x] y]]
+    [box World_A y]
+  ]
+]

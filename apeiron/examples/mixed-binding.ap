@@ -1,0 +1,99 @@
+;; Apeiron Example: Mixed Binding
+;; "Frankenstein Mode" — HOAS + First-Order Rewriting
+;;
+;; Lambda calculus (Lam/App) handles variable binding (HOAS).
+;; Sym constructors (pair, fst, snd, inl, inr, case) handle data.
+;; Rewrite rules reduce the first-order part.
+;; Beta reduction handles the higher-order part.
+;; Both operate in the SAME arena, interleaving freely.
+;;
+;; Key features exercised:
+;; - Beta reduction + graph rewriting in the same computation
+;; - Rewrite RHS producing App nodes (for case elimination)
+;; - Non-linear variables (Dup fans) crossing the HOAS/rewrite boundary
+
+[System MixedMode
+  [@syntax
+    [sort Term]
+    [op pair] [op fst] [op snd]
+    [op inl] [op inr] [op case]
+    [op z] [op s]
+  ]
+  [@check beta-reduction rewriting]
+]
+
+[Theory MixedBinding :in MixedMode
+
+  ;; === First-order rules: projections ===
+  [@rule [fst [pair ?a ?b]] ==> ?a]
+  [@rule [snd [pair ?a ?b]] ==> ?b]
+
+  ;; === Sum type elimination ===
+  ;; case produces App nodes so the result beta-reduces.
+  ;; [case (inl x) f g] --> [app f x]
+  ;; [case (inr y) f g] --> [app g y]
+  [@rule [case [inl ?x] ?f ?g] ==> [app ?f ?x]]
+  [@rule [case [inr ?y] ?f ?g] ==> [app ?g ?y]]
+
+  ;; === Tests: Beta then Rewrite ===
+
+  ;; (\x. fst x) (pair a b)  -->  fst(pair(a,b))  -->  a
+  [assert-eq beta-then-project
+    [app [lam x [fst x]] [pair a b]]
+    a
+  ]
+
+  ;; (\f. f (pair a b)) (\x. snd x)  -->  snd(pair(a,b))  -->  b
+  [assert-eq higher-order-project
+    [app [lam f [app f [pair a b]]] [lam x [snd x]]]
+    b
+  ]
+
+  ;; === Tests: Rewrite then Beta ===
+
+  ;; fst (pair (\x.x) (\y.y)) z  -->  (\x.x) z  -->  z
+  ;; Rewrite extracts a lambda, then App×Lam beta-reduces.
+  [assert-eq rewrite-then-beta
+    [app [fst [pair [lam x x] [lam y y]]] z]
+    z
+  ]
+
+  ;; snd (pair z (\x. pair x x)) a  -->  (\x. pair x x) a  -->  pair a a
+  [assert-eq extract-and-apply
+    [app [snd [pair z [lam x [pair x x]]]] a]
+    [pair a a]
+  ]
+
+  ;; === Tests: Sum type with beta ===
+
+  ;; case (inl a) (\x. pair x x) (\y. y)  -->  (\x. pair x x) a  -->  pair a a
+  [assert-eq case-inl
+    [case [inl a] [lam x [pair x x]] [lam y y]]
+    [pair a a]
+  ]
+
+  ;; case (inr b) (\x. x) (\y. pair y y)  -->  (\y. pair y y) b  -->  pair b b
+  [assert-eq case-inr
+    [case [inr b] [lam x x] [lam y [pair y y]]]
+    [pair b b]
+  ]
+
+  ;; === Tests: Church-encoded data with first-order ops ===
+
+  ;; (\p. fst p) (pair (s z) z)  -->  s(z)
+  [assert-eq church-pair
+    [app [lam p [fst p]] [pair [s z] z]]
+    [s z]
+  ]
+
+  ;; Compose: fst ∘ build. (\f. fst (f z)) (\x. pair x x) --> fst(pair(z,z)) --> z
+  [assert-eq compose-build-project
+    [app [lam f [fst [app f z]]] [lam x [pair x x]]]
+    z
+  ]
+
+  ;; Eval: mixed pipeline
+  [eval mixed-demo
+    [fst [app [lam f [pair [app f a] [app f b]]] [lam x x]]]
+  ]
+]

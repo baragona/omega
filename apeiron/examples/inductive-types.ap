@@ -1,0 +1,133 @@
+;; Apeiron Example: Inductive Types
+;; "Exotic Mode I" — Pattern Matching via Graph Rewrite Rules
+;;
+;; Constructors are passive data (Sym nodes with arity).
+;; Pattern matching is expressed as rewrite rules that deconstruct data.
+;; No need for a separate "match" construct — the rewrite engine IS
+;; the pattern matcher.
+;;
+;; Key features exercised:
+;; - Deep nested pattern matching (e.g. [plus [s ?n] ?m])
+;; - Multi-use metas (e.g. ?m in mul, ?n in double)
+;; - Multiple interacting datatypes (Nat, Bool)
+;; - Conditional dispatch via if-then-else
+
+[System InductiveSystem
+  [@syntax
+    [sort Nat]
+    [sort Bool]
+    [op z] [op s]
+    [op true] [op false]
+    [op plus] [op mul]
+    [op pred] [op double]
+    [op is-zero]
+    [op ite]
+    [op and] [op or] [op not]
+  ]
+  [@check rewriting]
+]
+
+[Theory InductiveTypes :in InductiveSystem
+
+  ;; === Peano Arithmetic ===
+
+  [@rule [plus z ?n] ==> ?n]
+  [@rule [plus [s ?n] ?m] ==> [s [plus ?n ?m]]]
+
+  ;; Note: ?m used TWICE in RHS (multi-use meta via Dup fan)
+  [@rule [mul z ?n] ==> z]
+  [@rule [mul [s ?n] ?m] ==> [plus ?m [mul ?n ?m]]]
+
+  [@rule [pred z] ==> z]
+  [@rule [pred [s ?n]] ==> ?n]
+
+  ;; Note: ?n used TWICE in RHS
+  [@rule [double z] ==> z]
+  [@rule [double [s ?n]] ==> [s [s [double ?n]]]]
+
+  ;; === Boolean Operations ===
+
+  [@rule [not true] ==> false]
+  [@rule [not false] ==> true]
+
+  [@rule [and true ?b] ==> ?b]
+  [@rule [and false ?b] ==> false]
+
+  [@rule [or true ?b] ==> true]
+  [@rule [or false ?b] ==> ?b]
+
+  ;; === Nat -> Bool ===
+
+  [@rule [is-zero z] ==> true]
+  [@rule [is-zero [s ?n]] ==> false]
+
+  ;; === Conditional ===
+
+  [@rule [ite true ?t ?f] ==> ?t]
+  [@rule [ite false ?t ?f] ==> ?f]
+
+  ;; === Tests: Arithmetic ===
+
+  [assert-eq two-plus-three
+    [plus [s [s z]] [s [s [s z]]]]
+    [s [s [s [s [s z]]]]]
+  ]
+
+  [assert-eq two-times-three
+    [mul [s [s z]] [s [s [s z]]]]
+    [s [s [s [s [s [s z]]]]]]
+  ]
+
+  [assert-eq double-three
+    [double [s [s [s z]]]]
+    [s [s [s [s [s [s z]]]]]]
+  ]
+
+  [assert-eq pred-succ
+    [pred [s [s [s z]]]]
+    [s [s z]]
+  ]
+
+  [assert-eq pred-zero
+    [pred z]
+    z
+  ]
+
+  ;; === Tests: Boolean ===
+
+  [assert-eq bool-and-tf [and true false] false]
+  [assert-eq bool-and-tt [and true true] true]
+  [assert-eq bool-or-ft [or false true] true]
+  [assert-eq bool-or-ff [or false false] false]
+  [assert-eq bool-not-f [not false] true]
+  [assert-eq bool-not-t [not true] false]
+
+  ;; === Tests: Nat -> Bool -> Conditional ===
+
+  [assert-eq is-zero-yes [is-zero z] true]
+  [assert-eq is-zero-no [is-zero [s z]] false]
+
+  ;; ite(is-zero(0), 1, 0) = 1
+  [assert-eq conditional-true
+    [ite [is-zero z] [s z] z]
+    [s z]
+  ]
+
+  ;; ite(is-zero(1), double(1), plus(1,1)) = plus(1,1) = 2
+  [assert-eq conditional-false
+    [ite [is-zero [s z]] [double [s z]] [plus [s z] [s z]]]
+    [s [s z]]
+  ]
+
+  ;; === Evals ===
+
+  ;; 3! = 3 * 2 * 1 = 6
+  [eval three-factorial
+    [mul [s [s [s z]]] [mul [s [s z]] [s z]]]
+  ]
+
+  ;; double(double(2)) = double(4) = 8
+  [eval double-double-two
+    [double [double [s [s z]]]]
+  ]
+]

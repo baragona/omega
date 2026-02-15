@@ -1,0 +1,89 @@
+;; Apeiron Example: Lazy Streams
+;; "Exotic Mode H" — Demand-Driven Evaluation via Fused Rules
+;;
+;; Infinite streams are represented as thunks (nats-from) that only
+;; unfold when a consumer (take) demands elements. This prevents
+;; divergence: nats-from has no standalone rule, so it only fires
+;; when wrapped in a take context.
+;;
+;; Key features exercised:
+;; - Recursive rewrite rules (self-referencing operators)
+;; - Multi-use meta-variables (Dup fan chains for ?n in nats rule)
+;; - Demand-driven evaluation (lazy by construction)
+
+[System StreamSystem
+  [@syntax
+    [sort Nat]
+    [sort List]
+    [op z] [op s]
+    [op nil] [op cons]
+    [op nats-from]
+    [op take]
+    [op head] [op tail]
+    [op len]
+    [op plus]
+  ]
+  [@check rewriting]
+]
+
+[Theory Streams :in StreamSystem
+
+  ;; --- Peano addition (needed for stream generation) ---
+  [@rule [plus z ?n] ==> ?n]
+  [@rule [plus [s ?n] ?m] ==> [s [plus ?n ?m]]]
+
+  ;; --- List operations ---
+  [@rule [head [cons ?h ?t]] ==> ?h]
+  [@rule [tail [cons ?h ?t]] ==> ?t]
+  [@rule [len nil] ==> z]
+  [@rule [len [cons ?h ?t]] ==> [s [len ?t]]]
+
+  ;; --- Demand-driven stream: take N items from nats-from(start) ---
+  ;; nats-from by itself never fires — only when take demands it.
+  ;; This is the key to avoiding divergence.
+  ;;
+  ;; Note: ?n is used TWICE in the step rule (once in cons, once in
+  ;; nats-from). The multi-use meta engine creates a Dup fan to share it.
+  [@rule [take z [nats-from ?n]] ==> nil]
+  [@rule [take [s ?k] [nats-from ?n]] ==> [cons ?n [take ?k [nats-from [s ?n]]]]]
+
+  ;; --- Take from a finite list ---
+  [@rule [take z [cons ?h ?t]] ==> nil]
+  [@rule [take [s ?k] [cons ?h ?t]] ==> [cons ?h [take ?k ?t]]]
+  [@rule [take ?n nil] ==> nil]
+
+  ;; === Tests ===
+
+  ;; take 3 from nats starting at 0: [0, 1, 2]
+  [assert-eq take-three
+    [take [s [s [s z]]] [nats-from z]]
+    [cons z [cons [s z] [cons [s [s z]] nil]]]
+  ]
+
+  ;; take 2 from nats starting at 3: [3, 4]
+  [assert-eq take-from-three
+    [take [s [s z]] [nats-from [s [s [s z]]]]]
+    [cons [s [s [s z]]] [cons [s [s [s [s z]]]] nil]]
+  ]
+
+  ;; head of [1, ...] = 1
+  [assert-eq head-of-stream
+    [head [take [s [s z]] [nats-from [s z]]]]
+    [s z]
+  ]
+
+  ;; tail of a finite list
+  [assert-eq tail-of-list
+    [tail [cons z [cons [s z] [cons [s [s z]] nil]]]]
+    [cons [s z] [cons [s [s z]] nil]]
+  ]
+
+  ;; length of take-3: should be 3
+  [assert-eq len-take-three
+    [len [take [s [s [s z]]] [nats-from z]]]
+    [s [s [s z]]]
+  ]
+
+  ;; Eval: compute take 4 from nats(0)
+  [eval four-nats [take [s [s [s [s z]]]] [nats-from z]]]
+]

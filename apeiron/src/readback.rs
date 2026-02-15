@@ -110,6 +110,48 @@ fn readback_port(arena: &Arena, port: crate::node::Port, state: &mut ReadbackSta
     readback_inner(arena, port.target, state)
 }
 
+/// Trace a Lam's var port through Dup fan trees, marking all copy ports
+/// with the variable name. This allows readback to display non-linear variables
+/// (used 2+ times) as their name instead of showing raw Dup nodes.
+fn trace_var_dups(arena: &Arena, state: &mut ReadbackState, lam_ptr: Ptr, var_name: &str) {
+    let var_port = arena.port(lam_ptr, 1);
+    if !var_port.is_connected() {
+        return;
+    }
+    // If the var port connects to a Dup's principal (slot 0), trace the fan tree
+    if var_port.slot == 0 {
+        if let Some(node) = arena.get(var_port.target) {
+            if matches!(node.kind, OpCode::Dup { .. }) {
+                trace_dup_tree(arena, state, var_port.target, var_name);
+            }
+        }
+    }
+}
+
+/// Recursively mark Dup copy ports (slots 1 and 2) with a variable name.
+/// If a copy port chains to another Dup's principal, recurse into that Dup.
+fn trace_dup_tree(arena: &Arena, state: &mut ReadbackState, dup_ptr: Ptr, var_name: &str) {
+    // Mark both copy ports
+    state
+        .var_names
+        .insert((dup_ptr, 1), var_name.to_string());
+    state
+        .var_names
+        .insert((dup_ptr, 2), var_name.to_string());
+
+    // For each copy port, check if it chains to another Dup
+    for copy_slot in [1u8, 2u8] {
+        let copy_port = arena.port(dup_ptr, copy_slot);
+        if copy_port.is_connected() && copy_port.slot == 0 {
+            if let Some(node) = arena.get(copy_port.target) {
+                if matches!(node.kind, OpCode::Dup { .. }) {
+                    trace_dup_tree(arena, state, copy_port.target, var_name);
+                }
+            }
+        }
+    }
+}
+
 fn readback_inner(arena: &Arena, ptr: Ptr, state: &mut ReadbackState) -> Term {
     if ptr.is_none() {
         return Term::Wire(u32::MAX);
@@ -135,6 +177,11 @@ fn readback_inner(arena: &Arena, ptr: Ptr, state: &mut ReadbackState) -> Term {
             state
                 .var_names
                 .insert((ptr, 1), var_name.clone());
+
+            // If the var port connects to a Dup fan tree (non-linear variable),
+            // trace through and mark all copy ports so readback resolves them
+            // as the variable name instead of showing raw Dup nodes.
+            trace_var_dups(arena, state, ptr, &var_name);
 
             // Read the body (port 2) — use readback_port for var detection
             let body = readback_port(arena, node.ports[2], state);

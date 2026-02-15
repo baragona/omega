@@ -259,6 +259,9 @@ impl Session {
                     "assert-eq" => {
                         self.process_assert_eq(&decl[1..], &graph_rules, &known_ops)?;
                     }
+                    "assert-neq" => {
+                        self.process_assert_neq(&decl[1..], &graph_rules, &known_ops)?;
+                    }
                     "with-scope" => {
                         // [with-scope ScopeName body...]
                         if decl.len() >= 3 {
@@ -283,6 +286,13 @@ impl Session {
                                             }
                                             "assert-eq" => {
                                                 self.process_assert_eq(
+                                                    &inner_decl[1..],
+                                                    &graph_rules,
+                                                    &known_ops,
+                                                )?;
+                                            }
+                                            "assert-neq" => {
+                                                self.process_assert_neq(
                                                     &inner_decl[1..],
                                                     &graph_rules,
                                                     &known_ops,
@@ -522,6 +532,70 @@ impl Session {
             Err(ApeironError::AssertionFailed {
                 name,
                 detail: format!("{} != {}", lhs_term, rhs_term),
+            })
+        }
+    }
+
+    fn process_assert_neq(
+        &mut self,
+        items: &[Sexp],
+        graph_rules: &[rewrite::GraphRule],
+        known_ops: &HashSet<String>,
+    ) -> Result<()> {
+        if items.len() < 2 {
+            return Err(ApeironError::InvalidConfig {
+                block: "assert-neq".into(),
+                detail: "need at least LHS and RHS".into(),
+            });
+        }
+
+        // [assert-neq name lhs rhs] or [assert-neq lhs rhs]
+        let (name, lhs_sexp, rhs_sexp) = if items.len() >= 3
+            && items[0].as_atom().is_some()
+            && items[0].as_list().is_none()
+        {
+            (
+                items[0].as_atom().unwrap_or("?").to_string(),
+                &items[1],
+                &items[2],
+            )
+        } else {
+            (
+                format!("assert_{}", self.output.len()),
+                &items[0],
+                &items[1],
+            )
+        };
+
+        let (lhs_root, _) = self.build_and_normalize(lhs_sexp, graph_rules, known_ops);
+        let (rhs_root, _) = self.build_and_normalize(rhs_sexp, graph_rules, known_ops);
+
+        let lhs_port = self.arena.port(lhs_root, 1);
+        let rhs_port = self.arena.port(rhs_root, 1);
+
+        let lhs_ptr = if lhs_port.is_connected() {
+            lhs_port.target
+        } else {
+            lhs_root
+        };
+        let rhs_ptr = if rhs_port.is_connected() {
+            rhs_port.target
+        } else {
+            rhs_root
+        };
+
+        let lhs_hash = hash::topological_hash(&self.arena, lhs_ptr);
+        let rhs_hash = hash::topological_hash(&self.arena, rhs_ptr);
+
+        if lhs_hash != rhs_hash {
+            self.output.push(format!("[ASSERT] {} passed (neq)", name));
+            Ok(())
+        } else {
+            let lhs_term = readback::readback(&self.arena, lhs_ptr);
+            let rhs_term = readback::readback(&self.arena, rhs_ptr);
+            Err(ApeironError::AssertionFailed {
+                name,
+                detail: format!("expected != but {} == {}", lhs_term, rhs_term),
             })
         }
     }

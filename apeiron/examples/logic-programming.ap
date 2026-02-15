@@ -1,0 +1,57 @@
+;; Apeiron Example: Logic Programming
+;; "Exotic Mode G" — Unification via Future Nodes
+;;
+;; Future nodes (?name) represent holes / unification variables.
+;; They survive beta reduction and propagate through the graph,
+;; acting as placeholders for unknown values.
+;;
+;; In a full logic programming system, you'd unify futures with
+;; concrete terms. Here we show the foundation: futures flow through
+;; computation untouched, ready for later instantiation.
+
+[System LogicProg
+  [@syntax [sort Term]]
+  [@check beta-reduction]
+]
+
+[Theory LogicProgramming :in LogicProg
+
+  ;; 1. A Future node survives identity application:
+  ;; (\x. x) ?a  -->  ?a
+  ;; The ?a hole passes through beta reduction intact.
+  [eval hole-identity [app [lam x x] ?a]]
+
+  ;; 2. Futures propagate through nested applications:
+  ;; (\f.\x. f x) S ?n  -->  [S ?n]
+  ;; The ?n future ends up as an argument to S.
+  [eval future-in-arg [app [app [lam f [lam x [app f x]]] S] ?n]]
+
+  ;; 3. Projection: (\x.\y. x) ?first ?second  -->  ?first
+  ;; The chosen future survives; the discarded one is erased.
+  [eval choose-first [app [app [lam x [lam y x]] ?first] ?second]]
+
+  ;; 4. Select second: (\p.\q. q) ?unused ?kept  -->  ?kept
+  [eval select-second [app [app [lam p [lam q q]] ?unused] ?kept]]
+
+  ;; 5. Futures don't block normal computation:
+  ;; (\x.\y. y) ?anything z  -->  z
+  ;; The discarded future and the surviving constant coexist.
+  [assert-eq discard-future
+    [app [app [lam x [lam y y]] ?anything] z]
+    z
+  ]
+
+  ;; 6. Pipeline: compose two identities around a future.
+  ;; (\f.\g.\x. f(g(x)))  (\a.a)  (\b.b)  ?v  -->  ?v
+  [eval pipeline [app [app [app
+    [lam f [lam g [lam x [app f [app g x]]]]]
+    [lam a a]]
+    [lam b b]]
+    ?v]
+  ]
+
+  ;; 7. Futures in both positions of a duplication:
+  ;; (\x. x x) ?dup  -->  [?dup ?dup]
+  ;; Both copies of ?dup appear in the result (via Dup node).
+  [eval dup-future [app [lam x [app x x]] ?dup]]
+]

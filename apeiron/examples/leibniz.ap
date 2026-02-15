@@ -1,0 +1,122 @@
+;; Apeiron Example: Leibniz Equality
+;; "The Final Boss" — Defining Logic within Logic
+;;
+;; If the kernel is truly generic, we shouldn't need [assert-eq] to prove things.
+;; We should be able to define "Equality" as a user-space type.
+;;
+;; Leibniz Equality: x = y iff every property P that holds for x also holds for y.
+;;   Eq x y := forall P : (Term -> Type). P x -> P y
+;;
+;; This exercises the Exposed + Compute path to its limit:
+;; - Higher-order beta reduction (passing predicates as arguments)
+;; - Correct variable capture across nested def expansions
+;; - Interaction nets handling both linear AND non-linear variable usage
+;; - The full "Normalize-then-Hash" pipeline
+
+[System PureTypeTheory
+  [@syntax [sort Type] [sort Term] [op forall]]
+  [@check beta-reduction]
+]
+
+[Theory Leibniz :in PureTypeTheory
+
+  ;; ================================================================
+  ;; 1. Define Equality (Leibniz style)
+  ;; Eq x y := forall P : (Term -> Type). P x -> P y
+  ;; ================================================================
+  [def eq
+    [lam a [lam b
+      [forall P [arrow Term Type]
+        [arrow [app P a] [app P b]]
+      ]
+    ]]
+  ]
+
+  ;; ================================================================
+  ;; 2. Define Reflexivity
+  ;; refl : forall x. Eq x x
+  ;; refl = \x. \P. \px. px   (the identity on proofs)
+  ;; ================================================================
+  [def refl
+    [lam a [lam P [lam px px]]]
+  ]
+
+  ;; ================================================================
+  ;; 3. The Computation Test: refl actually computes
+  ;; (refl z) SomePred evidence  =  evidence
+  ;;
+  ;; This requires 3 beta reductions:
+  ;;   (\a.\P.\px. px) z SomePred evidence
+  ;;   → (\P.\px. px) SomePred evidence
+  ;;   → (\px. px) evidence
+  ;;   → evidence
+  ;; ================================================================
+  [assert-eq refl-computes
+    [app [app [app refl z] SomePred] evidence]
+    evidence
+  ]
+
+  ;; ================================================================
+  ;; 4. refl z is a polymorphic identity on proofs
+  ;; (refl z) AnyPred = \px. px  (the identity function)
+  ;; ================================================================
+  [eval refl-applied [app [app refl z] AnyPred]]
+
+  ;; ================================================================
+  ;; 5. Define Symmetry
+  ;; sym : forall x y. Eq x y -> Eq y x
+  ;; sym = \x.\y.\h. (h (\w. Eq w x)) (refl x)
+  ;;
+  ;; Proof idea:
+  ;;   h : forall P. P x -> P y
+  ;;   Apply h to the predicate P := (\w. Eq w x)
+  ;;   h (\w. Eq w x) : Eq x x -> Eq y x
+  ;;   (refl x) : Eq x x
+  ;;   Therefore: Eq y x
+  ;; ================================================================
+  [def sym
+    [lam a [lam b [lam h
+      [app
+        [app h [lam w [app [app eq w] a]]]
+        [app [app [app refl a] [lam w [app [app eq w] a]]]
+          [lam px px]
+        ]
+      ]
+    ]]]
+  ]
+
+  ;; ================================================================
+  ;; 6. Define Transitivity
+  ;; trans : forall x y z. Eq x y -> Eq y z -> Eq x z
+  ;; trans = \x.\y.\z.\h1.\h2. (h2 (\w. Eq x w)) h1
+  ;;
+  ;; Proof idea:
+  ;;   h1 : forall P. P x -> P y   (proof of x = y)
+  ;;   h2 : forall P. P y -> P z   (proof of y = z)
+  ;;   Apply h2 to the predicate P := (\w. Eq x w)
+  ;;   h2 (\w. Eq x w) : Eq x y -> Eq x z
+  ;;   h1 : Eq x y
+  ;;   Therefore: Eq x z
+  ;;
+  ;; This is the ultimate test of beta-reduction and variable binding.
+  ;; ================================================================
+  [def trans
+    [lam a [lam b [lam c
+      [lam h1
+      [lam h2
+        [app
+          [app h2 [lam w [app [app eq a] w]]]
+          h1
+        ]
+      ]]
+    ]]]
+  ]
+
+  ;; ================================================================
+  ;; 7. Eval: Show the normal forms
+  ;; If these evaluate without crashing or getting stuck,
+  ;; the Interaction Net correctly handles Higher-Order Logic.
+  ;; ================================================================
+  [eval check-sym [sym]]
+  [eval check-trans [trans]]
+]

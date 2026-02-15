@@ -177,15 +177,80 @@ fn collect_matched_nodes(arena: &Arena, pattern: &Pattern, ptr: Ptr, out: &mut V
     }
 }
 
+/// Count how many times each meta-variable appears in an RHS template.
+fn count_meta_uses(sexp: &Sexp, counts: &mut HashMap<String, usize>) {
+    match sexp {
+        Sexp::Atom(name, _) if name.starts_with('?') => {
+            *counts.entry(name[1..].to_string()).or_default() += 1;
+        }
+        Sexp::Atom(_, _) => {}
+        Sexp::List(items, _) => {
+            for item in items {
+                count_meta_uses(item, counts);
+            }
+        }
+    }
+}
+
+/// Build a Dup fan chain: original node → N copies via (N-1) Dup nodes.
+/// Returns a Vec of Ports, each pointing to an aux port of a Dup (or the original).
+fn build_meta_fan(arena: &mut Arena, original: Ptr, count: usize) -> Vec<Port> {
+    assert!(count >= 2);
+    let mut leaves = Vec::with_capacity(count);
+    let mut current = Port::new(original, 0, WireColor::Blue);
+    for _ in 0..(count - 1) {
+        let label = arena.fresh_dup_label();
+        let dup = arena.spawn(OpCode::Dup { label });
+        arena.connect(dup, 0, current.target, current.slot, WireColor::Blue);
+        leaves.push(Port::new(dup, 1, WireColor::Blue));
+        current = Port::new(dup, 2, WireColor::Blue);
+    }
+    leaves.push(current);
+    leaves
+}
+
 /// Build a fresh subgraph from an RHS Sexp template, using meta-var bindings.
+/// Handles multi-use meta-variables by creating Dup fan trees.
 ///
 /// Returns the principal port of the root node.
 fn build_rhs(arena: &mut Arena, rhs: &Sexp, bindings: &HashMap<String, Ptr>) -> Port {
+    // Count meta-variable uses to detect multi-use
+    let mut counts = HashMap::new();
+    count_meta_uses(rhs, &mut counts);
+
+    // For multi-use metas, create Dup fan trees; for single-use, direct port
+    let mut meta_ports: HashMap<String, Vec<Port>> = HashMap::new();
+    for (name, count) in &counts {
+        if let Some(&ptr) = bindings.get(name.as_str()) {
+            if *count == 1 {
+                meta_ports.insert(name.clone(), vec![Port::new(ptr, 0, WireColor::Blue)]);
+            } else {
+                let ports = build_meta_fan(arena, ptr, *count);
+                meta_ports.insert(name.clone(), ports);
+            }
+        }
+    }
+
+    build_rhs_inner(arena, rhs, bindings, &mut meta_ports)
+}
+
+fn build_rhs_inner(
+    arena: &mut Arena,
+    rhs: &Sexp,
+    bindings: &HashMap<String, Ptr>,
+    meta_ports: &mut HashMap<String, Vec<Port>>,
+) -> Port {
     match rhs {
         Sexp::Atom(name, _) if name.starts_with('?') => {
             let var = &name[1..];
+            // Pop the next available port for this meta-variable
+            if let Some(ports) = meta_ports.get_mut(var) {
+                if let Some(port) = ports.pop() {
+                    return port;
+                }
+            }
+            // Fallback: unbound meta → placeholder symbol
             if let Some(&ptr) = bindings.get(var) {
-                // Reuse existing node
                 Port::new(ptr, 0, WireColor::Blue)
             } else {
                 let sym = arena.spawn(OpCode::Sym {
@@ -207,13 +272,33 @@ fn build_rhs(arena: &mut Arena, rhs: &Sexp, bindings: &HashMap<String, Ptr>) -> 
 
             // Single-element list: unwrap
             if items.len() == 1 {
-                return build_rhs(arena, &items[0], bindings);
+                return build_rhs_inner(arena, &items[0], bindings, meta_ports);
             }
 
-            // Head is a meta-var referencing an existing node — can't add children
+            // Head is a meta-var — build as curried App chain
             if head_name.starts_with('?') {
-                // Treat the whole list as application (shouldn't happen in well-formed rules)
-                return build_rhs(arena, &items[0], bindings);
+                let mut result = build_rhs_inner(arena, &items[0], bindings, meta_ports);
+                for arg_sexp in &items[1..] {
+                    let arg_port = build_rhs_inner(arena, arg_sexp, bindings, meta_ports);
+                    let app = arena.spawn(OpCode::App);
+                    arena.connect(app, 1, arg_port.target, arg_port.slot, WireColor::Blue);
+                    arena.connect(app, 0, result.target, result.slot, WireColor::Blue);
+                    result = Port::new(app, 2, WireColor::Blue);
+                }
+                return result;
+            }
+
+            // "app" keyword — build as OpCode::App (enables beta reduction)
+            if head_name == "app" && items.len() >= 3 {
+                let mut result = build_rhs_inner(arena, &items[1], bindings, meta_ports);
+                for arg_sexp in &items[2..] {
+                    let arg_port = build_rhs_inner(arena, arg_sexp, bindings, meta_ports);
+                    let app = arena.spawn(OpCode::App);
+                    arena.connect(app, 1, arg_port.target, arg_port.slot, WireColor::Blue);
+                    arena.connect(app, 0, result.target, result.slot, WireColor::Blue);
+                    result = Port::new(app, 2, WireColor::Blue);
+                }
+                return result;
             }
 
             let args: Vec<&Sexp> = items[1..].iter().collect();
@@ -224,7 +309,7 @@ fn build_rhs(arena: &mut Arena, rhs: &Sexp, bindings: &HashMap<String, Ptr>) -> 
             });
 
             for (i, arg) in args.iter().enumerate() {
-                let arg_port = build_rhs(arena, arg, bindings);
+                let arg_port = build_rhs_inner(arena, arg, bindings, meta_ports);
                 arena.connect(
                     sym,
                     (i + 1) as u8,

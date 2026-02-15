@@ -26,6 +26,9 @@ pub struct Arena {
     pub stats: ArenaStats,
     /// Next dup label (auto-increment for builder).
     pub next_dup_label: u32,
+    /// Active pairs suspended inside inactive barriers, keyed by scope ID.
+    /// When a scope is activated, its suspended pairs are moved to `active_pairs`.
+    pub suspended_pairs: HashMap<u32, Vec<(Ptr, Ptr)>>,
     /// When true, freed indices are deferred (not recycled immediately).
     /// Used during building to prevent index aliasing.
     building: bool,
@@ -43,6 +46,7 @@ impl Arena {
             active_scopes: HashSet::new(),
             stats: ArenaStats::default(),
             next_dup_label: 0,
+            suspended_pairs: HashMap::new(),
             building: false,
             deferred_free: Vec::new(),
         }
@@ -98,6 +102,13 @@ impl Arena {
             self.nodes.get(a.index()).map_or(false, |s| s.is_some())
                 && self.nodes.get(b.index()).map_or(false, |s| s.is_some())
         });
+        // Purge stale suspended pairs
+        for pairs in self.suspended_pairs.values_mut() {
+            pairs.retain(|(a, b)| {
+                self.nodes.get(a.index()).map_or(false, |s| s.is_some())
+                    && self.nodes.get(b.index()).map_or(false, |s| s.is_some())
+            });
+        }
     }
 
     /// Get a reference to a node.
@@ -192,9 +203,10 @@ impl Arena {
         label
     }
 
-    /// Activate a scope, waking up any listeners.
+    /// Activate a scope, waking up any listeners and releasing suspended pairs.
     pub fn activate_scope(&mut self, scope: u32) {
         self.active_scopes.insert(scope);
+        // Wake barrier listeners
         if let Some(waiters) = self.listeners.remove(&scope) {
             for ptr in waiters {
                 // Re-check if the barrier node is still alive
@@ -203,6 +215,14 @@ impl Arena {
                     if principal.is_connected() {
                         self.active_pairs.push((ptr, principal.target));
                     }
+                }
+            }
+        }
+        // Release suspended active pairs that were inside this scope's barriers
+        if let Some(pairs) = self.suspended_pairs.remove(&scope) {
+            for (a, b) in pairs {
+                if self.get(a).is_some() && self.get(b).is_some() {
+                    self.active_pairs.push((a, b));
                 }
             }
         }
