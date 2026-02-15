@@ -1,0 +1,727 @@
+;;; Self-Representation — Omega Checks Itself
+;;;
+;;; What if a proof system could verify a proof system?
+;;;
+;;; We encode propositional logic and its derivation checker
+;;; entirely as Omega rewrite rules. Feed it a proof tree:
+;;;   - Valid?  → normalizes to ok(conclusion)
+;;;   - Broken? → normalizes to fail
+;;;
+;;; Then we go further: a SOLVER (tauto) builds proof trees
+;;; automatically via rewrite rules, the CHECKER (concl) validates
+;;; them, and a REFLECTION PRINCIPLE lifts the result to truth.
+;;;
+;;; Three layers, one eq-refl:
+;;;   tauto(φ) → builds tree D    (automation)
+;;;   concl(D) → ok(φ)            (validation)
+;;;   reflect  → true(φ)          (soundness)
+;;;
+;;; The solver uses a LIST context with recursive lookup —
+;;; no hardcoded depth limit. Conjunction assumptions are
+;;; flattened into the list, so P∧(Q∧(R∧(S∧T))) becomes
+;;; [P, Q, R, S, T]. Lookup walks the list to any depth.
+;;;
+;;; Proved here:
+;;;
+;;;   ACT I — The Checker:
+;;;    1. ⊤-intro                       → ok(⊤)
+;;;    2. Assumption P                  → ok(P)
+;;;    3. ∧-intro                       → ok(P ∧ Q)
+;;;    4. ∧-elim-l                      → ok(P)
+;;;    5. Modus ponens                  → ok(Q)
+;;;    6. ∧-comm (manual tree)          → ok(P∧Q → Q∧P)
+;;;    7. ∧-assoc (manual 9-node tree)  → ok(P∧(Q∧R) → (P∧Q)∧R)
+;;;    8. ✗ ∧-elim on ⊤                → fail
+;;;    9. ✗ Failure propagation         → fail
+;;;   10. ✗ MP on non-implication       → fail
+;;;   11. ✗ MP antecedent mismatch      → fail
+;;;
+;;;   ACT II — The Solver (recursive list context):
+;;;   12. tauto(P → P)                  → ok (identity)
+;;;   13. tauto(P∧Q → Q∧P)             → ok (commutativity)
+;;;   14. tauto(P∧(Q∧R) → (P∧Q)∧R)    → ok (associativity)
+;;;   15. tauto(P∧(Q∧(R∧(D∧E))) → E)  → ok (depth-5 lookup!)
+;;;   16. tauto(P→Q→R→D→E→P)           → ok (5-deep implication chain)
+;;;   17. tauto(P→Q→P)                  → ok (weakening)
+;;;
+;;;   ACT III — The Soundness Link:
+;;;   18. true(P∧Q → Q∧P)              — one-line reflected proof
+;;;   19. true(P∧(Q∧(R∧(D∧E))) → E)   — reflected deep lookup
+;;;
+;;;   ACT IV — The Arithmetic Test (infinite domain):
+;;;   20. 0 = 0                         → ok (reflexivity)
+;;;   21. S(0) = S(0)                   → ok (succ congruence)
+;;;   22. 1+1 = 2                       → ok (solver)
+;;;   23. 2+2 = 4                       → ok (solver)
+;;;   24. 2*3 = 6                       → ok (solver)
+;;;   25. ✗ 1 ≠ 2                      → fail (certified rejection)
+;;;   26. true(2+2 = 4)                 — reflected
+;;;   27. true(3*3 = 9)                 — reflected
+;;;   28. true((1+1)*(1+1) = 4)         — reflected
+;;;   29. true(2*3 = 6)                 — reflected
+;;;
+;;;   ACT V — The Ackermann Test (Turing completeness):
+;;;   30. true(ack(1,1) = 3)            — reflected
+;;;   31. true(ack(2,2) = 7)            — reflected
+;;;   32. true(ack(3,3) = 61)           — reflected (the showstopper)
+
+(theory OmegaSelf
+
+  ;;; ═══════════════════════════════════════════════
+  ;;; LAYER 1: Object-Level Formulas (data)
+  ;;; ═══════════════════════════════════════════════
+
+  (sort Form)
+
+  (constructor P : Form)
+  (constructor Q : Form)
+  (constructor R : Form)
+  (constructor D : Form)
+  (constructor E : Form)
+  (constructor f-top : Form)
+  (constructor f-bot : Form)
+  (constructor f-and : (-> Form Form Form))
+  (constructor f-imp : (-> Form Form Form))
+
+  ;;; ═══════════════════════════════════════════════
+  ;;; LAYER 2: Derivation Trees (data)
+  ;;; ═══════════════════════════════════════════════
+
+  (sort Deriv)
+
+  (constructor d-assume : (-> Form Deriv))
+  (constructor d-top : Deriv)
+  (constructor d-and-i : (-> Deriv Deriv Deriv))
+  (constructor d-and-el : (-> Deriv Deriv))
+  (constructor d-and-er : (-> Deriv Deriv))
+  (constructor d-imp-i : (-> Form Deriv Deriv))
+  (constructor d-mp : (-> Deriv Deriv Deriv))
+
+  ;;; ═══════════════════════════════════════════════
+  ;;; LAYER 3: Checker Result Type (Option Form)
+  ;;; ═══════════════════════════════════════════════
+
+  (sort Res)
+
+  (constructor ok   : (-> Form Res))
+  (constructor fail : Res)
+
+  ;;; ═══════════════════════════════════════════════
+  ;;; LAYER 4: THE CHECKER — Rewrite Rules
+  ;;; ═══════════════════════════════════════════════
+  ;;; Catch-all rules: Omega tries rewrites in declaration
+  ;;; order, so specific patterns fire before the default.
+  ;;; This eliminates O(n²) per-constructor failure rules.
+
+  (constructor concl : (-> Deriv Res))
+  (constructor chk-and   : (-> Res Res Res))
+  (constructor chk-and-l : (-> Res Res))
+  (constructor chk-and-r : (-> Res Res))
+  (constructor chk-imp   : (-> Form Res Res))
+  (constructor chk-mp    : (-> Res Res Res))
+
+  ;; ── concl dispatch ──
+  (rewrite concl-assume (concl (d-assume ?F))      (ok ?F))
+  (rewrite concl-top    (concl d-top)               (ok f-top))
+  (rewrite concl-and-i  (concl (d-and-i ?D1 ?D2))   (chk-and (concl ?D1) (concl ?D2)))
+  (rewrite concl-and-el (concl (d-and-el ?D))        (chk-and-l (concl ?D)))
+  (rewrite concl-and-er (concl (d-and-er ?D))        (chk-and-r (concl ?D)))
+  (rewrite concl-imp-i  (concl (d-imp-i ?A ?D))      (chk-imp ?A (concl ?D)))
+  (rewrite concl-mp     (concl (d-mp ?D1 ?D2))       (chk-mp (concl ?D1) (concl ?D2)))
+
+  ;; ── ∧-intro: both must succeed ──
+  (rewrite chk-and-ok  (chk-and (ok ?A) (ok ?B)) (ok (f-and ?A ?B)))
+  (rewrite chk-and-bad (chk-and ?X ?Y)           fail)
+
+  ;; ── ∧-elim-l: must be conjunction ──
+  (rewrite chk-and-l-ok  (chk-and-l (ok (f-and ?A ?B)))  (ok ?A))
+  (rewrite chk-and-l-bad (chk-and-l ?X)                   fail)
+
+  ;; ── ∧-elim-r: must be conjunction ──
+  (rewrite chk-and-r-ok  (chk-and-r (ok (f-and ?A ?B)))  (ok ?B))
+  (rewrite chk-and-r-bad (chk-and-r ?X)                   fail)
+
+  ;; ── →-intro: sub-derivation must succeed ──
+  (rewrite chk-imp-ok  (chk-imp ?A (ok ?B))  (ok (f-imp ?A ?B)))
+  (rewrite chk-imp-bad (chk-imp ?A ?X)        fail)
+
+  ;; ── Modus ponens: non-linear ?A verifies antecedent match ──
+  (rewrite chk-mp-ok  (chk-mp (ok (f-imp ?A ?B)) (ok ?A)) (ok ?B))
+  (rewrite chk-mp-bad (chk-mp ?X ?Y)                       fail)
+
+  ;;; ═══════════════════════════════════════════════
+  ;;; LAYER 5: THE SOLVER — Recursive List Context
+  ;;; ═══════════════════════════════════════════════
+  ;;; Context is a proper list, not a conjunction tree.
+  ;;; `flatten` decomposes conjunction assumptions recursively.
+  ;;; `lookup` walks the list to arbitrary depth.
+  ;;;
+  ;;; This makes the solver Turing-complete over context
+  ;;; lookup — no hardcoded depth limit.
+
+  ;; ── Context data structure ──
+  (sort Context)
+  (constructor empty : Context)
+  (constructor cons  : (-> Form Context Context))
+
+  ;; ── Flatten: decompose conjunctions into list ──
+  ;; (f-and P (f-and Q R)) → cons P (cons Q (cons R ctx))
+  (constructor flatten : (-> Form Context Context))
+
+  (rewrite flatten-and  (flatten (f-and ?A ?B) ?Ctx) (flatten ?A (flatten ?B ?Ctx)))
+  (rewrite flatten-atom (flatten ?A ?Ctx)             (cons ?A ?Ctx))
+
+  ;; ── Lookup: recursive membership check ──
+  ;; Non-linear pattern: head matches goal → d-assume
+  ;; Otherwise: recurse into tail
+  (constructor lookup : (-> Context Form Deriv))
+
+  (rewrite lookup-hit  (lookup (cons ?A ?Rest) ?A) (d-assume ?A))
+  (rewrite lookup-miss (lookup (cons ?B ?Rest) ?A) (lookup ?Rest ?A))
+
+  ;; ── The solver ──
+  (constructor auto  : (-> Context Form Deriv))
+  (constructor tauto : (-> Form Deriv))
+
+  (rewrite tauto-def (tauto ?F) (auto empty ?F))
+
+  ;; Goal is ⊤
+  (rewrite auto-top (auto ?G f-top) d-top)
+
+  ;; Split conjunction goals
+  (rewrite auto-and (auto ?G (f-and ?A ?B))
+    (d-and-i (auto ?G ?A) (auto ?G ?B)))
+
+  ;; Peel implication: flatten the assumption into context
+  (rewrite auto-imp (auto ?G (f-imp ?A ?B))
+    (d-imp-i ?A (auto (flatten ?A ?G) ?B)))
+
+  ;; Catch-all: look up the goal in context
+  (rewrite auto-lookup (auto ?Ctx ?A) (lookup ?Ctx ?A))
+
+  ;;; ═══════════════════════════════════════════════
+  ;;; LAYER 6: SOUNDNESS LINK — Reflection Principle
+  ;;; ═══════════════════════════════════════════════
+  ;;; If the encoded checker validates tauto's output,
+  ;;; lift the formula to a real meta-level judgment.
+
+  (sort Prop)
+  (constructor eq : (-> Res Res Prop))
+  (judgment (proves ?P) :where P : Prop)
+  (rule eq-refl :premises () :conclusion (proves (eq ?a ?a)))
+
+  (judgment (true ?P) :where P : Form)
+  (rule reflect-tauto
+    :premises ((proves (eq (concl (tauto ?P)) (ok ?P))))
+    :conclusion (true ?P)))
+
+(check-theory OmegaSelf)
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;;                    ACT I — THE CHECKER
+;;; ═══════════════════════════════════════════════════════════
+
+
+;;; Proof 1: ⊤-intro → ok(⊤)
+
+(proof check-top-intro
+  :theory OmegaSelf
+  :goal (proves (eq (concl d-top) (ok f-top)))
+  :derivation (eq-refl))
+
+
+;;; Proof 2: Assumption → ok(P)
+
+(proof check-assume
+  :theory OmegaSelf
+  :goal (proves (eq (concl (d-assume P)) (ok P)))
+  :derivation (eq-refl))
+
+
+;;; Proof 3: ∧-intro → ok(P ∧ Q)
+
+(proof check-and-intro
+  :theory OmegaSelf
+  :goal (proves (eq
+    (concl (d-and-i (d-assume P) (d-assume Q)))
+    (ok (f-and P Q))))
+  :derivation (eq-refl))
+
+
+;;; Proof 4: ∧-elim-l → ok(P)
+
+(proof check-and-elim-l
+  :theory OmegaSelf
+  :goal (proves (eq
+    (concl (d-and-el (d-assume (f-and P Q))))
+    (ok P)))
+  :derivation (eq-refl))
+
+
+;;; Proof 5: Modus Ponens → ok(Q)
+;;; Non-linear pattern matching verifies the antecedent matches.
+
+(proof check-modus-ponens
+  :theory OmegaSelf
+  :goal (proves (eq
+    (concl (d-mp (d-assume (f-imp P Q)) (d-assume P)))
+    (ok Q)))
+  :derivation (eq-refl))
+
+
+;;; Proof 6: ∧-commutativity — manual 5-node tree
+
+(proof check-and-comm
+  :theory OmegaSelf
+  :goal (proves (eq
+    (concl (d-imp-i (f-and P Q)
+      (d-and-i
+        (d-and-er (d-assume (f-and P Q)))
+        (d-and-el (d-assume (f-and P Q))))))
+    (ok (f-imp (f-and P Q) (f-and Q P)))))
+  :derivation (eq-refl))
+
+
+;;; Proof 7: ∧-associativity — manual 9-node tree
+
+(proof check-and-assoc
+  :theory OmegaSelf
+  :goal (proves (eq
+    (concl (d-imp-i (f-and P (f-and Q R))
+      (d-and-i
+        (d-and-i
+          (d-and-el (d-assume (f-and P (f-and Q R))))
+          (d-and-el (d-and-er (d-assume (f-and P (f-and Q R))))))
+        (d-and-er (d-and-er (d-assume (f-and P (f-and Q R))))))))
+    (ok (f-imp (f-and P (f-and Q R)) (f-and (f-and P Q) R)))))
+  :derivation (eq-refl))
+
+
+;;; Proof 8: INVALID — ∧-elim-l on ⊤ → fail
+
+(proof reject-and-elim-on-top
+  :theory OmegaSelf
+  :goal (proves (eq (concl (d-and-el d-top)) fail))
+  :derivation (eq-refl))
+
+
+;;; Proof 9: INVALID — failure propagation
+
+(proof reject-propagation
+  :theory OmegaSelf
+  :goal (proves (eq
+    (concl (d-and-i (d-and-el d-top) (d-assume Q)))
+    fail))
+  :derivation (eq-refl))
+
+
+;;; Proof 10: INVALID — MP on non-implication → fail
+
+(proof reject-mp-non-imp
+  :theory OmegaSelf
+  :goal (proves (eq
+    (concl (d-mp (d-assume P) (d-assume Q)))
+    fail))
+  :derivation (eq-refl))
+
+
+;;; Proof 11: INVALID — MP antecedent mismatch → fail
+;;; P→Q and R: the antecedent P doesn't match R.
+;;; The catch-all rule handles this — no per-formula enumeration needed.
+
+(proof reject-mp-mismatch
+  :theory OmegaSelf
+  :goal (proves (eq
+    (concl (d-mp (d-assume (f-imp P Q)) (d-assume R)))
+    fail))
+  :derivation (eq-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;;                    ACT II — THE SOLVER
+;;; ═══════════════════════════════════════════════════════════
+;;; No more hand-built derivation trees. `tauto` builds them
+;;; automatically, `concl` validates them, all via eq-refl.
+;;;
+;;; The solver uses a LIST context with recursive lookup.
+;;; No depth limit — handles arbitrary nesting.
+
+
+;;; Proof 12: tauto(P → P) — identity, automated
+
+(proof auto-identity
+  :theory OmegaSelf
+  :goal (proves (eq
+    (concl (tauto (f-imp P P)))
+    (ok (f-imp P P))))
+  :derivation (eq-refl))
+
+
+;;; Proof 13: tauto(P∧Q → Q∧P) — commutativity, automated!
+;;; flatten decomposes (f-and P Q) into [P, Q].
+;;; lookup finds Q at position 2, P at position 1.
+
+(proof auto-and-comm
+  :theory OmegaSelf
+  :goal (proves (eq
+    (concl (tauto (f-imp (f-and P Q) (f-and Q P))))
+    (ok (f-imp (f-and P Q) (f-and Q P)))))
+  :derivation (eq-refl))
+
+
+;;; Proof 14: tauto(P∧(Q∧R) → (P∧Q)∧R) — associativity, automated!
+;;; flatten decomposes (f-and P (f-and Q R)) into [P, Q, R].
+;;; All three atoms found by walking the list.
+
+(proof auto-and-assoc
+  :theory OmegaSelf
+  :goal (proves (eq
+    (concl (tauto (f-imp (f-and P (f-and Q R)) (f-and (f-and P Q) R))))
+    (ok (f-imp (f-and P (f-and Q R)) (f-and (f-and P Q) R)))))
+  :derivation (eq-refl))
+
+
+;;; Proof 15: DEPTH-5 LOOKUP — the recursive context upgrade in action
+;;; P∧(Q∧(R∧(D∧E))) → E
+;;; flatten decomposes 4 nested conjunctions into [P, Q, R, D, E].
+;;; lookup walks past P, Q, R, D to find E at position 5.
+;;; The old depth-3 hardcoded solver CANNOT do this.
+
+(proof auto-deep-conj
+  :theory OmegaSelf
+  :goal (proves (eq
+    (concl (tauto (f-imp (f-and P (f-and Q (f-and R (f-and D E)))) E)))
+    (ok (f-imp (f-and P (f-and Q (f-and R (f-and D E)))) E))))
+  :derivation (eq-refl))
+
+
+;;; Proof 16: 5-DEEP IMPLICATION CHAIN — P→Q→R→D→E→P
+;;; Each implication pushes a formula onto the context list.
+;;; After 5 implications, context is [E, D, R, Q, P].
+;;; lookup walks the entire list to find P at position 5.
+
+(proof auto-deep-imp
+  :theory OmegaSelf
+  :goal (proves (eq
+    (concl (tauto (f-imp P (f-imp Q (f-imp R (f-imp D (f-imp E P)))))))
+    (ok (f-imp P (f-imp Q (f-imp R (f-imp D (f-imp E P))))))))
+  :derivation (eq-refl))
+
+
+;;; Proof 17: WEAKENING — P → Q → P
+;;; lookup skips Q to find P.
+
+(proof auto-weakening
+  :theory OmegaSelf
+  :goal (proves (eq
+    (concl (tauto (f-imp P (f-imp Q P))))
+    (ok (f-imp P (f-imp Q P)))))
+  :derivation (eq-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;;                 ACT III — THE SOUNDNESS LINK
+;;; ═══════════════════════════════════════════════════════════
+;;; The reflection principle: if tauto builds a tree and the
+;;; checker validates it, the formula is TRUE.
+;;;
+;;; Three layers compose in a single derivation:
+;;;   1. tauto builds the proof tree         (automation)
+;;;   2. concl checks the tree               (validation)
+;;;   3. reflect-tauto lifts to truth         (soundness)
+
+
+;;; Proof 18: P∧Q → Q∧P is TRUE — the one-line reflected proof
+
+(proof true-and-comm
+  :theory OmegaSelf
+  :goal (true (f-imp (f-and P Q) (f-and Q P)))
+  :derivation (reflect-tauto (eq-refl)))
+
+
+;;; Proof 19: P∧(Q∧(R∧(D∧E))) → E is TRUE — deep reflected proof
+;;; 5 layers of nesting, solved by recursive flatten + lookup,
+;;; validated by the checker, reflected to truth. One line.
+
+(proof true-deep-conj
+  :theory OmegaSelf
+  :goal (true (f-imp (f-and P (f-and Q (f-and R (f-and D E)))) E))
+  :derivation (reflect-tauto (eq-refl)))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;;                 ACT IV — THE ARITHMETIC TEST
+;;; ═══════════════════════════════════════════════════════════
+;;; Can the architecture handle an INFINITE domain?
+;;;
+;;; Propositional logic has finitely many atoms (P, Q, R, D, E).
+;;; Peano arithmetic has infinitely many terms: 0, 1, 2, ...
+;;; plus arbitrary sums and products.
+;;;
+;;; The solver `arith` normalizes both sides of an equation
+;;; via rewrite rules (plus, mul), then checks equality via
+;;; a non-linear pattern: (f-eq ?A ?A) matches only when
+;;; both sides are identical AFTER normalization.
+;;;
+;;; The result: "2+2=4" is not a lookup. It's a proof.
+
+(theory OmegaArith
+
+  ;;; ─── Natural Numbers ───
+  (sort Nat)
+
+  (constructor Z : Nat)
+  (constructor S : (-> Nat Nat))
+  (constructor plus : (-> Nat Nat Nat))
+  (constructor mul  : (-> Nat Nat Nat))
+
+  ;; Arithmetic rewrites
+  (rewrite plus-z (plus Z ?n) ?n)
+  (rewrite plus-s (plus (S ?n) ?m) (S (plus ?n ?m)))
+  (rewrite mul-z  (mul Z ?n) Z)
+  (rewrite mul-s  (mul (S ?n) ?m) (plus ?m (mul ?n ?m)))
+
+  ;;; ─── Ackermann Function ───
+  ;;; The canonical super-recursive function.
+  ;;; ack(0,n) = n+1
+  ;;; ack(m+1,0) = ack(m,1)
+  ;;; ack(m+1,n+1) = ack(m, ack(m+1,n))
+  ;;;
+  ;;; Grows faster than any primitive recursive function.
+  ;;; If the normalizer can compute ack(3,3)=61, the framework
+  ;;; handles arbitrary recursion depth.
+
+  (constructor ack : (-> Nat Nat Nat))
+
+  (rewrite ack-0   (ack Z ?n)          (S ?n))
+  (rewrite ack-m-0 (ack (S ?m) Z)      (ack ?m (S Z)))
+  (rewrite ack-m-n (ack (S ?m) (S ?n)) (ack ?m (ack (S ?m) ?n)))
+
+  ;;; ─── Formulas (equations over Nat) ───
+  (sort Form)
+  (constructor f-eq : (-> Nat Nat Form))
+
+  ;;; ─── Derivation Trees ───
+  (sort Deriv)
+  (constructor d-refl : (-> Nat Deriv))
+  (constructor d-succ : (-> Deriv Deriv))
+  (constructor d-bad  : Deriv)
+
+  ;;; ─── Result Type ───
+  (sort Res)
+  (constructor ok   : (-> Form Res))
+  (constructor fail : Res)
+
+  ;;; ─── Manual Checker ───
+  (constructor concl     : (-> Deriv Res))
+  (constructor chk-succ  : (-> Res Res))
+
+  (rewrite concl-refl (concl (d-refl ?n)) (ok (f-eq ?n ?n)))
+  (rewrite concl-succ (concl (d-succ ?D)) (chk-succ (concl ?D)))
+  (rewrite concl-bad  (concl d-bad)        fail)
+
+  (rewrite chk-succ-ok  (chk-succ (ok (f-eq ?A ?B))) (ok (f-eq (S ?A) (S ?B))))
+  (rewrite chk-succ-bad (chk-succ ?X)                 fail)
+
+  ;;; ─── Solver: Proof by Calculation ───
+  ;;; Non-linear pattern ?A ?A matches only after normalization.
+  ;;; plus and mul rewrites fire first, then (f-eq ?A ?A) checks.
+  (constructor arith : (-> Form Deriv))
+
+  (rewrite solve-eq  (arith (f-eq ?A ?A)) (d-refl ?A))
+  (rewrite solve-bad (arith ?X)            d-bad)
+
+  ;;; ─── Equality, Truth, Reflection ───
+  (sort Prop)
+  (constructor eq : (-> Res Res Prop))
+  (judgment (proves ?P) :where P : Prop)
+  (rule eq-refl :premises () :conclusion (proves (eq ?a ?a)))
+
+  (judgment (true ?P) :where P : Form)
+  (rule reflect-arith
+    :premises ((proves (eq (concl (arith ?P)) (ok ?P))))
+    :conclusion (true ?P)))
+
+(check-theory OmegaArith)
+
+
+;;; Proof 20: 0 = 0 — reflexivity
+;;; d-refl(Z) → ok(f-eq Z Z), the simplest case.
+
+(proof arith-refl-zero
+  :theory OmegaArith
+  :goal (proves (eq (concl (d-refl Z)) (ok (f-eq Z Z))))
+  :derivation (eq-refl))
+
+
+;;; Proof 21: S(0) = S(0) — succ congruence
+;;; d-succ(d-refl(Z)) → chk-succ(ok(f-eq Z Z)) → ok(f-eq S(Z) S(Z))
+
+(proof arith-succ-cong
+  :theory OmegaArith
+  :goal (proves (eq
+    (concl (d-succ (d-refl Z)))
+    (ok (f-eq (S Z) (S Z)))))
+  :derivation (eq-refl))
+
+
+;;; Proof 22: 1+1 = 2 — solver
+;;; arith(f-eq (plus S(Z) S(Z)) S(S(Z)))
+;;;   → plus normalizes: S(Z)+S(Z) → S(Z+S(Z)) → S(S(Z))
+;;;   → non-linear match: f-eq S(S(Z)) S(S(Z)) ✓
+;;;   → d-refl(S(S(Z))) → ok(f-eq S(S(Z)) S(S(Z)))
+
+(proof arith-one-plus-one
+  :theory OmegaArith
+  :goal (proves (eq
+    (concl (arith (f-eq (plus (S Z) (S Z)) (S (S Z)))))
+    (ok (f-eq (S (S Z)) (S (S Z))))))
+  :derivation (eq-refl))
+
+
+;;; Proof 23: 2+2 = 4 — THE proof
+;;; Four steps of plus normalization, then identity check.
+
+(proof arith-two-plus-two
+  :theory OmegaArith
+  :goal (proves (eq
+    (concl (arith (f-eq
+      (plus (S (S Z)) (S (S Z)))
+      (S (S (S (S Z)))))))
+    (ok (f-eq (S (S (S (S Z)))) (S (S (S (S Z))))))))
+  :derivation (eq-refl))
+
+
+;;; Proof 24: 2*3 = 6 — solver handles multiplication
+;;; mul normalizes via: 2*3 = 3 + (1*3) = 3 + (3 + (0*3)) = 3 + (3 + 0) = 6
+
+(proof arith-two-times-three
+  :theory OmegaArith
+  :goal (proves (eq
+    (concl (arith (f-eq
+      (mul (S (S Z)) (S (S (S Z))))
+      (S (S (S (S (S (S Z)))))))))
+    (ok (f-eq
+      (S (S (S (S (S (S Z))))))
+      (S (S (S (S (S (S Z))))))))))
+  :derivation (eq-refl))
+
+
+;;; Proof 25: INVALID — 1 ≠ 2 → fail
+;;; Certified rejection: the solver produces d-bad, checker returns fail.
+
+(proof arith-reject-one-neq-two
+  :theory OmegaArith
+  :goal (proves (eq
+    (concl (arith (f-eq (S Z) (S (S Z)))))
+    fail))
+  :derivation (eq-refl))
+
+
+;;; Proof 26: true(2+2 = 4) — reflected
+;;; The punchline. One derivation step proves an arithmetic fact
+;;; by composing calculation, validation, and reflection.
+
+(proof true-two-plus-two
+  :theory OmegaArith
+  :goal (true (f-eq
+    (plus (S (S Z)) (S (S Z)))
+    (S (S (S (S Z))))))
+  :derivation (reflect-arith (eq-refl)))
+
+
+;;; Proof 27: true(3*3 = 9) — reflected
+;;; Nine successor applications, all computed by rewrite rules.
+
+(proof true-three-times-three
+  :theory OmegaArith
+  :goal (true (f-eq
+    (mul (S (S (S Z))) (S (S (S Z))))
+    (S (S (S (S (S (S (S (S (S Z)))))))))))
+  :derivation (reflect-arith (eq-refl)))
+
+
+;;; Proof 28: true((1+1)*(1+1) = 4) — nested computation reflected
+;;; Both sides of the equation contain computation:
+;;;   (1+1)*(1+1) normalizes to 4, and 4 is already 4.
+;;; The non-linear pattern fires after BOTH sides normalize.
+
+(proof true-nested-computation
+  :theory OmegaArith
+  :goal (true (f-eq
+    (mul (plus (S Z) (S Z)) (plus (S Z) (S Z)))
+    (S (S (S (S Z))))))
+  :derivation (reflect-arith (eq-refl)))
+
+
+;;; Proof 29: true(2*3 = 6) — reflected multiplication
+
+(proof true-two-times-three
+  :theory OmegaArith
+  :goal (true (f-eq
+    (mul (S (S Z)) (S (S (S Z))))
+    (S (S (S (S (S (S Z))))))))
+  :derivation (reflect-arith (eq-refl)))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;;                 ACT V — THE ACKERMANN TEST
+;;; ═══════════════════════════════════════════════════════════
+;;; The Ackermann function grows faster than any primitive
+;;; recursive function. If the normalizer can compute it,
+;;; the framework handles ARBITRARY recursion — not just
+;;; simple structural induction.
+;;;
+;;; ack(0,n)   = n+1
+;;; ack(m+1,0) = ack(m,1)
+;;; ack(m+1,n+1) = ack(m, ack(m+1,n))
+;;;
+;;; ack(1,1) = 3
+;;; ack(2,2) = 7
+;;; ack(3,3) = 61  (requires ~2500 rewrite steps)
+
+
+;;; Proof 30: true(ack(1,1) = 3) — reflected Ackermann
+;;; ack(1,1) = ack(0, ack(1,0)) = ack(0, ack(0,1)) = ack(0,2) = 3
+
+(proof true-ack-1-1
+  :theory OmegaArith
+  :goal (true (f-eq
+    (ack (S Z) (S Z))
+    (S (S (S Z)))))
+  :derivation (reflect-arith (eq-refl)))
+
+
+;;; Proof 31: true(ack(2,2) = 7) — reflected Ackermann
+;;; ack(2,2) = ack(1, ack(2,1)) = ack(1, ack(1, ack(2,0)))
+;;;         = ack(1, ack(1, 3)) = ack(1, 5) = 7
+
+(proof true-ack-2-2
+  :theory OmegaArith
+  :goal (true (f-eq
+    (ack (S (S Z)) (S (S Z)))
+    (S (S (S (S (S (S (S Z)))))))))
+  :derivation (reflect-arith (eq-refl)))
+
+
+;;; Proof 32: true(ack(3,3) = 61) — THE showstopper
+;;; ack(3,3) = ack(2, ack(3,2)) = ack(2, ack(2, ack(3,1)))
+;;;         = ack(2, ack(2, ack(2, ack(3,0))))
+;;;         = ack(2, ack(2, ack(2, 5)))
+;;;         = ack(2, ack(2, 13)) = ack(2, 29) = 61
+;;;
+;;; ~2500 rewrite steps, exercising the full normalizer.
+;;; RHS uses plus/mul to avoid 61 nested S's:
+;;; 61 = 2 * (5 * 6) + 1
+
+(proof true-ack-3-3
+  :theory OmegaArith
+  :goal (true (f-eq
+    (ack (S (S (S Z))) (S (S (S Z))))
+    (plus
+      (mul (S (S Z))
+           (mul (S (S (S (S (S Z)))))
+                (S (S (S (S (S (S Z))))))))
+      (S Z))))
+  :derivation (reflect-arith (eq-refl)))

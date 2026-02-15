@@ -1544,12 +1544,16 @@ fn self_representation_example() {
     assert!(results.iter().any(|r| r.contains("Proof reject-propagation: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof reject-mp-non-imp: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof reject-mp-mismatch: VALID")));
-    // ACT II: Solver
+    // ACT II: Solver (recursive list context)
     assert!(results.iter().any(|r| r.contains("Proof auto-identity: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof auto-and-comm: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof auto-and-assoc: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof auto-deep-conj: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof auto-deep-imp: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof auto-weakening: VALID")));
     // ACT III: Soundness link
     assert!(results.iter().any(|r| r.contains("Proof true-and-comm: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof true-deep-conj: VALID")));
     // ACT IV: Arithmetic
     assert!(results.iter().any(|r| r.contains("Theory OmegaArith: registered OK")));
     assert!(results.iter().any(|r| r.contains("Proof arith-refl-zero: VALID")));
@@ -1562,6 +1566,10 @@ fn self_representation_example() {
     assert!(results.iter().any(|r| r.contains("Proof true-three-times-three: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof true-nested-computation: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof true-two-times-three: VALID")));
+    // ACT V: Ackermann
+    assert!(results.iter().any(|r| r.contains("Proof true-ack-1-1: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof true-ack-2-2: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof true-ack-3-3: VALID")));
 }
 
 #[test]
