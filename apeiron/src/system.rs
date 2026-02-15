@@ -98,6 +98,8 @@ pub struct Session {
     pub morphisms: HashMap<String, AutoMorphism>,
     /// Compiled graph rules indexed by theory name.
     pub compiled_rules: HashMap<String, Vec<rewrite::GraphRule>>,
+    /// Theory-level operator declarations (extend known_ops for builder).
+    pub extra_known_ops: HashSet<String>,
 }
 
 impl Session {
@@ -112,6 +114,7 @@ impl Session {
             output: Vec::new(),
             morphisms: HashMap::new(),
             compiled_rules: HashMap::new(),
+            extra_known_ops: HashSet::new(),
         }
     }
 
@@ -227,7 +230,7 @@ impl Session {
         };
 
         // Collect known operator names from the system's @syntax
-        let known_ops: HashSet<String> = system
+        let mut known_ops: HashSet<String> = system
             .operators
             .iter()
             .map(|op| op.name.clone())
@@ -268,6 +271,15 @@ impl Session {
                             self.next_scope_id += 1;
                             self.scopes.insert(name.clone(), id);
                             self.output.push(format!("[SCOPE] {} (id={})", name, id));
+                        }
+                    }
+                    "op" | "Op" => {
+                        // [op name] — theory-local operator (extends known_ops)
+                        if decl.len() >= 2 {
+                            let name = decl[1].as_atom().unwrap_or("?").to_string();
+                            known_ops.insert(name.clone());
+                            self.extra_known_ops.insert(name.clone());
+                            self.output.push(format!("[OP] {}", name));
                         }
                     }
                     "@rule" => {
@@ -701,6 +713,7 @@ impl Session {
             &self.defs,
             &self.scopes,
             &self.compiled_rules,
+            &self.extra_known_ops,
             target_scope_name.as_deref(),
         )?;
 
@@ -721,9 +734,10 @@ impl Session {
         // Expand defs
         let expanded = rewrite::expand_defs(expr, &self.defs);
 
-        // Build with known ops
+        // Build with known ops (system + theory-level)
         let mut env = BuildEnv::new();
         env.known_ops = known_ops.clone();
+        env.known_ops.extend(self.extra_known_ops.iter().cloned());
         env.scope_ids = self.scopes.clone();
         let root = builder::build_rooted(&mut self.arena, &mut env, &expanded);
 

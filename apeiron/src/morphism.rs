@@ -92,7 +92,9 @@ pub fn resolve_morphism(
         None => derive_checking_pass(&source.check_modes, &target.check_modes),
     };
 
-    // Build operator map: explicit overrides + auto-matched by name
+    // Build operator map: explicit overrides + auto-matched by name.
+    // Unmapped operators pass through at declaration time.
+    // If @strict is true, transport-time validation catches leaked ops.
     let mut op_map = explicit_ops;
     let target_op_names: HashSet<String> = target.operators.iter().map(|o| o.name.clone()).collect();
 
@@ -102,13 +104,9 @@ pub fn resolve_morphism(
         }
         if target_op_names.contains(&src_op.name) {
             op_map.insert(src_op.name.clone(), src_op.name.clone());
-        } else if config.strict {
-            return Err(ApeironError::OperatorNotInTarget {
-                source_op: src_op.name.clone(),
-                target_system: target.name.clone(),
-            });
         }
-        // Non-strict: unmapped operators pass through unchanged
+        // Unmapped operators are allowed at declaration time.
+        // Strict validation happens at transport time.
     }
 
     Ok(AutoMorphism {
@@ -436,6 +434,35 @@ fn check_no_futures(term: &Term) -> Result<()> {
     }
 }
 
+/// Strict validation: check that no unmapped source operators appear in the term.
+/// This catches cases where the source-side compiler failed to eliminate a high-level op.
+fn validate_no_leaked_ops(term: &Term, unmapped_ops: &HashSet<String>) -> Result<()> {
+    match term {
+        Term::Const(name) => {
+            if unmapped_ops.contains(name.as_str()) {
+                return Err(ApeironError::MorphismError {
+                    name: "strict".to_string(),
+                    detail: format!(
+                        "source operator '{}' leaked through compilation (not rewritten away). \
+                         Add a [Map {} ...] or ensure compiler rules eliminate it.",
+                        name, name
+                    ),
+                });
+            }
+            Ok(())
+        }
+        Term::App(func, args) => {
+            validate_no_leaked_ops(func, unmapped_ops)?;
+            for arg in args {
+                validate_no_leaked_ops(arg, unmapped_ops)?;
+            }
+            Ok(())
+        }
+        Term::Binder { body, .. } => validate_no_leaked_ops(body, unmapped_ops),
+        _ => Ok(()),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Transport pipeline
 // ---------------------------------------------------------------------------
@@ -460,14 +487,16 @@ pub fn transport(
     defs: &HashMap<String, Sexp>,
     scopes: &HashMap<String, u32>,
     compiled_rules: &HashMap<String, Vec<rewrite::GraphRule>>,
+    extra_known_ops: &HashSet<String>,
     target_scope_name: Option<&str>,
 ) -> Result<Sexp> {
-    // 1. Source known_ops
-    let known_ops: HashSet<String> = source_config
+    // 1. Source known_ops (system + theory-level)
+    let mut known_ops: HashSet<String> = source_config
         .operators
         .iter()
         .map(|op| op.name.clone())
         .collect();
+    known_ops.extend(extra_known_ops.iter().cloned());
 
     // 2. Recursive def expansion
     let expanded = rewrite::expand_defs(source_expr, defs);
@@ -513,6 +542,22 @@ pub fn transport(
 
     // 8. Operator renaming
     let term = apply_op_rename(&term, &morphism.op_map);
+
+    // 8.5. Strict validation: check no unmapped source ops leaked through
+    if morphism.config.strict {
+        let source_op_names: HashSet<String> = source_config
+            .operators
+            .iter()
+            .map(|o| o.name.clone())
+            .collect();
+        let unmapped: HashSet<String> = source_op_names
+            .into_iter()
+            .filter(|name| !morphism.op_map.contains_key(name))
+            .collect();
+        if !unmapped.is_empty() {
+            validate_no_leaked_ops(&term, &unmapped)?;
+        }
+    }
 
     // 9. Convert to Sexp
     Ok(rewrite::term_to_sexp(&term))

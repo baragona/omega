@@ -434,6 +434,11 @@ fn example_automorphism() {
     run_example("examples/automorphism.ap");
 }
 
+#[test]
+fn example_stack_compiler() {
+    run_example("examples/stack-compiler.ap");
+}
+
 // ================================================================
 // Linear-Explicit Rejection Tests
 // ================================================================
