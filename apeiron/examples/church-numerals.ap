@@ -1,0 +1,40 @@
+;; Apeiron Example: Church Numerals
+;; "Golden Path B" — Implicit + Compute (Haskell Mode)
+;;
+;; Higher-order functional programming with Church Numerals.
+;; The Interaction Net handles "Dup" nodes automatically. When a
+;; function argument is used multiple times, Dup nodes fan it out.
+
+[System HaskellMode
+  [@syntax [sort Term]]
+  [@check compute]
+]
+
+[Theory ChurchNumerals :in HaskellMode
+
+  ;; Church 0: \f.\x. x
+  [eval church-zero [lam f [lam x x]]]
+
+  ;; Church 1: \f.\x. f(x)
+  [eval church-one [lam f [lam x [app f x]]]]
+
+  ;; Apply church-one to S and Z: S(Z) = 1
+  [eval one [app [app [lam f [lam x [app f x]]] S] Z]]
+
+  ;; Apply church-two to S and Z: S(S(Z)) = 2
+  [eval two [app [app [lam f [lam x [app f [app f x]]]] S] Z]]
+
+  ;; Church addition: \m.\n.\f.\x. m f (n f x)
+  ;; (1 + 2): apply add to church-one and church-two, then to S and Z
+  [def add [lam m [lam n [lam f [lam x
+    [app [app m f] [app [app n f] x]]
+  ]]]]]
+
+  [eval one-plus-two
+    [app [app
+      [app [app add
+        [lam f [lam x [app f x]]]]            ;; church 1
+        [lam f [lam x [app f [app f x]]]]]    ;; church 2
+      S] Z]
+  ]
+]

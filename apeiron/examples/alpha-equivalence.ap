@@ -1,0 +1,36 @@
+;; Apeiron Example: The "Alpha Trap"
+;; "Dangerous Mode E" — Topological Equality
+;;
+;; Proving (\x.x) == (\y.y) without an oracle.
+;; In the Interaction Net, variable names are erased. Both terms compile
+;; to the same graph topology: Lam node with var↔body self-loop.
+;; The topological hash is identical.
+
+[System AlphaSystem
+  [@syntax [sort Term]]
+  [@check beta-reduction]
+]
+
+[Theory AlphaEquivalence :in AlphaSystem
+
+  ;; In a naive string-based system, "x" != "y".
+  ;; In Apeiron, these are topologically isomorphic graphs.
+  [assert-eq alpha-simple
+    [lam x x]
+    [lam y y]
+  ]
+
+  ;; A harder one: Shadowing
+  ;; (\x. (\x. x)) — inner x binds to inner lambda, outer x is erased.
+  ;; (\a. (\b. b)) — same topology.
+  [assert-eq alpha-shadow
+    [lam x [lam x x]]
+    [lam a [lam b b]]
+  ]
+
+  ;; Beta reduction + alpha: (\x.x) y == (\z.z) y
+  [assert-eq alpha-beta
+    [app [lam x x] y]
+    [app [lam z z] y]
+  ]
+]

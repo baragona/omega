@@ -1,0 +1,24 @@
+;; Apeiron Example: Self-Reflection
+;; "God Mode" — The kernel can introspect its own graph topology.
+;;
+;; Since the kernel is an Interaction Net, you can do something standard
+;; lambda calculus cannot: inspect the graph structure directly.
+;; The [reflect] command shows nodes and wires without reducing.
+
+[System Reflection
+  [@syntax [sort Term]]
+  [@check beta-reduction]
+]
+
+[Theory Introspection :in Reflection
+
+  ;; (\x. x) is the Identity function.
+  ;; What does its graph LOOK like?
+  [reflect identity [lam x x]]
+
+  ;; (\x. x x) has a Dup node (non-linear variable)
+  [reflect nonlinear [lam x [app x x]]]
+
+  ;; A constant function (\x. y) has an Erase node
+  [reflect constant-fn [lam x y]]
+]

@@ -1,0 +1,30 @@
+;; Apeiron Example: The "Zombie" Linter
+;; "Exotic Mode C" — Linearity Detection via Graph Structure
+;;
+;; In an Interaction Net, a variable used twice creates a Dup node.
+;; A variable used zero times creates an Erase node. The graph
+;; structure reveals linearity violations directly.
+
+[System LinearCheck
+  [@syntax [sort Term]]
+  [@check beta-reduction]
+]
+
+[Theory LinterTest :in LinearCheck
+
+  ;; LINEAR: x used exactly once → direct wire (no Dup, no Erase)
+  [eval linear [lam x x]]
+  ;; Result: [lam x x]
+
+  ;; AFFINE: x not used → Erase node on var port
+  [eval affine [lam x y]]
+  ;; Result: [lam x y] (with internal Erase node on x)
+
+  ;; NON-LINEAR: x used twice → Dup node inserted
+  [eval nonlinear [lam x [app x x]]]
+  ;; Result shows the Dup node in the graph
+
+  ;; After beta reduction, Dup propagates through:
+  ;; (\x. x x) z  →  z z  (Dup(z) → z, z)
+  [eval dup-propagation [app [lam x [app x x]] z]]
+]

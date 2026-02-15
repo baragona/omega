@@ -1,0 +1,13 @@
+[package]
+name = "apeiron"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+smallvec = "1.13"
+
+[[bin]]
+name = "apeiron"
+path = "src/main.rs"

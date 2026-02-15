@@ -1,0 +1,66 @@
+;; Apeiron Example: Weak Logical Framework
+;; This demonstrates the "Dedukti/Twelf" configuration — fast checking,
+;; rewrite rules, HOAS handled by the kernel implicitly.
+
+[System WeakLF
+  ;; 1. Define Syntax: Simple Types and Terms
+  [@syntax
+    [sort Type]
+    [sort Term]
+    [op arrow]
+    [op app]
+    [op lam]
+  ]
+
+  ;; 2. Configure Binding: 'implicit' means Kernel handles alpha-conversion
+  [@binding implicit]
+
+  ;; 3. Define Judgment: Equality is defined by Rewriting + Beta
+  [@check rewriting beta-reduction]
+]
+
+;; ================================================================
+;; Theory: Simple Lambda Calculus with Peano Naturals
+;; ================================================================
+
+[Theory SimpleLogic :in WeakLF
+
+  ;; --- Type and term constants ---
+  [const nat Type]
+  [const z Term]
+  [const s Term]
+  [const plus Term]
+
+  ;; --- Beta reduction tests ---
+
+  ;; Identity applied to a constant: (\x.x) z = z
+  [assert-eq id-test
+    [app [lam x x] z]
+    z
+  ]
+
+  ;; Constant function: (\x.z) y = z
+  [assert-eq const-test
+    [app [lam x z] y]
+    z
+  ]
+
+  ;; Nested identity: (\x.x) ((\y.y) z) = z
+  [assert-eq nested-id
+    [app [lam x x] [app [lam y y] z]]
+    z
+  ]
+
+  ;; Non-linear variable: (\x. app x x) applied
+  ;; This tests the Dup node insertion for non-linear variables
+  [eval dup-test [app [lam x [app x x]] z]]
+
+  ;; Church numeral zero: \f.\x.x
+  [eval church-zero [lam f [lam x x]]]
+
+  ;; Church numeral one: \f.\x.(f x)
+  [eval church-one [lam f [lam x [app f x]]]]
+
+  ;; Apply church-one to s and z: should give [s z] = 1
+  [eval church-one-applied [app [app [lam f [lam x [app f x]]] s] z]]
+]

@@ -1,0 +1,29 @@
+;; Apeiron Example: Scope Confusion / Modal Logic
+;; "Exotic Mode D" — Contextual + Compute
+;;
+;; Demonstrates the "Stuck" state. A Barrier node blocks interaction
+;; at its principal port until its scope is activated.
+;; The function inside the barrier cannot be applied until unlocked.
+
+[System Contextual
+  [@syntax [sort Term]]
+  [@binding contextual]
+  [@check beta-reduction]
+]
+
+[Theory ModalLogic :in Contextual
+
+  ;; 1. Define a scope "World_A"
+  [Scope World_A]
+
+  ;; 2. Try to apply a barriered function to y.
+  ;; The App×Barrier pair suspends because World_A is not active.
+  ;; Result: the application is STUCK — beta cannot fire.
+  [eval locked [app [barrier World_A [lam x x]] y]]
+
+  ;; 3. Unlock the scope, then try again.
+  ;; The barrier dissolves, App×Lam fires, result is y.
+  [with-scope World_A
+    [eval unlocked [app [barrier World_A [lam x x]] y]]
+  ]
+]

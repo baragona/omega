@@ -1,0 +1,47 @@
+;; Apeiron Example: Arithmetic via Graph Rewriting
+;; "Golden Path A" — Implicit + Rewriting (Weak LF / Dedukti Mode)
+;;
+;; Defines Peano arithmetic purely via graph rewrite rules.
+;; The kernel matches the topology of [plus z ?n] and rewires the graph to ?n.
+;; Operators declared in @syntax are built as Sym nodes with arity (not curried App).
+
+[System WeakLF
+  [@syntax
+    [sort Nat]
+    [op z]
+    [op s]
+    [op plus]
+  ]
+  [@check rewriting]
+]
+
+[Theory Arithmetic :in WeakLF
+
+  ;; 1. Base case: plus(z, n) -> n
+  ;; The kernel detects the [plus z ?n] subgraph and rewires it to ?n.
+  [@rule [plus z ?n] ==> ?n]
+
+  ;; 2. Recursive case: plus(s(n), m) -> s(plus(n, m))
+  [@rule [plus [s ?n] ?m] ==> [s [plus ?n ?m]]]
+
+  ;; 2 + 2 = 4
+  [assert-eq two-plus-two
+    [plus [s [s z]] [s [s z]]]
+    [s [s [s [s z]]]]
+  ]
+
+  ;; 1 + 0 = 1
+  [assert-eq one-plus-zero
+    [plus [s z] z]
+    [s z]
+  ]
+
+  ;; 0 + 3 = 3
+  [assert-eq zero-plus-three
+    [plus z [s [s [s z]]]]
+    [s [s [s z]]]
+  ]
+
+  ;; Eval: compute 3 + 1
+  [eval three-plus-one [plus [s [s [s z]]] [s z]]]
+]
