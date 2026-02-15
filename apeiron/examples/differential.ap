@@ -1,0 +1,28 @@
+;; Apeiron Example: Differential Computation
+;; Check Mode: differential
+;;
+;; Differential interaction nets model incremental computation:
+;; given f(x) and a change dx, compute f(x + dx) efficiently.
+;; This is a placeholder — the differential mode is recognized
+;; by the parser. Full differential node types are a future extension.
+
+[System DifferentialSystem
+  [@syntax [sort Term] [op deriv] [op plus]]
+  [@binding implicit]
+  [@check rewriting differential]
+]
+
+[Theory DiffDemo :in DifferentialSystem
+
+  ;; Model derivative as a rewrite rule (symbolic differentiation)
+  [@rule deriv-const [deriv z] ==> z]
+  [@rule deriv-plus  [deriv [plus ?a ?b]] ==> [plus [deriv ?a] [deriv ?b]]]
+
+  ;; d/dx(0 + 0) = 0 + 0 = ... (symbolic)
+  [eval diff-test [deriv [plus z z]]]
+
+  [assert-eq diff-linearity
+    [deriv [plus z z]]
+    [plus z z]
+  ]
+]

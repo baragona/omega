@@ -94,6 +94,15 @@ pub fn compile_rule(name: &str, lhs: &Sexp, rhs: &Sexp) -> Option<GraphRule> {
                 rhs: rhs.clone(),
             })
         }
+        Sexp::Atom(name_str, _) if !name_str.starts_with('?') => {
+            // Atom LHS: treat as a 0-arity symbol (e.g., inverse rules)
+            Some(GraphRule {
+                name: name.to_string(),
+                head: name_str.clone(),
+                arg_patterns: vec![],
+                rhs: rhs.clone(),
+            })
+        }
         _ => None,
     }
 }

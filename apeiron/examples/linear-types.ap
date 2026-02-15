@@ -1,0 +1,37 @@
+;; Apeiron Example: Linear Types
+;; Binding Mode: linear-explicit
+;;
+;; In linear mode, every variable must be used EXACTLY once.
+;; - No duplication (Dup is forbidden)
+;; - No erasure (Erase is forbidden)
+;; This enforces resource-aware programming.
+
+[System LinearSystem
+  [@syntax [sort Term]]
+  [@binding linear-explicit]
+  [@check beta-reduction]
+]
+
+[Theory LinearProofs :in LinearSystem
+
+  ;; === Test 1: Identity is linear ===
+  ;; \x. x uses x exactly once — should pass.
+  [eval linear-identity [lam x x]]
+
+  ;; === Test 2: Linear application ===
+  ;; (\x. x) y — both sides are linear.
+  [assert-eq linear-app [app [lam x x] y] y]
+
+  ;; === Test 3: Nested linear application ===
+  ;; (\x. x) ((\y. y) z) = z
+  [assert-eq nested-linear [app [lam x x] [app [lam y y] z]] z]
+
+  ;; === Test 4: Constant function (should fail!) ===
+  ;; \x. z — x is unused (erased), violating linearity.
+  ;; This is commented out because it SHOULD fail:
+  ;; [eval should-fail [app [lam x z] y]]
+
+  ;; === Test 5: Duplication (should fail!) ===
+  ;; \x. (x x) — x is used twice, violating linearity.
+  ;; [eval should-fail-dup [app [lam x [app x x]] y]]
+]

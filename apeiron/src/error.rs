@@ -23,6 +23,14 @@ pub enum ApeironError {
 
     // Assertion errors
     AssertionFailed { name: String, detail: String },
+
+    // Linearity errors
+    LinearityViolation { detail: String },
+
+    // Morphism errors
+    MorphismError { name: String, detail: String },
+    UnknownMorphism { name: String },
+    OperatorNotInTarget { source_op: String, target_system: String },
 }
 
 impl fmt::Display for ApeironError {
@@ -53,6 +61,18 @@ impl fmt::Display for ApeironError {
             }
             Self::AssertionFailed { name, detail } => {
                 write!(f, "assertion '{}' failed: {}", name, detail)
+            }
+            Self::LinearityViolation { detail } => {
+                write!(f, "linearity violation: {}", detail)
+            }
+            Self::MorphismError { name, detail } => {
+                write!(f, "morphism '{}' error: {}", name, detail)
+            }
+            Self::UnknownMorphism { name } => {
+                write!(f, "unknown morphism: {}", name)
+            }
+            Self::OperatorNotInTarget { source_op, target_system } => {
+                write!(f, "source operator '{}' has no mapping in target system '{}'. Add [Map {} ...] to the AutoMorphism.", source_op, target_system, source_op)
             }
         }
     }

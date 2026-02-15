@@ -1,0 +1,46 @@
+;; Apeiron Example: Nominal Binding
+;; Binding Mode: nominal
+;;
+;; In nominal mode, scope names are MEANINGFUL — they are not
+;; alpha-equivalent. Two barriers with different scope names
+;; are considered structurally different.
+
+[System NominalSystem
+  [@syntax [sort Term]]
+  [@binding nominal]
+  [@check beta-reduction oracle]
+]
+
+[Theory NominalTests :in NominalSystem
+
+  [Scope A]
+  [Scope B]
+
+  ;; === Test 1: Same scope, same structure → equal ===
+  [assert-eq same-scope
+    [box A x]
+    [box A x]
+  ]
+
+  ;; === Test 2: Different scopes → NOT equal in nominal mode ===
+  ;; In standard contextual binding, [box A x] == [box B x] because
+  ;; scope IDs are canonicalized. But in nominal mode, A ≠ B.
+  [assert-neq different-scopes
+    [box A x]
+    [box B x]
+  ]
+
+  ;; === Test 3: Identity still works inside same scope ===
+  [with-scope A
+    [assert-eq nominal-beta
+      [box A [app [lam x x] y]]
+      [box A y]
+    ]
+  ]
+
+  ;; === Test 4: Nested same-scope is still equal ===
+  [assert-eq nested-same-scope
+    [box A [box A x]]
+    [box A [box A x]]
+  ]
+]

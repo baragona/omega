@@ -384,3 +384,174 @@ fn example_grand_unification() {
 fn example_leibniz() {
     run_example("examples/leibniz.ap");
 }
+
+// ================================================================
+// New Mode Examples
+// ================================================================
+
+#[test]
+fn example_linear_types() {
+    run_example("examples/linear-types.ap");
+}
+
+#[test]
+fn example_reversible() {
+    run_example("examples/reversible.ap");
+}
+
+#[test]
+fn example_nominal() {
+    run_example("examples/nominal.ap");
+}
+
+#[test]
+fn example_typed_wires() {
+    run_example("examples/typed-wires.ap");
+}
+
+#[test]
+fn example_nondeterministic() {
+    run_example("examples/nondeterministic.ap");
+}
+
+#[test]
+fn example_differential() {
+    run_example("examples/differential.ap");
+}
+
+#[test]
+fn example_distributed() {
+    run_example("examples/distributed.ap");
+}
+
+#[test]
+fn example_entangled() {
+    run_example("examples/entangled.ap");
+}
+
+#[test]
+fn example_automorphism() {
+    run_example("examples/automorphism.ap");
+}
+
+// ================================================================
+// Linear-Explicit Rejection Tests
+// ================================================================
+
+#[test]
+fn linear_rejects_duplication() {
+    let source = r#"
+    [System LinearTest
+      [@syntax [sort Term]]
+      [@binding linear-explicit]
+      [@check beta-reduction]
+    ]
+    [Theory Dup :in LinearTest
+      [eval dup-fail [lam x [app x x]]]
+    ]
+    "#;
+
+    let sexps = parser::parse(source).unwrap();
+    let mut session = Session::new();
+    session.process(&sexps[0]).unwrap();
+    let result = session.process(&sexps[1]);
+    assert!(result.is_err());
+    let err = format!("{}", result.unwrap_err());
+    assert!(err.contains("linearity") || err.contains("duplicat"), "expected linearity error, got: {}", err);
+}
+
+#[test]
+fn linear_rejects_erasure() {
+    let source = r#"
+    [System LinearTest
+      [@syntax [sort Term]]
+      [@binding linear-explicit]
+      [@check beta-reduction]
+    ]
+    [Theory Erase :in LinearTest
+      [eval erase-fail [lam x z]]
+    ]
+    "#;
+
+    let sexps = parser::parse(source).unwrap();
+    let mut session = Session::new();
+    session.process(&sexps[0]).unwrap();
+    let result = session.process(&sexps[1]);
+    assert!(result.is_err());
+    let err = format!("{}", result.unwrap_err());
+    assert!(err.contains("linearity") || err.contains("erased"), "expected linearity error, got: {}", err);
+}
+
+#[test]
+fn linear_accepts_identity() {
+    let source = r#"
+    [System LinearTest
+      [@syntax [sort Term]]
+      [@binding linear-explicit]
+      [@check beta-reduction]
+    ]
+    [Theory Ok :in LinearTest
+      [assert-eq id-ok [app [lam x x] y] y]
+    ]
+    "#;
+
+    let sexps = parser::parse(source).unwrap();
+    let mut session = Session::new();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+}
+
+// ================================================================
+// Nominal Mode Tests
+// ================================================================
+
+#[test]
+fn nominal_distinguishes_scopes() {
+    let source = r#"
+    [System NomTest
+      [@syntax [sort Term]]
+      [@binding nominal]
+      [@check oracle]
+    ]
+    [Theory Nom :in NomTest
+      [Scope X]
+      [Scope Y]
+      [assert-neq nom-diff [box X a] [box Y a]]
+    ]
+    "#;
+
+    let sexps = parser::parse(source).unwrap();
+    let mut session = Session::new();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+}
+
+// ================================================================
+// Reversible Mode Tests
+// ================================================================
+
+#[test]
+fn reversible_generates_inverse() {
+    let source = r#"
+    [System RevTest
+      [@syntax [sort Term] [op wrap]]
+      [@binding implicit]
+      [@check rewriting reversible]
+    ]
+    [Theory Rev :in RevTest
+      [@rule wrap-z [wrap z] ==> tagged]
+      [eval-reverse unwrap tagged]
+    ]
+    "#;
+
+    let sexps = parser::parse(source).unwrap();
+    let mut session = Session::new();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+
+    // Check that the reverse eval produced output
+    assert!(session.output.iter().any(|s| s.starts_with("[EVAL]") && s.contains("unwrap")));
+}

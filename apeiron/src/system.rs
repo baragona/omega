@@ -4,6 +4,7 @@ use crate::arena::Arena;
 use crate::builder::{self, BuildEnv};
 use crate::error::{ApeironError, Result};
 use crate::hash;
+use crate::morphism::{self, AutoMorphism};
 use crate::parser::Sexp;
 use crate::physics::{self, PhysicsConfig};
 use crate::readback;
@@ -15,6 +16,16 @@ pub enum BindingMode {
     Implicit,
     Exposed,
     Contextual,
+    /// Enforce linear usage: every variable must be used exactly once.
+    /// Dup (multi-use) and Erase (unused) are rejected.
+    LinearExplicit,
+    /// Nominal binding: names are meaningful, not alpha-equivalent.
+    /// Hashing does NOT canonicalize scope/label IDs.
+    Nominal,
+    /// Distributed binding: variables carry location annotations.
+    Distributed,
+    /// Entangled binding: wire pairs share quantum-like state.
+    Entangled,
 }
 
 /// A checking capability.
@@ -27,6 +38,14 @@ pub enum CheckMode {
     Oracle,
     Extensional,
     PatternUnification,
+    /// Every rule must be invertible; auto-generates inverse rules.
+    Reversible,
+    /// Multiple rules may match; non-deterministic selection.
+    ConfluentRace,
+    /// Differential: graph carries values + tangent vectors.
+    Differential,
+    /// Type-check: validate sort constraints on wires.
+    TypeCheck,
 }
 
 /// An operator declared in @syntax.
@@ -75,6 +94,10 @@ pub struct Session {
     pub next_scope_id: u32,
     /// Output log.
     pub output: Vec<String>,
+    /// Registered auto-morphisms: name → AutoMorphism.
+    pub morphisms: HashMap<String, AutoMorphism>,
+    /// Compiled graph rules indexed by theory name.
+    pub compiled_rules: HashMap<String, Vec<rewrite::GraphRule>>,
 }
 
 impl Session {
@@ -87,6 +110,8 @@ impl Session {
             scopes: HashMap::new(),
             next_scope_id: 0,
             output: Vec::new(),
+            morphisms: HashMap::new(),
+            compiled_rules: HashMap::new(),
         }
     }
 
@@ -108,6 +133,7 @@ impl Session {
         match head {
             "System" => self.process_system(items),
             "Theory" => self.process_theory(items),
+            "AutoMorphism" => self.process_automorphism(items),
             _ => Err(ApeironError::ParseError {
                 message: format!("unknown top-level form: {}", head),
                 line: 0,
@@ -209,6 +235,8 @@ impl Session {
 
         let mut theory_rules = Vec::new();
         let mut graph_rules: Vec<rewrite::GraphRule> = Vec::new();
+        let mut inverse_graph_rules: Vec<rewrite::GraphRule> = Vec::new();
+        let is_reversible = system.check_modes.contains(&CheckMode::Reversible);
 
         // Process theory body
         for item in &items[body_start..] {
@@ -251,16 +279,48 @@ impl Session {
                             {
                                 graph_rules.push(gr);
                             }
+                            // Reversible mode: auto-generate inverse rule
+                            if is_reversible {
+                                let inv_name = format!("{}-inv", rule.name);
+                                if let Some(inv_gr) =
+                                    rewrite::compile_rule(&inv_name, &rule.rhs, &rule.lhs)
+                                {
+                                    inverse_graph_rules.push(inv_gr);
+                                    self.output.push(format!(
+                                        "[RULE-INV] {} (auto-generated inverse)",
+                                        inv_name
+                                    ));
+                                }
+                            }
                         }
                     }
                     "eval" => {
-                        self.process_eval(&decl[1..], &graph_rules, &known_ops)?;
+                        self.process_eval(&decl[1..], &graph_rules, &known_ops, &system)?;
+                    }
+                    "eval-reverse" => {
+                        // Run with inverse rules (backward execution)
+                        self.process_eval(
+                            &decl[1..],
+                            &inverse_graph_rules,
+                            &known_ops,
+                            &system,
+                        )?;
                     }
                     "assert-eq" => {
-                        self.process_assert_eq(&decl[1..], &graph_rules, &known_ops)?;
+                        self.process_assert_eq(
+                            &decl[1..],
+                            &graph_rules,
+                            &known_ops,
+                            &system,
+                        )?;
                     }
                     "assert-neq" => {
-                        self.process_assert_neq(&decl[1..], &graph_rules, &known_ops)?;
+                        self.process_assert_neq(
+                            &decl[1..],
+                            &graph_rules,
+                            &known_ops,
+                            &system,
+                        )?;
                     }
                     "with-scope" => {
                         // [with-scope ScopeName body...]
@@ -282,6 +342,15 @@ impl Session {
                                                     &inner_decl[1..],
                                                     &graph_rules,
                                                     &known_ops,
+                                                    &system,
+                                                )?;
+                                            }
+                                            "eval-reverse" => {
+                                                self.process_eval(
+                                                    &inner_decl[1..],
+                                                    &inverse_graph_rules,
+                                                    &known_ops,
+                                                    &system,
                                                 )?;
                                             }
                                             "assert-eq" => {
@@ -289,6 +358,7 @@ impl Session {
                                                     &inner_decl[1..],
                                                     &graph_rules,
                                                     &known_ops,
+                                                    &system,
                                                 )?;
                                             }
                                             "assert-neq" => {
@@ -296,6 +366,7 @@ impl Session {
                                                     &inner_decl[1..],
                                                     &graph_rules,
                                                     &known_ops,
+                                                    &system,
                                                 )?;
                                             }
                                             _ => {}
@@ -312,6 +383,14 @@ impl Session {
                             self.process_reflect(&decl[1..], &known_ops)?;
                         }
                     }
+                    "Import" => {
+                        self.process_import(
+                            &decl[1..],
+                            &graph_rules,
+                            &known_ops,
+                            &system,
+                        )?;
+                    }
                     "Inductive" => {
                         if decl.len() >= 2 {
                             let name = decl[1].as_atom().unwrap_or("?");
@@ -326,6 +405,8 @@ impl Session {
         }
 
         self.rules.insert(theory_name.clone(), theory_rules);
+        self.compiled_rules
+            .insert(theory_name.clone(), graph_rules);
         self.output
             .push(format!("[THEORY] {} loaded", theory_name));
         Ok(())
@@ -405,13 +486,238 @@ impl Session {
         Ok(())
     }
 
+    fn process_automorphism(&mut self, items: &[Sexp]) -> Result<()> {
+        // [AutoMorphism Name SourceSystem TargetSystem
+        //   [Map src tgt] ...
+        //   [@strict true]
+        //   [@strategy normalize-before-send]
+        // ]
+        if items.len() < 4 {
+            return Err(ApeironError::InvalidConfig {
+                block: "AutoMorphism".into(),
+                detail: "need: [AutoMorphism Name SourceSystem TargetSystem]".into(),
+            });
+        }
+
+        let name = items[1]
+            .as_atom()
+            .ok_or_else(|| ApeironError::InvalidConfig {
+                block: "AutoMorphism".into(),
+                detail: "morphism name must be an atom".into(),
+            })?
+            .to_string();
+
+        let source_name = items[2]
+            .as_atom()
+            .ok_or_else(|| ApeironError::InvalidConfig {
+                block: "AutoMorphism".into(),
+                detail: "source system must be an atom".into(),
+            })?
+            .to_string();
+
+        let target_name = items[3]
+            .as_atom()
+            .ok_or_else(|| ApeironError::InvalidConfig {
+                block: "AutoMorphism".into(),
+                detail: "target system must be an atom".into(),
+            })?
+            .to_string();
+
+        // Parse optional blocks: [Map src tgt], [@strict bool], [@strategy ...]
+        let mut explicit_ops = HashMap::new();
+        let mut config = morphism::MorphismConfig::default();
+
+        for item in &items[4..] {
+            if let Some(block) = item.as_list() {
+                if block.is_empty() {
+                    continue;
+                }
+                let head = block[0].as_atom().unwrap_or("");
+                match head {
+                    "Map" => {
+                        if block.len() >= 3 {
+                            let src = block[1].as_atom().unwrap_or("?").to_string();
+                            let tgt = block[2].as_atom().unwrap_or("?").to_string();
+                            explicit_ops.insert(src, tgt);
+                        }
+                    }
+                    "@strict" => {
+                        if block.len() >= 2 {
+                            let val = block[1].as_atom().unwrap_or("false");
+                            config.strict = val == "true";
+                        }
+                    }
+                    "@strategy" => {
+                        if block.len() >= 2 {
+                            let val = block[1].as_atom().unwrap_or("");
+                            match val {
+                                "normalize-before-send" => {
+                                    config.normalize_before_send = Some(true);
+                                }
+                                "as-is" => {
+                                    config.normalize_before_send = Some(false);
+                                }
+                                _ => {
+                                    return Err(ApeironError::InvalidConfig {
+                                        block: "AutoMorphism".into(),
+                                        detail: format!(
+                                            "unknown @strategy: '{}' (expected normalize-before-send or as-is)",
+                                            val
+                                        ),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    _ => {} // ignore unknown blocks
+                }
+            }
+        }
+
+        let source = self
+            .systems
+            .get(&source_name)
+            .cloned()
+            .ok_or_else(|| ApeironError::UnknownSystem {
+                name: source_name.clone(),
+            })?;
+        let target = self
+            .systems
+            .get(&target_name)
+            .cloned()
+            .ok_or_else(|| ApeironError::UnknownSystem {
+                name: target_name.clone(),
+            })?;
+
+        let morph = morphism::resolve_morphism(&name, &source, &target, explicit_ops, config)?;
+
+        self.output.push(format!(
+            "[MORPHISM] {}: {} -> {} (binding={:?}, checking={:?})",
+            name, source_name, target_name, morph.binding_pass, morph.checking_pass
+        ));
+
+        self.morphisms.insert(name, morph);
+        Ok(())
+    }
+
+    fn process_import(
+        &mut self,
+        items: &[Sexp],
+        _graph_rules: &[rewrite::GraphRule],
+        _known_ops: &HashSet<String>,
+        _system: &SystemConfig,
+    ) -> Result<()> {
+        // [Import local-name [MorphismName source-expr :scope ScopeName]]
+        if items.len() < 2 {
+            return Err(ApeironError::InvalidConfig {
+                block: "Import".into(),
+                detail: "need: [Import name [MorphName expr]]".into(),
+            });
+        }
+
+        let local_name = items[0]
+            .as_atom()
+            .ok_or_else(|| ApeironError::InvalidConfig {
+                block: "Import".into(),
+                detail: "import name must be an atom".into(),
+            })?
+            .to_string();
+
+        let morph_app = items[1]
+            .as_list()
+            .ok_or_else(|| ApeironError::InvalidConfig {
+                block: "Import".into(),
+                detail: "second argument must be [MorphName expr ...]".into(),
+            })?;
+
+        if morph_app.is_empty() {
+            return Err(ApeironError::InvalidConfig {
+                block: "Import".into(),
+                detail: "[MorphName expr] is empty".into(),
+            });
+        }
+
+        let morph_name = morph_app[0]
+            .as_atom()
+            .ok_or_else(|| ApeironError::InvalidConfig {
+                block: "Import".into(),
+                detail: "morphism name must be an atom".into(),
+            })?
+            .to_string();
+
+        if morph_app.len() < 2 {
+            return Err(ApeironError::InvalidConfig {
+                block: "Import".into(),
+                detail: "need source expression after morphism name".into(),
+            });
+        }
+
+        let source_expr = &morph_app[1];
+
+        // Parse optional keyword arguments after source-expr.
+        // :scope ScopeName — target scope for InjectScope binding pass.
+        let mut target_scope_name: Option<String> = None;
+        let mut i = 2;
+        while i < morph_app.len() {
+            if let Some(kw) = morph_app[i].as_atom() {
+                if kw == ":scope" && i + 1 < morph_app.len() {
+                    target_scope_name =
+                        morph_app[i + 1].as_atom().map(|s| s.to_string());
+                    i += 2;
+                    continue;
+                }
+            }
+            // Legacy: bare positional scope name (backwards compat)
+            if target_scope_name.is_none() {
+                target_scope_name = morph_app[i].as_atom().map(|s| s.to_string());
+            }
+            i += 1;
+        }
+
+        // Look up morphism
+        let morph = self
+            .morphisms
+            .get(&morph_name)
+            .cloned()
+            .ok_or_else(|| ApeironError::UnknownMorphism {
+                name: morph_name.clone(),
+            })?;
+
+        // Look up source system config
+        let source_config = self
+            .systems
+            .get(&morph.source_system)
+            .cloned()
+            .ok_or_else(|| ApeironError::UnknownSystem {
+                name: morph.source_system.clone(),
+            })?;
+
+        // Transport
+        let result_sexp = morphism::transport(
+            &mut self.arena,
+            &morph,
+            source_expr,
+            &source_config,
+            &self.defs,
+            &self.scopes,
+            &self.compiled_rules,
+            target_scope_name.as_deref(),
+        )?;
+
+        self.defs.insert(local_name.clone(), result_sexp);
+        self.output
+            .push(format!("[IMPORT] {} via {}", local_name, morph_name));
+        Ok(())
+    }
+
     /// Build a term, run physics + graph rewrite loop, return (root_ptr, total_interactions).
     fn build_and_normalize(
         &mut self,
         expr: &Sexp,
         graph_rules: &[rewrite::GraphRule],
         known_ops: &HashSet<String>,
-    ) -> (crate::node::Ptr, u64) {
+        config: &SystemConfig,
+    ) -> Result<(crate::node::Ptr, u64)> {
         // Expand defs
         let expanded = rewrite::expand_defs(expr, &self.defs);
 
@@ -420,6 +726,11 @@ impl Session {
         env.known_ops = known_ops.clone();
         env.scope_ids = self.scopes.clone();
         let root = builder::build_rooted(&mut self.arena, &mut env, &expanded);
+
+        // Linear-explicit validation: reject Dup (multi-use) and Erase (unused)
+        if config.binding == BindingMode::LinearExplicit {
+            validate_linearity(&self.arena, root)?;
+        }
 
         // Physics + rewrite loop
         let mut total = 0u64;
@@ -435,7 +746,7 @@ impl Session {
             }
         }
 
-        (root, total)
+        Ok((root, total))
     }
 
     fn process_eval(
@@ -443,6 +754,7 @@ impl Session {
         items: &[Sexp],
         graph_rules: &[rewrite::GraphRule],
         known_ops: &HashSet<String>,
+        config: &SystemConfig,
     ) -> Result<()> {
         if items.is_empty() {
             return Ok(());
@@ -456,7 +768,7 @@ impl Session {
                 (format!("eval_{}", self.output.len()), &items[0])
             };
 
-        let (root, interactions) = self.build_and_normalize(expr, graph_rules, known_ops);
+        let (root, interactions) = self.build_and_normalize(expr, graph_rules, known_ops, config)?;
 
         let result_port = self.arena.port(root, 1);
         let term = if result_port.is_connected() {
@@ -477,6 +789,7 @@ impl Session {
         items: &[Sexp],
         graph_rules: &[rewrite::GraphRule],
         known_ops: &HashSet<String>,
+        config: &SystemConfig,
     ) -> Result<()> {
         if items.len() < 2 {
             return Err(ApeironError::InvalidConfig {
@@ -503,8 +816,8 @@ impl Session {
             )
         };
 
-        let (lhs_root, _) = self.build_and_normalize(lhs_sexp, graph_rules, known_ops);
-        let (rhs_root, _) = self.build_and_normalize(rhs_sexp, graph_rules, known_ops);
+        let (lhs_root, _) = self.build_and_normalize(lhs_sexp, graph_rules, known_ops, config)?;
+        let (rhs_root, _) = self.build_and_normalize(rhs_sexp, graph_rules, known_ops, config)?;
 
         let lhs_port = self.arena.port(lhs_root, 1);
         let rhs_port = self.arena.port(rhs_root, 1);
@@ -520,8 +833,9 @@ impl Session {
             rhs_root
         };
 
-        let lhs_hash = hash::topological_hash(&self.arena, lhs_ptr);
-        let rhs_hash = hash::topological_hash(&self.arena, rhs_ptr);
+        let canonical = config.binding != BindingMode::Nominal;
+        let lhs_hash = hash::topological_hash_mode(&self.arena, lhs_ptr, canonical);
+        let rhs_hash = hash::topological_hash_mode(&self.arena, rhs_ptr, canonical);
 
         if lhs_hash == rhs_hash {
             self.output.push(format!("[ASSERT] {} passed", name));
@@ -541,6 +855,7 @@ impl Session {
         items: &[Sexp],
         graph_rules: &[rewrite::GraphRule],
         known_ops: &HashSet<String>,
+        config: &SystemConfig,
     ) -> Result<()> {
         if items.len() < 2 {
             return Err(ApeironError::InvalidConfig {
@@ -567,8 +882,8 @@ impl Session {
             )
         };
 
-        let (lhs_root, _) = self.build_and_normalize(lhs_sexp, graph_rules, known_ops);
-        let (rhs_root, _) = self.build_and_normalize(rhs_sexp, graph_rules, known_ops);
+        let (lhs_root, _) = self.build_and_normalize(lhs_sexp, graph_rules, known_ops, config)?;
+        let (rhs_root, _) = self.build_and_normalize(rhs_sexp, graph_rules, known_ops, config)?;
 
         let lhs_port = self.arena.port(lhs_root, 1);
         let rhs_port = self.arena.port(rhs_root, 1);
@@ -584,8 +899,9 @@ impl Session {
             rhs_root
         };
 
-        let lhs_hash = hash::topological_hash(&self.arena, lhs_ptr);
-        let rhs_hash = hash::topological_hash(&self.arena, rhs_ptr);
+        let canonical = config.binding != BindingMode::Nominal;
+        let lhs_hash = hash::topological_hash_mode(&self.arena, lhs_ptr, canonical);
+        let rhs_hash = hash::topological_hash_mode(&self.arena, rhs_ptr, canonical);
 
         if lhs_hash != rhs_hash {
             self.output.push(format!("[ASSERT] {} passed (neq)", name));
@@ -688,6 +1004,51 @@ impl Session {
     }
 }
 
+/// Validate linear variable usage: reject Dup (multi-use) and Erase (unused) nodes.
+/// Walks the graph from `root` and reports violations.
+fn validate_linearity(arena: &Arena, root: crate::node::Ptr) -> Result<()> {
+    use crate::node::OpCode;
+    let mut visited = HashSet::new();
+    let mut queue = vec![root];
+
+    while let Some(ptr) = queue.pop() {
+        if ptr.is_none() || visited.contains(&ptr) {
+            continue;
+        }
+        visited.insert(ptr);
+
+        if let Some(node) = arena.get(ptr) {
+            match &node.kind {
+                OpCode::Dup { .. } => {
+                    return Err(ApeironError::LinearityViolation {
+                        detail: format!(
+                            "variable duplicated (non-linear use) at node {}",
+                            ptr.0
+                        ),
+                    });
+                }
+                OpCode::Erase => {
+                    return Err(ApeironError::LinearityViolation {
+                        detail: format!(
+                            "variable erased (unused) at node {}",
+                            ptr.0
+                        ),
+                    });
+                }
+                _ => {}
+            }
+
+            for port in &node.ports {
+                if port.is_connected() && !visited.contains(&port.target) {
+                    queue.push(port.target);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn parse_syntax_block(items: &[Sexp], config: &mut SystemConfig) -> Result<()> {
     for item in items {
         if let Some(decl) = item.as_list() {
@@ -726,6 +1087,10 @@ fn parse_binding_block(items: &[Sexp], config: &mut SystemConfig) -> Result<()> 
                 "implicit" => BindingMode::Implicit,
                 "exposed" => BindingMode::Exposed,
                 "contextual" => BindingMode::Contextual,
+                "linear-explicit" | "linear" => BindingMode::LinearExplicit,
+                "nominal" => BindingMode::Nominal,
+                "distributed" => BindingMode::Distributed,
+                "entangled" => BindingMode::Entangled,
                 _ => {
                     return Err(ApeironError::InvalidConfig {
                         block: "@binding".into(),
@@ -761,6 +1126,10 @@ fn parse_check_block(items: &[Sexp], config: &mut SystemConfig) -> Result<()> {
             "oracle" => CheckMode::Oracle,
             "extensional" => CheckMode::Extensional,
             "pattern-unification" => CheckMode::PatternUnification,
+            "reversible" => CheckMode::Reversible,
+            "confluent-race" | "race" => CheckMode::ConfluentRace,
+            "differential" => CheckMode::Differential,
+            "type-check" | "typecheck" => CheckMode::TypeCheck,
             _ => continue,
         };
         config.check_modes.insert(mode);

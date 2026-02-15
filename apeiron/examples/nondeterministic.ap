@@ -1,0 +1,25 @@
+;; Apeiron Example: Confluent Race (Non-deterministic Reduction)
+;; Check Mode: confluent-race
+;;
+;; When multiple rewrite rules match, the system picks one
+;; non-deterministically (first match wins in current implementation).
+;; This models concurrent / race-condition-tolerant computation,
+;; relying on confluence for correctness.
+
+[System RaceSystem
+  [@syntax [sort Term] [op choose] [op left] [op right]]
+  [@binding implicit]
+  [@check rewriting confluent-race]
+]
+
+[Theory RaceDemo :in RaceSystem
+
+  ;; Both rules could match [choose x y] — but the result is the same
+  ;; if the computation is confluent.
+  [@rule choose-left  [choose ?a ?b] ==> [left ?a]]
+  [@rule choose-right [choose ?a ?b] ==> [right ?b]]
+
+  ;; The first matching rule fires (choose-left in this implementation).
+  ;; The user's responsibility is to ensure confluence.
+  [eval race-test [choose hello world]]
+]

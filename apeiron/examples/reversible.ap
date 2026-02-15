@@ -1,0 +1,39 @@
+;; Apeiron Example: Reversible Computation
+;; Check Mode: reversible
+;;
+;; Every rewrite rule automatically gets an inverse.
+;; [eval-reverse] runs computation backwards using the inverse rules.
+;; This models reversible/bijective computation.
+
+[System ReversibleSystem
+  [@syntax [sort Term] [op encode] [op pair]]
+  [@binding implicit]
+  [@check rewriting reversible]
+]
+
+[Theory ReversibleOps :in ReversibleSystem
+
+  ;; === Forward rules ===
+  ;; encode distributes over pairs and maps z to tagged-z
+  [@rule encode-pair [encode [pair ?a ?b]] ==> [pair [encode ?a] [encode ?b]]]
+  [@rule encode-atom [encode z] ==> tagged-z]
+
+  ;; === Test 1: Forward computation ===
+  ;; [encode [pair z z]] → [pair [encode z] [encode z]] → [pair tagged-z tagged-z]
+  [assert-eq forward-correct
+    [encode [pair z z]]
+    [pair tagged-z tagged-z]
+  ]
+
+  ;; === Test 2: Reverse computation ===
+  ;; eval-reverse uses auto-generated inverse rules:
+  ;;   encode-pair-inv: [pair [encode ?a] [encode ?b]] ==> [encode [pair ?a ?b]]
+  ;;   encode-atom-inv: tagged-z ==> [encode z]
+  ;; Starting from the encoded form, we should recover the original.
+  [eval-reverse backward [pair tagged-z tagged-z]]
+  ;; Should produce: [encode [pair z z]]
+
+  ;; === Test 3: Forward then reverse round-trips ===
+  [eval forward-result [encode z]]
+  [eval-reverse reverse-of-tagged tagged-z]
+]

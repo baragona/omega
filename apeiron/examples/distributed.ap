@@ -1,0 +1,29 @@
+;; Apeiron Example: Distributed Binding
+;; Binding Mode: distributed
+;;
+;; Variables carry location annotations for distributed evaluation.
+;; This is a placeholder — the distributed mode is recognized by
+;; the parser. Full location-aware routing is a future extension.
+;; For now, the basic pipeline works identically to implicit mode.
+
+[System DistributedSystem
+  [@syntax [sort Term]]
+  [@binding distributed]
+  [@check beta-reduction]
+]
+
+[Theory DistDemo :in DistributedSystem
+
+  ;; Lambda calculus still works in distributed mode
+  [assert-eq dist-id [app [lam x x] y] y]
+
+  ;; Nested reduction
+  [assert-eq dist-nested
+    [app [lam f [app f z]] [lam x x]]
+    z
+  ]
+
+  [eval dist-church-two
+    [app [app [lam f [lam x [app f [app f x]]]] [lam y [s y]]] z]
+  ]
+]

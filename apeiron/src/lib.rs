@@ -9,3 +9,4 @@ pub mod system;
 pub mod hash;
 pub mod readback;
 pub mod rewrite;
+pub mod morphism;

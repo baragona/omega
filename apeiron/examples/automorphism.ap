@@ -1,0 +1,182 @@
+;; Apeiron Example: AutoMorphism Engine
+;; "The Universal Translator" — automatic term translation between systems.
+;;
+;; Demonstrates:
+;; - Binding translation: Implicit -> Exposed (DeBruijnize), Implicit -> Contextual (InjectScope)
+;; - Checking translation: Compute -> Oracle (NormalizeFirst), same-class (Identity)
+;; - Operator renaming: automatic (same-name) and explicit ([Map])
+;; - The full transport pipeline: expand defs, build, normalize, readback, transform
+
+;; ============================================================
+;; SYSTEM DECLARATIONS
+;; ============================================================
+
+;; System 1: High-Level Calculator (Implicit binding + Compute)
+[System Calculator
+  [@syntax
+    [sort Nat]
+    [op z] [op s] [op plus]
+  ]
+  [@binding implicit]
+  [@check rewriting beta-reduction]
+]
+
+;; System 2: Low-Level Assembly (Exposed binding + Rewriting)
+;; Different operator names to test renaming.
+[System Assembly
+  [@syntax
+    [sort Instr]
+    [op zero] [op succ] [op add]
+  ]
+  [@binding exposed]
+  [@check rewriting]
+]
+
+;; System 3: The Vault (Implicit binding + Oracle)
+;; Oracle = structural comparison only, no computation.
+[System Vault
+  [@syntax
+    [sort Nat]
+    [op z] [op s] [op plus]
+  ]
+  [@binding implicit]
+  [@check oracle]
+]
+
+;; System 4: Secure Enclave (Contextual binding + Oracle)
+[System Enclave
+  [@syntax
+    [sort Nat]
+    [op z] [op s] [op plus]
+  ]
+  [@binding contextual]
+  [@check oracle]
+]
+
+;; ============================================================
+;; MORPHISM DECLARATIONS
+;; ============================================================
+
+;; Compile: Calculator -> Assembly
+;; Binding: Implicit -> Exposed = DeBruijnize
+;; Checking: Compute -> Rewriting = Identity (both compute)
+;; Ops: Explicit mapping (different names)
+[AutoMorphism Compile Calculator Assembly
+  [Map z zero]
+  [Map s succ]
+  [Map plus add]
+]
+
+;; Archive: Calculator -> Vault
+;; Binding: Implicit -> Implicit = Identity
+;; Checking: Compute -> Oracle = NormalizeFirst
+;; Ops: All same names, auto-mapped
+[AutoMorphism Archive Calculator Vault]
+
+;; SecureLoad: Calculator -> Enclave
+;; Binding: Implicit -> Contextual = InjectScope
+;; Checking: Compute -> Oracle = NormalizeFirst
+;; Ops: All same names
+[AutoMorphism SecureLoad Calculator Enclave]
+
+;; ============================================================
+;; SOURCE THEORY: Define terms in the Calculator
+;; ============================================================
+
+[Theory CalcArith :in Calculator
+  [@rule plus-z [plus z ?n] ==> ?n]
+  [@rule plus-s [plus [s ?n] ?m] ==> [s [plus ?n ?m]]]
+
+  ;; Named definitions
+  [def two [s [s z]]]
+  [def four [s [s [s [s z]]]]]
+
+  ;; A computation: 2 + 2
+  [def computation [plus [s [s z]] [s [s z]]]]
+
+  ;; Verify locally: 2+2 = 4
+  [assert-eq local-check [plus [s [s z]] [s [s z]]] [s [s [s [s z]]]]]
+]
+
+;; ============================================================
+;; TEST 1: NormalizeFirst (Compute -> Oracle)
+;; ============================================================
+;; The Archive morphism normalizes before sending.
+;; Vault is Oracle-only: it can't compute [plus ...], only compare structure.
+;; So the morphism must reduce 2+2 to 4 BEFORE transport.
+
+[Theory VaultTest :in Vault
+
+  ;; Import the computation through Archive.
+  ;; Archive detects: Compute -> Oracle, so it normalizes first.
+  ;; [plus [s [s z]] [s [s z]]] reduces to [s [s [s [s z]]]] before import.
+  [Import result [Archive computation]]
+
+  ;; Define what 4 looks like structurally
+  [def four [s [s [s [s z]]]]]
+
+  ;; If the morphism just copied the tree, result would be [plus [s [s z]] [s [s z]]].
+  ;; But since Vault is Oracle, that would NOT match four.
+  ;; Because we NormalizedFirst, result IS [s [s [s [s z]]]].
+  [assert-eq check-normalization result four]
+]
+
+;; ============================================================
+;; TEST 2: Operator Renaming (Compile)
+;; ============================================================
+;; Compile translates Calculator (z/s/plus) to Assembly (zero/succ/add).
+;; It also DeBruijnizes (Implicit -> Exposed), but for ground terms
+;; without binders, binding translation is transparent.
+
+[Theory AssemblyTest :in Assembly
+  ;; Import a ground term through Compile.
+  ;; z -> zero, s -> succ (operators renamed)
+  ;; NormalizeFirst is NOT triggered (both are compute systems).
+  ;; But physics still runs, so plus reduces first, then ops are renamed.
+  [Import asm-four [Compile computation]]
+
+  ;; The result should be succ(succ(succ(succ(zero))))
+  [assert-eq check-rename asm-four [succ [succ [succ [succ zero]]]]]
+
+  ;; Import a simple constant
+  [Import asm-two [Compile two]]
+  [assert-eq check-const asm-two [succ [succ zero]]]
+]
+
+;; ============================================================
+;; TEST 3: InjectScope (Implicit -> Contextual)
+;; ============================================================
+;; SecureLoad wraps terms in a barrier for the target scope.
+;; It also NormalizeFirst (Compute -> Oracle).
+
+[Theory EnclaveTest :in Enclave
+  [Scope KernelScope]
+
+  ;; Import through SecureLoad with scope injection.
+  ;; The morphism: NormalizeFirst (2+2 -> 4), then wrap in [box KernelScope ...].
+  ;; :scope keyword explicitly separates transport config from the source expression.
+  [Import secure-val [SecureLoad computation :scope KernelScope]]
+
+  ;; The result should be [box KernelScope [s [s [s [s z]]]]]
+  ;; Compare structurally: both sides have the barrier wrapping.
+  [assert-eq check-secure secure-val [box KernelScope [s [s [s [s z]]]]]]
+
+  ;; Also import a simple constant with scope injection
+  [Import secure-two [SecureLoad two :scope KernelScope]]
+  [assert-eq check-secure-two secure-two [box KernelScope [s [s z]]]]
+]
+
+;; ============================================================
+;; TEST 4: Mixed — data flow across systems
+;; ============================================================
+;; Demonstrate that definitions can chain through imports.
+
+[Theory ChainTest :in Vault
+  ;; Import 'two' (a def, not a computation — still gets normalized)
+  [Import archived-two [Archive two]]
+  [assert-eq check-chain archived-two [s [s z]]]
+
+  ;; Import 'four' directly
+  [Import archived-four [Archive four]]
+  [assert-eq check-chain-four archived-four [s [s [s [s z]]]]]
+]

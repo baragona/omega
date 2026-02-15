@@ -138,6 +138,82 @@ pub fn topological_hash(arena: &Arena, root: Ptr) -> u64 {
     hash
 }
 
+/// Compute a topological hash with configurable canonicalization.
+///
+/// When `canonical` is true (default), scope IDs, dup labels, and future IDs
+/// are canonicalized via first-encounter ordinals (alpha-equivalence).
+/// When `canonical` is false (nominal mode), absolute IDs are hashed directly,
+/// so differently-named scopes produce different hashes.
+pub fn topological_hash_mode(arena: &Arena, root: Ptr, canonical: bool) -> u64 {
+    if canonical {
+        topological_hash(arena, root)
+    } else {
+        topological_hash_nominal(arena, root)
+    }
+}
+
+/// Non-canonical hash: uses absolute scope/dup/future IDs.
+fn topological_hash_nominal(arena: &Arena, root: Ptr) -> u64 {
+    let mut visited: HashMap<Ptr, u32> = HashMap::new();
+    let mut order: Vec<Ptr> = Vec::new();
+    let mut queue: Vec<Ptr> = vec![root];
+    let mut ordinal: u32 = 0;
+
+    while let Some(ptr) = queue.pop() {
+        if ptr.is_none() || visited.contains_key(&ptr) {
+            continue;
+        }
+        visited.insert(ptr, ordinal);
+        order.push(ptr);
+        ordinal += 1;
+
+        if let Some(node) = arena.get(ptr) {
+            for port in &node.ports {
+                if port.is_connected() && !visited.contains_key(&port.target) {
+                    queue.push(port.target);
+                }
+            }
+        }
+    }
+
+    let mut hash = FNV_OFFSET;
+    for &ptr in &order {
+        if let Some(node) = arena.get(ptr) {
+            hash = hash_mix(hash, opcode_hash_nominal(&node.kind));
+            hash = hash_mix(hash, node.ports.len() as u64);
+
+            for port in &node.ports {
+                if port.is_connected() {
+                    let target_ord = visited.get(&port.target).copied().unwrap_or(u32::MAX);
+                    hash = hash_mix(hash, target_ord as u64);
+                    hash = hash_mix(hash, port.slot as u64);
+                    hash = hash_mix(hash, port.color as u64);
+                } else {
+                    hash = hash_mix(hash, u64::MAX);
+                }
+            }
+        }
+    }
+
+    hash
+}
+
+fn opcode_hash_nominal(op: &OpCode) -> u64 {
+    match op {
+        OpCode::Lam => 0x1111111111111111,
+        OpCode::App => 0x2222222222222222,
+        OpCode::Erase => 0x3333333333333333,
+        OpCode::Dup { label } => hash_mix(0x4444444444444444, *label as u64),
+        OpCode::Barrier { scope } => hash_mix(0x5555555555555555, *scope as u64),
+        OpCode::Lens { shift } => hash_mix(0x6666666666666666, *shift as u64),
+        OpCode::Future { constraint_id } => hash_mix(0x7777777777777777, *constraint_id as u64),
+        OpCode::Sym { name, arity } => {
+            let h = hash_str(name);
+            hash_mix(h, *arity as u64)
+        }
+    }
+}
+
 /// Check structural equality of two subgraphs via topological hashing.
 pub fn structurally_equal(arena: &Arena, a: Ptr, b: Ptr) -> bool {
     topological_hash(arena, a) == topological_hash(arena, b)
