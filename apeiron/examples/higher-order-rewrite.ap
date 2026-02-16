@@ -1,0 +1,183 @@
+;; Apeiron Example: Higher-Order List Operations
+;; "Rewrite ↔ Beta Fusion" — two computation engines, one graph.
+;;
+;; Rewrite rules for map/foldr produce App nodes via the `app` keyword.
+;; When the function argument is a lambda, the App-Lam pair becomes an
+;; active pair for beta-reduction. Beta-reduction produces terms that
+;; trigger further rewrites (plus, mul). The physics/rewrite alternating
+;; loop interleaves both engines on a shared graph substrate.
+;;
+;; Computation cycle for `map (λn. plus n n) [cons 1 [cons 2 nil]]`:
+;;   1. map-cons fires (rewrite) → [cons [app (λn. plus n n) 1] [map ...]]
+;;   2. App-Lam fires (physics) → [cons [plus 1 1] [map ...]]
+;;   3. plus-s fires (rewrite)  → [cons [s [plus z 1]] [map ...]]
+;;   4. plus-z fires (rewrite)  → [cons [s 1] [map ...]]
+;;   5. Back to step 1 for the next element.
+;;
+;; The lambda function `fn-double` uses its argument twice (nonlinear).
+;; This creates Dup fan chains: when the rewrite engine duplicates ?f
+;; (used in both [app ?f ?x] and [map ?f ?xs]), and again when beta
+;; instantiates the lambda body with a shared argument.
+
+[System ListCalc
+  [@syntax
+    [sort Nat]
+    [sort List]
+    [op z] [op s]
+    [op nil] [op cons]
+    [op map] [op foldr] [op append]
+    [op plus] [op mul]
+  ]
+  [@binding implicit]
+  [@check rewriting beta-reduction]
+]
+
+[Theory HigherOrder :in ListCalc
+
+  ;; ================================================================
+  ;; Peano Arithmetic
+  ;; ================================================================
+
+  [@rule plus-z [plus z ?n]      ==> ?n]
+  [@rule plus-s [plus [s ?n] ?m] ==> [s [plus ?n ?m]]]
+  [@rule mul-z  [mul z ?n]       ==> z]
+  [@rule mul-s  [mul [s ?n] ?m]  ==> [plus ?m [mul ?n ?m]]]
+
+  ;; ================================================================
+  ;; List Operations (rewrite rules producing beta redexes)
+  ;; ================================================================
+
+  ;; map f [] = []
+  ;; map f (x:xs) = (f x) : map f xs
+  ;;
+  ;; The RHS [app ?f ?x] builds an App node in the graph.
+  ;; When ?f is a lambda, physics fires beta-reduction.
+  ;; ?f appears twice in the RHS → build_meta_fan creates a Dup chain.
+  [@rule map-nil  [map ?f nil]           ==> nil]
+  [@rule map-cons [map ?f [cons ?x ?xs]] ==> [cons [app ?f ?x] [map ?f ?xs]]]
+
+  ;; foldr f acc [] = acc
+  ;; foldr f acc (x:xs) = f x (foldr f acc xs)
+  ;;
+  ;; The RHS [app [app ?f ?x] ...] builds two nested App nodes.
+  ;; When ?f is a curried lambda, two beta-reductions fire in sequence.
+  ;; ?f appears twice in the RHS → Dup fan for the function.
+  [@rule foldr-nil  [foldr ?f ?acc nil]           ==> ?acc]
+  [@rule foldr-cons [foldr ?f ?acc [cons ?x ?xs]] ==> [app [app ?f ?x] [foldr ?f ?acc ?xs]]]
+
+  ;; append [] ys = ys
+  ;; append (x:xs) ys = x : append xs ys
+  [@rule append-nil  [append nil ?ys]           ==> ?ys]
+  [@rule append-cons [append [cons ?x ?xs] ?ys] ==> [cons ?x [append ?xs ?ys]]]
+
+  ;; ================================================================
+  ;; Lambda Functions (passed as higher-order arguments)
+  ;; ================================================================
+
+  ;; double n = n + n  (NONLINEAR: n used twice → Dup node in beta body)
+  [def fn-double [lam n [plus n n]]]
+
+  ;; square n = n * n  (NONLINEAR: n used twice)
+  [def fn-square [lam n [mul n n]]]
+
+  ;; succ n = s(n)  (linear)
+  [def fn-succ [lam n [s n]]]
+
+  ;; add x acc = x + acc  (curried binary function for foldr)
+  [def fn-add [lam x [lam acc [plus x acc]]]]
+
+  ;; ================================================================
+  ;; Test Data
+  ;; ================================================================
+
+  [def list-123
+    [cons [s z]
+     [cons [s [s z]]
+      [cons [s [s [s z]]] nil]]]
+  ]
+
+  [def list-12345
+    [cons [s z]
+     [cons [s [s z]]
+      [cons [s [s [s z]]]
+       [cons [s [s [s [s z]]]]
+        [cons [s [s [s [s [s z]]]]] nil]]]]]
+  ]
+
+  ;; ================================================================
+  ;; Assertions
+  ;; ================================================================
+
+  ;; map succ [1,2,3] = [2,3,4]
+  ;; Linear lambda: each element gets one beta-reduction.
+  [assert-eq map-succ
+    [map fn-succ list-123]
+    [cons [s [s z]]
+     [cons [s [s [s z]]]
+      [cons [s [s [s [s z]]]] nil]]]
+  ]
+
+  ;; map double [1,2,3] = [2,4,6]
+  ;; Nonlinear lambda: each element duplicated by Dup node, then plus fires.
+  ;; Cycle: map-cons (rewrite) → beta (physics) → plus (rewrite) per element.
+  [assert-eq map-double
+    [map fn-double list-123]
+    [cons [s [s z]]
+     [cons [s [s [s [s z]]]]
+      [cons [s [s [s [s [s [s z]]]]]] nil]]]
+  ]
+
+  ;; map square [1,2,3] = [1,4,9]
+  ;; Nonlinear lambda with multiplication: deeper rewrite chains.
+  [assert-eq map-square
+    [map fn-square list-123]
+    [cons [s z]
+     [cons [s [s [s [s z]]]]
+      [cons [s [s [s [s [s [s [s [s [s z]]]]]]]]] nil]]]
+  ]
+
+  ;; foldr (+) 0 [1,2,3] = 6
+  ;; foldr produces nested beta redexes:
+  ;;   (λx.λacc. plus x acc) 1 ((λx.λacc. plus x acc) 2 ((λx.λacc. plus x acc) 3 0))
+  ;; Each step: rewrite (foldr-cons) → beta (outer) → beta (inner) → rewrite (plus)
+  [assert-eq foldr-sum
+    [foldr fn-add z list-123]
+    [s [s [s [s [s [s z]]]]]]
+  ]
+
+  ;; map double [1,2,3,4,5] = [2,4,6,8,10]
+  ;; Stress test: 5 elements, nonlinear lambda, 5 rewrite-beta-rewrite cycles.
+  [assert-eq map-double-5
+    [map fn-double list-12345]
+    [cons [s [s z]]
+     [cons [s [s [s [s z]]]]
+      [cons [s [s [s [s [s [s z]]]]]]
+       [cons [s [s [s [s [s [s [s [s z]]]]]]]]
+        [cons [s [s [s [s [s [s [s [s [s [s z]]]]]]]]]] nil]]]]]
+  ]
+
+  ;; chained map: map succ (map double [1,2,3]) = [3,5,7]
+  ;; Inner map reduces first (double each element), then outer map
+  ;; applies succ to each result. Two full map passes.
+  [assert-eq chained-map
+    [map fn-succ [map fn-double list-123]]
+    [cons [s [s [s z]]]
+     [cons [s [s [s [s [s z]]]]]
+      [cons [s [s [s [s [s [s [s z]]]]]]] nil]]]
+  ]
+
+  ;; append [1,2] [3] = [1,2,3]
+  ;; Pure rewriting (no beta-reduction needed).
+  [assert-eq append-test
+    [append [cons [s z] [cons [s [s z]] nil]] [cons [s [s [s z]]] nil]]
+    list-123
+  ]
+
+  ;; ================================================================
+  ;; Eval: Show interaction counts
+  ;; ================================================================
+
+  [eval map-double-eval [map fn-double list-123]]
+  [eval map-double-5-eval [map fn-double list-12345]]
+  [eval foldr-sum-eval [foldr fn-add z list-123]]
+]

@@ -426,6 +426,21 @@ fn example_morphism_zoo() {
     run_example("examples/morphism-zoo.ap");
 }
 
+#[test]
+fn example_church_power() {
+    run_example("examples/church-power.ap");
+}
+
+#[test]
+fn example_higher_order_rewrite() {
+    run_example("examples/higher-order-rewrite.ap");
+}
+
+#[test]
+fn example_sharing_demo() {
+    run_example("examples/sharing-demo.ap");
+}
+
 // ================================================================
 // Linear-Explicit Rejection Tests
 // ================================================================

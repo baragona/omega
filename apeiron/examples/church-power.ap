@@ -1,0 +1,138 @@
+;; Apeiron Example: Church-Encoded Exponentiation
+;; "Optimal Sharing Under Pressure" — the interaction net's killer feature.
+;;
+;; Church numerals represent N as "apply f N times." Arithmetic operations
+;; compose these iterations. The critical insight: pow(m,n) duplicates
+;; the lambda term `m` through `n` layers of application. A tree rewriter
+;; copies the entire term at each duplication — exponential blowup.
+;; The interaction net shares via labeled Dup nodes: identical copies
+;; share structure until they diverge. Dup-Dup annihilation (same label)
+;; and commutation (different labels) keep the work polynomial.
+;;
+;; Dual verification: each assertion computes via Church arithmetic
+;; (interaction net beta-reduction), converts to Peano via `to-peano`,
+;; and compares against direct Peano arithmetic (rewrite rules).
+;; Two independent computation paths, one answer.
+;;
+;; Crown jewel: pow(3,3) = 27.
+
+[System ChurchPeano
+  [@syntax
+    [sort Nat]
+    [op z] [op s]
+    [op plus] [op mul]
+  ]
+  [@binding implicit]
+  [@check rewriting beta-reduction]
+]
+
+[Theory ChurchPower :in ChurchPeano
+
+  ;; ================================================================
+  ;; Peano Arithmetic (rewrite rules — the reference implementation)
+  ;; ================================================================
+
+  [@rule plus-z [plus z ?n]      ==> ?n]
+  [@rule plus-s [plus [s ?n] ?m] ==> [s [plus ?n ?m]]]
+  [@rule mul-z  [mul z ?n]       ==> z]
+  [@rule mul-s  [mul [s ?n] ?m]  ==> [plus ?m [mul ?n ?m]]]
+
+  ;; ================================================================
+  ;; Church Numerals (pure lambda terms)
+  ;; ================================================================
+
+  ;; Church N = λf.λx. f^N(x)
+  [def c0 [lam f [lam x x]]]
+  [def c1 [lam f [lam x [app f x]]]]
+  [def c2 [lam f [lam x [app f [app f x]]]]]
+  [def c3 [lam f [lam x [app f [app f [app f x]]]]]]
+  [def c5 [lam f [lam x [app f [app f [app f [app f [app f x]]]]]]]]
+
+  ;; add m n = λf.λx. m f (n f x)
+  [def c-add [lam m [lam n [lam f [lam x
+    [app [app m f] [app [app n f] x]]
+  ]]]]]
+
+  ;; mul m n = λf. m (n f)
+  [def c-mul [lam m [lam n [lam f
+    [app m [app n f]]
+  ]]]]
+
+  ;; pow b e = e b
+  [def c-pow [lam b [lam e [app e b]]]]
+
+  ;; ================================================================
+  ;; The Bridge: Church → Peano
+  ;; ================================================================
+
+  ;; to-peano n = n (λx. s(x)) z
+  ;; Applies the Church numeral to the Peano successor (wrapped in a
+  ;; lambda so beta-reduction wires it into Sym nodes) and zero.
+  [def to-peano [lam n [app [app n [lam x [s x]]] z]]]
+
+  ;; ================================================================
+  ;; Assertions: Dual Verification
+  ;; ================================================================
+
+  ;; --- Addition ---
+  ;; Church: add(1,2) → to-peano → s(s(s(z)))
+  ;; Peano:  3 directly
+  [assert-eq add-1-2
+    [app to-peano [app [app c-add c1] c2]]
+    [s [s [s z]]]
+  ]
+
+  ;; --- Multiplication ---
+  ;; Church: mul(2,3) → to-peano → s^6(z)
+  ;; Peano:  mul(2,3) via rewrite rules → s^6(z)
+  [assert-eq mul-2-3
+    [app to-peano [app [app c-mul c2] c3]]
+    [mul [s [s z]] [s [s [s z]]]]
+  ]
+
+  ;; --- Exponentiation ---
+
+  ;; 2^3 = 8
+  ;; Church: pow(2,3) = 3(2) = λf.λx. 2(2(2(f)))(x) → f^8(x)
+  ;; Peano: 2 * 2 * 2 = 8
+  [assert-eq pow-2-3
+    [app to-peano [app [app c-pow c2] c3]]
+    [mul [s [s z]] [mul [s [s z]] [s [s z]]]]
+  ]
+
+  ;; 3^2 = 9
+  ;; Church: pow(3,2) = 2(3) = λf.λx. 3(3(f))(x) → f^9(x)
+  ;; Peano: 3 * 3 = 9
+  [assert-eq pow-3-2
+    [app to-peano [app [app c-pow c3] c2]]
+    [mul [s [s [s z]]] [s [s [s z]]]]
+  ]
+
+  ;; 2^5 = 32
+  ;; Church: pow(2,5) = 5(2) → f^32(x)
+  ;; Peano: 2*2*2*2*2 = 32
+  [assert-eq pow-2-5
+    [app to-peano [app [app c-pow c2] c5]]
+    [mul [s [s z]] [mul [s [s z]] [mul [s [s z]] [mul [s [s z]] [s [s z]]]]]]
+  ]
+
+  ;; 3^3 = 27 — The Crown Jewel
+  ;; Church: pow(3,3) = 3(3) = λf.λx. 3(3(3(f)))(x) → f^27(x)
+  ;; This requires deep Dup-Dup commutation: Church 3 uses f three times
+  ;; (2 Dup nodes), and pow applies 3 to itself, creating multiple levels
+  ;; of Dup propagation. A tree rewriter would copy the lambda body at
+  ;; every duplication point. The interaction net shares via Dup labels.
+  ;; Peano: 3 * 3 * 3 = 27
+  [assert-eq pow-3-3
+    [app to-peano [app [app c-pow c3] c3]]
+    [mul [s [s [s z]]] [mul [s [s [s z]]] [s [s [s z]]]]]
+  ]
+
+  ;; ================================================================
+  ;; Eval: Show interaction counts
+  ;; ================================================================
+
+  [eval church-add-1-2 [app to-peano [app [app c-add c1] c2]]]
+  [eval church-pow-2-3 [app to-peano [app [app c-pow c2] c3]]]
+  [eval church-pow-3-3 [app to-peano [app [app c-pow c3] c3]]]
+]

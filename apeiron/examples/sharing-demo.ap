@@ -1,0 +1,200 @@
+;; Apeiron Example: Deep Nonlinearity Stress Test
+;; "Sharing Saves Exponentials" — optimal reduction via Dup tree cascading.
+;;
+;; A tree rewriter copies the entire argument at every use site.
+;; For a function that uses its argument N times, applied to a term of
+;; size M, a tree rewriter does O(N*M) work per application. Composing
+;; two such functions multiplies: compose(f,g)(x) copies g(x) N times,
+;; each copy internally copies x M times → O(N*M*M).
+;;
+;; The interaction net shares via labeled Dup nodes:
+;;   - triple(x): 2 Dup nodes fan x into 3 copies (balanced binary tree)
+;;   - quadruple(x): 3 Dup nodes → 4 copies
+;;   - octuple(x): calls quadruple twice → cascading Dup trees (2→4→8)
+;;   - compose(f,g)(x): Dup fans duplicate the lambda g through f's body
+;;
+;; Dup-Sym interactions clone Peano numbers incrementally.
+;; Dup-App interactions push duplication into function and argument.
+;; Dup-Lam interactions push duplication into lambda bodies.
+;; Same-label Dup-Dup annihilation cancels redundant copies.
+;;
+;; Crown jewel: compose(quadruple, quadruple)(3) = 48 in one pass.
+
+[System SharingArith
+  [@syntax
+    [sort Nat]
+    [op z] [op s]
+    [op plus] [op mul]
+  ]
+  [@binding implicit]
+  [@check rewriting beta-reduction]
+]
+
+[Theory SharingDemo :in SharingArith
+
+  ;; ================================================================
+  ;; Peano Arithmetic
+  ;; ================================================================
+
+  [@rule plus-z [plus z ?n]      ==> ?n]
+  [@rule plus-s [plus [s ?n] ?m] ==> [s [plus ?n ?m]]]
+  [@rule mul-z  [mul z ?n]       ==> z]
+  [@rule mul-s  [mul [s ?n] ?m]  ==> [plus ?m [mul ?n ?m]]]
+
+  ;; ================================================================
+  ;; Nonlinear Lambda Functions
+  ;; ================================================================
+
+  ;; double n = n + n  (2 uses: 1 Dup node)
+  [def fn-double [lam n [plus n n]]]
+
+  ;; triple n = n + n + n  (3 uses: 2 Dup nodes in balanced tree)
+  [def fn-triple [lam n [plus n [plus n n]]]]
+
+  ;; quadruple n = (n+n) + (n+n)  (4 uses: 3 Dup nodes)
+  [def fn-quadruple [lam n [plus [plus n n] [plus n n]]]]
+
+  ;; ================================================================
+  ;; Function Composition (higher-order, passes lambdas through lambdas)
+  ;; ================================================================
+
+  ;; compose f g x = f(g(x))
+  ;; Both f and g are lambdas. When compose fires:
+  ;;   1. Beta reduces with f → body uses g(x)
+  ;;   2. Beta reduces with g → body uses x
+  ;; If f is quadruple and g is quadruple:
+  ;;   quadruple(quadruple(x)) = 4*(4*x) = 16*x
+  ;; The Dup tree for x cascades: first 3 nodes (from inner quadruple),
+  ;; then each copy gets 3 more nodes (from outer quadruple).
+  [def fn-compose [lam f [lam g [lam x [app f [app g x]]]]]]
+
+  ;; ================================================================
+  ;; Cascading: octuple via composition in the graph
+  ;; ================================================================
+
+  ;; octuple n = quadruple(n) + quadruple(n)
+  ;; This is NOT compose — it's direct application. The Dup tree for n
+  ;; first fans into 2 copies (for the two quadruple calls), then each
+  ;; copy fans into 4 (inside quadruple's body). Total: 8 copies of n,
+  ;; but the Dup tree has only 7 nodes (balanced binary tree of depth 3).
+  [def fn-octuple [lam n [plus [app fn-quadruple n] [app fn-quadruple n]]]]
+
+  ;; ================================================================
+  ;; Test Data: Peano numerals
+  ;; ================================================================
+
+  [def one   [s z]]
+  [def two   [s [s z]]]
+  [def three [s [s [s z]]]]
+
+  ;; ================================================================
+  ;; Assertions: Nonlinear Functions
+  ;; ================================================================
+
+  ;; double(2) = 4
+  ;; 2 uses of arg: Dup fans s(s(z)) into two copies, plus adds them.
+  [assert-eq double-2
+    [app fn-double two]
+    [s [s [s [s z]]]]
+  ]
+
+  ;; triple(2) = 6
+  ;; 3 uses of arg: balanced Dup tree (2 Dup nodes) fans into 3 copies.
+  [assert-eq triple-2
+    [app fn-triple two]
+    [s [s [s [s [s [s z]]]]]]
+  ]
+
+  ;; quadruple(1) = 4
+  ;; 4 uses: 3 Dup nodes create balanced fan of 4 copies of s(z).
+  [assert-eq quadruple-1
+    [app fn-quadruple one]
+    [s [s [s [s z]]]]
+  ]
+
+  ;; quadruple(3) = 12
+  ;; 4 copies of s(s(s(z))): deeper Dup-Sym propagation chain.
+  [assert-eq quadruple-3
+    [app fn-quadruple three]
+    [s [s [s [s [s [s [s [s [s [s [s [s z]]]]]]]]]]]]
+  ]
+
+  ;; ================================================================
+  ;; Assertions: Cascading (octuple)
+  ;; ================================================================
+
+  ;; octuple(1) = 8
+  ;; Cascading Dup trees: outer 1 Dup + 2 inner quadruples (3 Dup each).
+  [assert-eq octuple-1
+    [app fn-octuple one]
+    [s [s [s [s [s [s [s [s z]]]]]]]]
+  ]
+
+  ;; octuple(2) = 16
+  ;; 8 copies of s(s(z)): deep Dup-Sym cascading.
+  [assert-eq octuple-2
+    [app fn-octuple two]
+    [s [s [s [s [s [s [s [s [s [s [s [s [s [s [s [s z]]]]]]]]]]]]]]]]
+  ]
+
+  ;; ================================================================
+  ;; Assertions: Composition (higher-order sharing)
+  ;; ================================================================
+
+  ;; compose(quadruple, quadruple)(1) = 16
+  ;; quadruple(quadruple(1)) = quadruple(4) = 16
+  ;; Inner quadruple fires first: 4 copies of 1. Then outer: 4 copies of 4.
+  ;; Dup-Lam interaction when outer quadruple duplicates inner's lambda.
+  [assert-eq compose-quad-quad-1
+    [app [app [app fn-compose fn-quadruple] fn-quadruple] one]
+    [s [s [s [s [s [s [s [s [s [s [s [s [s [s [s [s z]]]]]]]]]]]]]]]]
+  ]
+
+  ;; compose(triple, quadruple)(1) = 12
+  ;; triple(quadruple(1)) = triple(4) = 12
+  [assert-eq compose-triple-quad-1
+    [app [app [app fn-compose fn-triple] fn-quadruple] one]
+    [s [s [s [s [s [s [s [s [s [s [s [s z]]]]]]]]]]]]
+  ]
+
+  ;; compose(quadruple, triple)(2) = 24
+  ;; quadruple(triple(2)) = quadruple(6) = 24
+  ;; Deepest test: inner triple fans 2 into 3 copies (→6), then outer
+  ;; quadruple fans 6 into 4 copies (→24). Total: 12 copies of input.
+  [assert-eq compose-quad-triple-2
+    [app [app [app fn-compose fn-quadruple] fn-triple] two]
+    [s [s [s [s [s [s [s [s [s [s [s [s [s [s [s [s [s [s [s [s [s [s [s [s z]]]]]]]]]]]]]]]]]]]]]]]]
+  ]
+
+  ;; compose(quadruple, quadruple)(3) = 48  — Crown Jewel
+  ;; quadruple(quadruple(3)) = quadruple(12) = 48
+  ;; Inner: 4 copies of 3 → 12. Outer: 4 copies of 12 → 48.
+  ;; The Dup tree cascades through two levels of quadruple's 4-way fan.
+  ;; A tree rewriter would copy the entire intermediate result 4 times.
+  ;; The interaction net shares the intermediate structure.
+  [assert-eq compose-quad-quad-3
+    [app [app [app fn-compose fn-quadruple] fn-quadruple] three]
+    ;; 48 = s^48(z)
+    [s [s [s [s [s [s [s [s
+    [s [s [s [s [s [s [s [s
+    [s [s [s [s [s [s [s [s
+    [s [s [s [s [s [s [s [s
+    [s [s [s [s [s [s [s [s
+    [s [s [s [s [s [s [s [s
+    z]]]]]]]]
+    ]]]]]]]]
+    ]]]]]]]]
+    ]]]]]]]]
+    ]]]]]]]]
+    ]]]]]]]]
+  ]
+
+  ;; ================================================================
+  ;; Eval: Show interaction counts
+  ;; ================================================================
+
+  [eval double-2-eval [app fn-double two]]
+  [eval quadruple-3-eval [app fn-quadruple three]]
+  [eval octuple-2-eval [app fn-octuple two]]
+  [eval compose-quad-quad-3-eval [app [app [app fn-compose fn-quadruple] fn-quadruple] three]]
+]
