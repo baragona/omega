@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::arena::Arena;
-use crate::node::{OpCode, Port, Ptr, WireColor};
+use crate::node::{OpCode, Port, Ptr};
 use crate::parser::Sexp;
 use crate::readback::Term;
 
@@ -50,7 +50,7 @@ pub fn term_to_sexp(term: &Term) -> Sexp {
             ],
             s,
         ),
-        Term::Future(id) => Sexp::Atom(format!("?{}", id), s),
+        Term::Future => Sexp::Atom("?".into(), s),
         Term::Wire(id) => Sexp::Atom(format!("<wire:{}>", id), s),
         Term::Erased => Sexp::Atom("*".into(), s),
     }
@@ -206,13 +206,13 @@ fn count_meta_uses(sexp: &Sexp, counts: &mut HashMap<String, usize>) {
 fn build_meta_fan(arena: &mut Arena, original: Ptr, count: usize) -> Vec<Port> {
     assert!(count >= 2);
     let mut leaves = Vec::with_capacity(count);
-    let mut current = Port::new(original, 0, WireColor::Blue);
+    let mut current = Port::new(original, 0);
     for _ in 0..(count - 1) {
         let label = arena.fresh_dup_label();
         let dup = arena.spawn(OpCode::Dup { label });
-        arena.connect(dup, 0, current.target, current.slot, WireColor::Blue);
-        leaves.push(Port::new(dup, 1, WireColor::Blue));
-        current = Port::new(dup, 2, WireColor::Blue);
+        arena.connect(dup, 0, current.target, current.slot);
+        leaves.push(Port::new(dup, 1));
+        current = Port::new(dup, 2);
     }
     leaves.push(current);
     leaves
@@ -232,7 +232,7 @@ fn build_rhs(arena: &mut Arena, rhs: &Sexp, bindings: &HashMap<String, Ptr>) -> 
     for (name, count) in &counts {
         if let Some(&ptr) = bindings.get(name.as_str()) {
             if *count == 1 {
-                meta_ports.insert(name.clone(), vec![Port::new(ptr, 0, WireColor::Blue)]);
+                meta_ports.insert(name.clone(), vec![Port::new(ptr, 0)]);
             } else {
                 let ports = build_meta_fan(arena, ptr, *count);
                 meta_ports.insert(name.clone(), ports);
@@ -260,13 +260,13 @@ fn build_rhs_inner(
             }
             // Fallback: unbound meta → placeholder symbol
             if let Some(&ptr) = bindings.get(var) {
-                Port::new(ptr, 0, WireColor::Blue)
+                Port::new(ptr, 0)
             } else {
                 let sym = arena.spawn(OpCode::Sym {
                     name: name.clone(),
                     arity: 0,
                 });
-                Port::new(sym, 0, WireColor::Blue)
+                Port::new(sym, 0)
             }
         }
         Sexp::Atom(name, _) => {
@@ -274,7 +274,7 @@ fn build_rhs_inner(
                 name: name.clone(),
                 arity: 0,
             });
-            Port::new(sym, 0, WireColor::Blue)
+            Port::new(sym, 0)
         }
         Sexp::List(items, _) if !items.is_empty() => {
             let head_name = items[0].as_atom().unwrap_or("?");
@@ -290,9 +290,9 @@ fn build_rhs_inner(
                 for arg_sexp in &items[1..] {
                     let arg_port = build_rhs_inner(arena, arg_sexp, bindings, meta_ports);
                     let app = arena.spawn(OpCode::App);
-                    arena.connect(app, 1, arg_port.target, arg_port.slot, WireColor::Blue);
-                    arena.connect(app, 0, result.target, result.slot, WireColor::Blue);
-                    result = Port::new(app, 2, WireColor::Blue);
+                    arena.connect(app, 1, arg_port.target, arg_port.slot);
+                    arena.connect(app, 0, result.target, result.slot);
+                    result = Port::new(app, 2);
                 }
                 return result;
             }
@@ -303,9 +303,9 @@ fn build_rhs_inner(
                 for arg_sexp in &items[2..] {
                     let arg_port = build_rhs_inner(arena, arg_sexp, bindings, meta_ports);
                     let app = arena.spawn(OpCode::App);
-                    arena.connect(app, 1, arg_port.target, arg_port.slot, WireColor::Blue);
-                    arena.connect(app, 0, result.target, result.slot, WireColor::Blue);
-                    result = Port::new(app, 2, WireColor::Blue);
+                    arena.connect(app, 1, arg_port.target, arg_port.slot);
+                    arena.connect(app, 0, result.target, result.slot);
+                    result = Port::new(app, 2);
                 }
                 return result;
             }
@@ -324,18 +324,17 @@ fn build_rhs_inner(
                     (i + 1) as u8,
                     arg_port.target,
                     arg_port.slot,
-                    WireColor::Blue,
                 );
             }
 
-            Port::new(sym, 0, WireColor::Blue)
+            Port::new(sym, 0)
         }
         _ => {
             let sym = arena.spawn(OpCode::Sym {
                 name: "nil".into(),
                 arity: 0,
             });
-            Port::new(sym, 0, WireColor::Blue)
+            Port::new(sym, 0)
         }
     }
 }
@@ -423,7 +422,6 @@ pub fn try_rewrite_scan(arena: &mut Arena, rules: &[GraphRule]) -> bool {
                     rhs_port.slot,
                     ctx_port.target,
                     ctx_port.slot,
-                    WireColor::Blue,
                 );
             }
 
@@ -458,7 +456,7 @@ mod tests {
             arity: 1,
         });
         let port = build_sym_term(arena, sexp);
-        arena.connect(root, 1, port.target, port.slot, WireColor::Blue);
+        arena.connect(root, 1, port.target, port.slot);
         root
     }
 
@@ -469,7 +467,7 @@ mod tests {
                     name: name.clone(),
                     arity: 0,
                 });
-                Port::new(sym, 0, WireColor::Blue)
+                Port::new(sym, 0)
             }
             Sexp::List(items, _) if !items.is_empty() => {
                 let head = items[0].as_atom().unwrap_or("?");
@@ -481,16 +479,16 @@ mod tests {
                 });
                 for (i, arg) in args.iter().enumerate() {
                     let p = build_sym_term(arena, arg);
-                    arena.connect(sym, (i + 1) as u8, p.target, p.slot, WireColor::Blue);
+                    arena.connect(sym, (i + 1) as u8, p.target, p.slot);
                 }
-                Port::new(sym, 0, WireColor::Blue)
+                Port::new(sym, 0)
             }
             _ => {
                 let sym = arena.spawn(OpCode::Sym {
                     name: "nil".into(),
                     arity: 0,
                 });
-                Port::new(sym, 0, WireColor::Blue)
+                Port::new(sym, 0)
             }
         }
     }

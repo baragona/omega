@@ -1,7 +1,7 @@
 use apeiron::arena::Arena;
 use apeiron::builder::{self, BuildEnv};
 use apeiron::hash;
-use apeiron::node::{OpCode, WireColor};
+use apeiron::node::OpCode;
 use apeiron::parser;
 use apeiron::physics::{self, HaltReason, PhysicsConfig};
 use apeiron::readback;
@@ -176,7 +176,7 @@ fn multiple_systems() {
     [System RichInductive
       [@syntax [sort Type] [sort Prop]]
       [@binding exposed]
-      [@check beta-reduction iota-reduction]
+      [@check beta-reduction]
     ]
     [Theory T1 :in WeakLF
       [assert-eq test [app [lam x x] z] z]
@@ -203,15 +203,15 @@ fn barrier_blocks_until_scope_active() {
 
     // Build: App(Barrier(42, Lam(x,x)), y)
     let lam = arena.spawn(OpCode::Lam);
-    arena.connect(lam, 1, lam, 2, WireColor::Green); // identity
+    arena.connect(lam, 1, lam, 2); // identity
 
     let barrier = arena.spawn(OpCode::Barrier { scope: 42 });
-    arena.connect(barrier, 1, lam, 0, WireColor::Blue); // barrier wraps lam
+    arena.connect(barrier, 1, lam, 0); // barrier wraps lam
 
     let y = arena.spawn(OpCode::Sym { name: "y".into(), arity: 0 });
     let app = arena.spawn(OpCode::App);
-    arena.connect(app, 1, y, 0, WireColor::Blue);
-    arena.connect(app, 0, barrier, 0, WireColor::Blue); // App faces Barrier
+    arena.connect(app, 1, y, 0);
+    arena.connect(app, 0, barrier, 0); // App faces Barrier
 
     // Run without activating scope — should suspend
     let result = physics::run(&mut arena, &PhysicsConfig::default());
@@ -238,10 +238,10 @@ fn erase_propagates() {
     let app = arena.spawn(OpCode::App);
     let _f = arena.spawn(OpCode::Sym { name: "f".into(), arity: 0 });
     let x = arena.spawn(OpCode::Sym { name: "x".into(), arity: 0 });
-    arena.connect(app, 1, x, 0, WireColor::Blue);
+    arena.connect(app, 1, x, 0);
     // Don't connect app.0 to f — connect erase to app.0
     let erase = arena.spawn(OpCode::Erase);
-    arena.connect(erase, 0, app, 0, WireColor::Blue);
+    arena.connect(erase, 0, app, 0);
 
     // f is connected via app.2 (result port) — but let's skip that for simplicity
     // Just check that erase of app creates erasers for children
@@ -262,9 +262,9 @@ fn dup_sym_duplicates_constant() {
     let target_a = arena.spawn(OpCode::Sym { name: "slot_a".into(), arity: 1 });
     let target_b = arena.spawn(OpCode::Sym { name: "slot_b".into(), arity: 1 });
 
-    arena.connect(dup, 1, target_a, 1, WireColor::Blue);
-    arena.connect(dup, 2, target_b, 1, WireColor::Blue);
-    arena.connect(dup, 0, sym, 0, WireColor::Blue); // active pair
+    arena.connect(dup, 1, target_a, 1);
+    arena.connect(dup, 2, target_b, 1);
+    arena.connect(dup, 0, sym, 0); // active pair
 
     let result = physics::run(&mut arena, &PhysicsConfig::default());
     assert_eq!(result.halted_reason, HaltReason::NormalForm);
@@ -360,10 +360,7 @@ fn example_linear_linter() {
     run_example("examples/linear-linter.ap");
 }
 
-#[test]
-fn example_explicit_subst() {
-    run_example("examples/explicit-subst.ap");
-}
+
 
 #[test]
 fn example_contextual_alpha() {
@@ -405,11 +402,6 @@ fn example_nominal() {
 }
 
 #[test]
-fn example_typed_wires() {
-    run_example("examples/typed-wires.ap");
-}
-
-#[test]
 fn example_nondeterministic() {
     run_example("examples/nondeterministic.ap");
 }
@@ -420,16 +412,6 @@ fn example_differential() {
 }
 
 #[test]
-fn example_distributed() {
-    run_example("examples/distributed.ap");
-}
-
-#[test]
-fn example_entangled() {
-    run_example("examples/entangled.ap");
-}
-
-#[test]
 fn example_automorphism() {
     run_example("examples/automorphism.ap");
 }
@@ -437,6 +419,11 @@ fn example_automorphism() {
 #[test]
 fn example_stack_compiler() {
     run_example("examples/stack-compiler.ap");
+}
+
+#[test]
+fn example_morphism_zoo() {
+    run_example("examples/morphism-zoo.ap");
 }
 
 // ================================================================

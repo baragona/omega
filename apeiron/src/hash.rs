@@ -31,7 +31,6 @@ fn hash_str(s: &str) -> u64 {
 struct CanonicalState {
     scope_map: HashMap<u32, u32>,
     dup_map: HashMap<u32, u32>,
-    future_map: HashMap<u32, u32>,
 }
 
 impl CanonicalState {
@@ -39,7 +38,6 @@ impl CanonicalState {
         CanonicalState {
             scope_map: HashMap::new(),
             dup_map: HashMap::new(),
-            future_map: HashMap::new(),
         }
     }
 
@@ -52,11 +50,6 @@ impl CanonicalState {
         let next = self.dup_map.len() as u32;
         *self.dup_map.entry(label).or_insert(next)
     }
-
-    fn canonical_future(&mut self, id: u32) -> u32 {
-        let next = self.future_map.len() as u32;
-        *self.future_map.entry(id).or_insert(next)
-    }
 }
 
 fn opcode_hash_canonical(op: &OpCode, state: &mut CanonicalState) -> u64 {
@@ -68,10 +61,7 @@ fn opcode_hash_canonical(op: &OpCode, state: &mut CanonicalState) -> u64 {
         OpCode::Barrier { scope } => {
             hash_mix(0x5555555555555555, state.canonical_scope(*scope) as u64)
         }
-        OpCode::Lens { shift } => hash_mix(0x6666666666666666, *shift as u64),
-        OpCode::Future { constraint_id } => {
-            hash_mix(0x7777777777777777, state.canonical_future(*constraint_id) as u64)
-        }
+        OpCode::Future => 0x7777777777777777,
         OpCode::Sym { name, arity } => {
             let h = hash_str(name);
             hash_mix(h, *arity as u64)
@@ -127,7 +117,7 @@ pub fn topological_hash(arena: &Arena, root: Ptr) -> u64 {
                     let target_ord = visited.get(&port.target).copied().unwrap_or(u32::MAX);
                     hash = hash_mix(hash, target_ord as u64);
                     hash = hash_mix(hash, port.slot as u64);
-                    hash = hash_mix(hash, port.color as u64);
+
                 } else {
                     hash = hash_mix(hash, u64::MAX);
                 }
@@ -187,7 +177,7 @@ fn topological_hash_nominal(arena: &Arena, root: Ptr) -> u64 {
                     let target_ord = visited.get(&port.target).copied().unwrap_or(u32::MAX);
                     hash = hash_mix(hash, target_ord as u64);
                     hash = hash_mix(hash, port.slot as u64);
-                    hash = hash_mix(hash, port.color as u64);
+
                 } else {
                     hash = hash_mix(hash, u64::MAX);
                 }
@@ -205,8 +195,7 @@ fn opcode_hash_nominal(op: &OpCode) -> u64 {
         OpCode::Erase => 0x3333333333333333,
         OpCode::Dup { label } => hash_mix(0x4444444444444444, *label as u64),
         OpCode::Barrier { scope } => hash_mix(0x5555555555555555, *scope as u64),
-        OpCode::Lens { shift } => hash_mix(0x6666666666666666, *shift as u64),
-        OpCode::Future { constraint_id } => hash_mix(0x7777777777777777, *constraint_id as u64),
+        OpCode::Future => 0x7777777777777777,
         OpCode::Sym { name, arity } => {
             let h = hash_str(name);
             hash_mix(h, *arity as u64)
@@ -223,7 +212,7 @@ pub fn structurally_equal(arena: &Arena, a: Ptr, b: Ptr) -> bool {
 mod tests {
     use super::*;
     use crate::arena::Arena;
-    use crate::node::{OpCode, WireColor};
+    use crate::node::OpCode;
 
     #[test]
     fn identical_constants_same_hash() {
@@ -259,10 +248,10 @@ mod tests {
 
         // Build two copies of [lam x x] (identity)
         let lam1 = arena.spawn(OpCode::Lam);
-        arena.connect(lam1, 1, lam1, 2, WireColor::Green);
+        arena.connect(lam1, 1, lam1, 2);
 
         let lam2 = arena.spawn(OpCode::Lam);
-        arena.connect(lam2, 1, lam2, 2, WireColor::Green);
+        arena.connect(lam2, 1, lam2, 2);
 
         assert!(structurally_equal(&arena, lam1, lam2));
     }
@@ -273,15 +262,15 @@ mod tests {
 
         // Barrier(scope=42, inner=Lam identity)
         let lam1 = arena.spawn(OpCode::Lam);
-        arena.connect(lam1, 1, lam1, 2, WireColor::Green);
+        arena.connect(lam1, 1, lam1, 2);
         let bar1 = arena.spawn(OpCode::Barrier { scope: 42 });
-        arena.connect(bar1, 1, lam1, 0, WireColor::Blue);
+        arena.connect(bar1, 1, lam1, 0);
 
         // Barrier(scope=99, inner=Lam identity) — different scope ID, same structure
         let lam2 = arena.spawn(OpCode::Lam);
-        arena.connect(lam2, 1, lam2, 2, WireColor::Green);
+        arena.connect(lam2, 1, lam2, 2);
         let bar2 = arena.spawn(OpCode::Barrier { scope: 99 });
-        arena.connect(bar2, 1, lam2, 0, WireColor::Blue);
+        arena.connect(bar2, 1, lam2, 0);
 
         // Relative hashing: scope IDs are canonicalized → structurally equal
         assert!(structurally_equal(&arena, bar1, bar2));
@@ -295,15 +284,15 @@ mod tests {
         let x1a = arena.spawn(OpCode::Sym { name: "x".into(), arity: 0 });
         let x1b = arena.spawn(OpCode::Sym { name: "x".into(), arity: 0 });
         let dup1 = arena.spawn(OpCode::Dup { label: 0 });
-        arena.connect(dup1, 1, x1a, 0, WireColor::Blue);
-        arena.connect(dup1, 2, x1b, 0, WireColor::Blue);
+        arena.connect(dup1, 1, x1a, 0);
+        arena.connect(dup1, 2, x1b, 0);
 
         // Dup#7 with two Sym("x") children — different label, same structure
         let x2a = arena.spawn(OpCode::Sym { name: "x".into(), arity: 0 });
         let x2b = arena.spawn(OpCode::Sym { name: "x".into(), arity: 0 });
         let dup2 = arena.spawn(OpCode::Dup { label: 7 });
-        arena.connect(dup2, 1, x2a, 0, WireColor::Blue);
-        arena.connect(dup2, 2, x2b, 0, WireColor::Blue);
+        arena.connect(dup2, 1, x2a, 0);
+        arena.connect(dup2, 2, x2b, 0);
 
         assert!(structurally_equal(&arena, dup1, dup2));
     }
@@ -315,38 +304,27 @@ mod tests {
         // Two barriers sharing scope A, inner=Sym("x")
         let x1 = arena.spawn(OpCode::Sym { name: "x".into(), arity: 0 });
         let bar1a = arena.spawn(OpCode::Barrier { scope: 10 });
-        arena.connect(bar1a, 1, x1, 0, WireColor::Blue);
+        arena.connect(bar1a, 1, x1, 0);
         let x2 = arena.spawn(OpCode::Sym { name: "x".into(), arity: 0 });
         let bar1b = arena.spawn(OpCode::Barrier { scope: 10 }); // same scope
-        arena.connect(bar1b, 1, x2, 0, WireColor::Blue);
+        arena.connect(bar1b, 1, x2, 0);
         let pair1 = arena.spawn(OpCode::Sym { name: "pair".into(), arity: 2 });
-        arena.connect(pair1, 1, bar1a, 0, WireColor::Blue);
-        arena.connect(pair1, 2, bar1b, 0, WireColor::Blue);
+        arena.connect(pair1, 1, bar1a, 0);
+        arena.connect(pair1, 2, bar1b, 0);
 
         // Two barriers with DIFFERENT scopes — structurally different!
         let x3 = arena.spawn(OpCode::Sym { name: "x".into(), arity: 0 });
         let bar2a = arena.spawn(OpCode::Barrier { scope: 20 });
-        arena.connect(bar2a, 1, x3, 0, WireColor::Blue);
+        arena.connect(bar2a, 1, x3, 0);
         let x4 = arena.spawn(OpCode::Sym { name: "x".into(), arity: 0 });
         let bar2b = arena.spawn(OpCode::Barrier { scope: 30 }); // different scope
-        arena.connect(bar2b, 1, x4, 0, WireColor::Blue);
+        arena.connect(bar2b, 1, x4, 0);
         let pair2 = arena.spawn(OpCode::Sym { name: "pair".into(), arity: 2 });
-        arena.connect(pair2, 1, bar2a, 0, WireColor::Blue);
-        arena.connect(pair2, 2, bar2b, 0, WireColor::Blue);
+        arena.connect(pair2, 1, bar2a, 0);
+        arena.connect(pair2, 2, bar2b, 0);
 
         // Same-scope pair vs different-scope pair → NOT equal
         assert!(!structurally_equal(&arena, pair1, pair2));
     }
 
-    #[test]
-    fn contextual_alpha_futures() {
-        let mut arena = Arena::new();
-
-        // Two Future nodes with different constraint IDs
-        let f1 = arena.spawn(OpCode::Future { constraint_id: 0 });
-        let f2 = arena.spawn(OpCode::Future { constraint_id: 42 });
-
-        // Single futures are structurally identical (both canonicalize to index 0)
-        assert!(structurally_equal(&arena, f1, f2));
-    }
 }

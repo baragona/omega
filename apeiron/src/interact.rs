@@ -1,5 +1,5 @@
 use crate::arena::Arena;
-use crate::node::{OpCode, Port, Ptr, WireColor};
+use crate::node::{OpCode, Port, Ptr};
 
 /// Helper: rewire two ports together, bypassing two nodes being freed.
 /// Connects whatever was on port_a's far end to whatever was on port_b's far end.
@@ -10,15 +10,14 @@ fn rewire(arena: &mut Arena, port_a: Port, port_b: Port) {
             port_a.slot,
             port_b.target,
             port_b.slot,
-            WireColor::Blue,
         );
     } else if port_a.is_connected() {
         // port_b is disconnected — erase port_a's target
         let erase = arena.spawn(OpCode::Erase);
-        arena.connect(erase, 0, port_a.target, port_a.slot, WireColor::Blue);
+        arena.connect(erase, 0, port_a.target, port_a.slot);
     } else if port_b.is_connected() {
         let erase = arena.spawn(OpCode::Erase);
-        arena.connect(erase, 0, port_b.target, port_b.slot, WireColor::Blue);
+        arena.connect(erase, 0, port_b.target, port_b.slot);
     }
 }
 
@@ -60,14 +59,14 @@ pub fn beta(arena: &mut Arena, app: Ptr, lam: Ptr) {
         // Erase the argument since variable has no external usage.
         if app_arg.is_connected() {
             let erase = arena.spawn(OpCode::Erase);
-            arena.connect(erase, 0, app_arg.target, app_arg.slot, WireColor::Blue);
+            arena.connect(erase, 0, app_arg.target, app_arg.slot);
         }
     } else if body_is_internal {
         // Body is internally wired.
         rewire(arena, app_arg, lam_var);
         if app_result.is_connected() {
             let erase = arena.spawn(OpCode::Erase);
-            arena.connect(erase, 0, app_result.target, app_result.slot, WireColor::Blue);
+            arena.connect(erase, 0, app_result.target, app_result.slot);
         }
     } else {
         // General case: both point to external nodes.
@@ -96,7 +95,7 @@ pub fn erase_node(arena: &mut Arena, _eraser: Ptr, target: Ptr) {
         let port = target_node.ports[slot];
         if port.is_connected() {
             let new_erase = arena.spawn(OpCode::Erase);
-            arena.connect(new_erase, 0, port.target, port.slot, WireColor::Blue);
+            arena.connect(new_erase, 0, port.target, port.slot);
         }
     }
 
@@ -139,25 +138,25 @@ pub fn dup_lam(arena: &mut Arena, dup: Ptr, lam: Ptr) {
 
     // Wire copies out: Lam1 → copyA, Lam2 → copyB
     if dup_copy_a.is_connected() {
-        arena.connect(lam1, 0, dup_copy_a.target, dup_copy_a.slot, WireColor::Blue);
+        arena.connect(lam1, 0, dup_copy_a.target, dup_copy_a.slot);
     }
     if dup_copy_b.is_connected() {
-        arena.connect(lam2, 0, dup_copy_b.target, dup_copy_b.slot, WireColor::Blue);
+        arena.connect(lam2, 0, dup_copy_b.target, dup_copy_b.slot);
     }
 
     // Wire DupVar: original var → DupVar.principal, DupVar copies → Lam1.var, Lam2.var
     if lam_var.is_connected() {
-        arena.connect(dup_var, 0, lam_var.target, lam_var.slot, WireColor::Blue);
+        arena.connect(dup_var, 0, lam_var.target, lam_var.slot);
     }
-    arena.connect(dup_var, 1, lam1, 1, WireColor::Blue);
-    arena.connect(dup_var, 2, lam2, 1, WireColor::Blue);
+    arena.connect(dup_var, 1, lam1, 1);
+    arena.connect(dup_var, 2, lam2, 1);
 
     // Wire DupBody: original body → DupBody.principal, DupBody copies → Lam1.body, Lam2.body
     if lam_body.is_connected() {
-        arena.connect(dup_body, 0, lam_body.target, lam_body.slot, WireColor::Blue);
+        arena.connect(dup_body, 0, lam_body.target, lam_body.slot);
     }
-    arena.connect(dup_body, 1, lam1, 2, WireColor::Blue);
-    arena.connect(dup_body, 2, lam2, 2, WireColor::Blue);
+    arena.connect(dup_body, 1, lam1, 2);
+    arena.connect(dup_body, 2, lam2, 2);
 
     arena.free(dup);
     arena.free(lam);
@@ -187,25 +186,25 @@ pub fn dup_app(arena: &mut Arena, dup: Ptr, app: Ptr) {
 
     // Wire copies out
     if dup_copy_a.is_connected() {
-        arena.connect(app1, 0, dup_copy_a.target, dup_copy_a.slot, WireColor::Blue);
+        arena.connect(app1, 0, dup_copy_a.target, dup_copy_a.slot);
     }
     if dup_copy_b.is_connected() {
-        arena.connect(app2, 0, dup_copy_b.target, dup_copy_b.slot, WireColor::Blue);
+        arena.connect(app2, 0, dup_copy_b.target, dup_copy_b.slot);
     }
 
     // Wire DupArg
     if app_arg.is_connected() {
-        arena.connect(dup_arg, 0, app_arg.target, app_arg.slot, WireColor::Blue);
+        arena.connect(dup_arg, 0, app_arg.target, app_arg.slot);
     }
-    arena.connect(dup_arg, 1, app1, 1, WireColor::Blue);
-    arena.connect(dup_arg, 2, app2, 1, WireColor::Blue);
+    arena.connect(dup_arg, 1, app1, 1);
+    arena.connect(dup_arg, 2, app2, 1);
 
     // Wire DupResult
     if app_result.is_connected() {
-        arena.connect(dup_result, 0, app_result.target, app_result.slot, WireColor::Blue);
+        arena.connect(dup_result, 0, app_result.target, app_result.slot);
     }
-    arena.connect(dup_result, 1, app1, 2, WireColor::Blue);
-    arena.connect(dup_result, 2, app2, 2, WireColor::Blue);
+    arena.connect(dup_result, 1, app1, 2);
+    arena.connect(dup_result, 2, app2, 2);
 
     arena.free(dup);
     arena.free(app);
@@ -237,10 +236,10 @@ pub fn dup_sym(arena: &mut Arena, dup: Ptr, sym: Ptr) {
 
     // Wire copies out
     if dup_copy_a.is_connected() {
-        arena.connect(sym1, 0, dup_copy_a.target, dup_copy_a.slot, WireColor::Blue);
+        arena.connect(sym1, 0, dup_copy_a.target, dup_copy_a.slot);
     }
     if dup_copy_b.is_connected() {
-        arena.connect(sym2, 0, dup_copy_b.target, dup_copy_b.slot, WireColor::Blue);
+        arena.connect(sym2, 0, dup_copy_b.target, dup_copy_b.slot);
     }
 
     // For each aux port, spawn a Dup to split the argument
@@ -249,9 +248,9 @@ pub fn dup_sym(arena: &mut Arena, dup: Ptr, sym: Ptr) {
         let arg_port = sym_node.ports[slot];
         if arg_port.is_connected() {
             let new_dup = arena.spawn(OpCode::Dup { label: dup_label });
-            arena.connect(new_dup, 0, arg_port.target, arg_port.slot, WireColor::Blue);
-            arena.connect(new_dup, 1, sym1, slot as u8, WireColor::Blue);
-            arena.connect(new_dup, 2, sym2, slot as u8, WireColor::Blue);
+            arena.connect(new_dup, 0, arg_port.target, arg_port.slot);
+            arena.connect(new_dup, 1, sym1, slot as u8);
+            arena.connect(new_dup, 2, sym2, slot as u8);
         }
     }
 
@@ -309,23 +308,23 @@ pub fn dup_dup_commute(arena: &mut Arena, d1: Ptr, d2: Ptr) {
 
     // Wire to original aux ports
     if d1_a.is_connected() {
-        arena.connect(a, 0, d1_a.target, d1_a.slot, WireColor::Blue);
+        arena.connect(a, 0, d1_a.target, d1_a.slot);
     }
     if d1_b.is_connected() {
-        arena.connect(b, 0, d1_b.target, d1_b.slot, WireColor::Blue);
+        arena.connect(b, 0, d1_b.target, d1_b.slot);
     }
     if d2_a.is_connected() {
-        arena.connect(c, 0, d2_a.target, d2_a.slot, WireColor::Blue);
+        arena.connect(c, 0, d2_a.target, d2_a.slot);
     }
     if d2_b.is_connected() {
-        arena.connect(d, 0, d2_b.target, d2_b.slot, WireColor::Blue);
+        arena.connect(d, 0, d2_b.target, d2_b.slot);
     }
 
     // Cross-connect the diamond
-    arena.connect(a, 1, c, 1, WireColor::Blue);
-    arena.connect(a, 2, d, 1, WireColor::Blue);
-    arena.connect(b, 1, c, 2, WireColor::Blue);
-    arena.connect(b, 2, d, 2, WireColor::Blue);
+    arena.connect(a, 1, c, 1);
+    arena.connect(a, 2, d, 1);
+    arena.connect(b, 1, c, 2);
+    arena.connect(b, 2, d, 2);
 
     arena.free(d1);
     arena.free(d2);
@@ -347,7 +346,7 @@ pub fn barrier_check(arena: &mut Arena, barrier: Ptr, other: Ptr) {
             // Reconnect: other's principal ↔ barrier's inner target
             // The other node's principal was connected to barrier's principal.
             // We need to connect other to whatever is inside the barrier.
-            arena.connect(other, 0, inner.target, inner.slot, WireColor::Blue);
+            arena.connect(other, 0, inner.target, inner.slot);
         }
         arena.free(barrier);
     } else {
@@ -361,7 +360,7 @@ pub fn barrier_check(arena: &mut Arena, barrier: Ptr, other: Ptr) {
 mod tests {
     use super::*;
     use crate::arena::Arena;
-    use crate::node::{OpCode, WireColor};
+    use crate::node::OpCode;
     use crate::physics::{self, PhysicsConfig};
 
     /// Build identity: [lam x x] → a Lam node whose var port is wired to its body port.
@@ -370,7 +369,7 @@ mod tests {
         let lam = arena.spawn(OpCode::Lam);
         // Identity: body and var are the same wire.
         // In interaction nets, this means var port (1) connects to body port (2).
-        arena.connect(lam, 1, lam, 2, WireColor::Green);
+        arena.connect(lam, 1, lam, 2);
         lam
     }
 
@@ -393,11 +392,11 @@ mod tests {
         });
 
         // Wire: root.1 → app.2 (result of app goes to root)
-        arena.connect(root, 1, app, 2, WireColor::Blue);
+        arena.connect(root, 1, app, 2);
         // Wire: app.1 → y.0 (argument is y)
-        arena.connect(app, 1, y, 0, WireColor::Blue);
+        arena.connect(app, 1, y, 0);
         // Wire: app.0 → lam.0 (principal ports → active pair!)
-        arena.connect(app, 0, lam, 0, WireColor::Blue);
+        arena.connect(app, 0, lam, 0);
 
         // Run physics
         let result = physics::run(&mut arena, &PhysicsConfig::default());
@@ -432,9 +431,9 @@ mod tests {
             arity: 0,
         });
 
-        arena.connect(lam, 1, var_target, 0, WireColor::Blue);
-        arena.connect(lam, 2, body, 0, WireColor::Blue);
-        arena.connect(eraser, 0, lam, 0, WireColor::Blue);
+        arena.connect(lam, 1, var_target, 0);
+        arena.connect(lam, 2, body, 0);
+        arena.connect(eraser, 0, lam, 0);
 
         let result = physics::run(&mut arena, &PhysicsConfig::default());
         assert_eq!(result.halted_reason, physics::HaltReason::NormalForm);
@@ -469,11 +468,11 @@ mod tests {
             arity: 0,
         });
 
-        arena.connect(d1, 1, a, 0, WireColor::Blue);
-        arena.connect(d1, 2, b, 0, WireColor::Blue);
-        arena.connect(d2, 1, c, 0, WireColor::Blue);
-        arena.connect(d2, 2, dd, 0, WireColor::Blue);
-        arena.connect(d1, 0, d2, 0, WireColor::Blue); // active pair
+        arena.connect(d1, 1, a, 0);
+        arena.connect(d1, 2, b, 0);
+        arena.connect(d2, 1, c, 0);
+        arena.connect(d2, 2, dd, 0);
+        arena.connect(d1, 0, d2, 0); // active pair
 
         let result = physics::run(&mut arena, &PhysicsConfig::default());
         assert_eq!(result.halted_reason, physics::HaltReason::NormalForm);

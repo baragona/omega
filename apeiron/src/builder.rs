@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::arena::Arena;
-use crate::node::{OpCode, Port, Ptr, WireColor};
+use crate::node::{OpCode, Port, Ptr};
 use crate::parser::Sexp;
 
 /// Build environment: tracks variable scopes and their usage sites.
@@ -44,7 +44,7 @@ impl BuildEnv {
     }
 
     fn pop_scope(&mut self) -> HashMap<String, Vec<DanglingPort>> {
-        self.scopes.pop().unwrap_or_default()
+        self.scopes.pop().expect("scope stack underflow: push/pop imbalance")
     }
 
     /// Register a new variable in the current scope.
@@ -86,7 +86,7 @@ pub fn build_rooted(arena: &mut Arena, env: &mut BuildEnv, sexp: &Sexp) -> Ptr {
         arity: 1,
     });
     let term_port = build_term(arena, env, sexp);
-    arena.connect(root, 1, term_port.target, term_port.slot, WireColor::Blue);
+    arena.connect(root, 1, term_port.target, term_port.slot);
     arena.end_building();
     root
 }
@@ -104,7 +104,7 @@ pub fn build_term(arena: &mut Arena, env: &mut BuildEnv, sexp: &Sexp) -> Port {
                 name: "nil".into(),
                 arity: 0,
             });
-            Port::new(sym, 0, WireColor::Blue)
+            Port::new(sym, 0)
         }
         Sexp::List(items, _) => {
             let head = items[0].as_atom().unwrap_or("");
@@ -134,7 +134,6 @@ pub fn build_term(arena: &mut Arena, env: &mut BuildEnv, sexp: &Sexp) -> Port {
                         1,
                         inner_port.target,
                         inner_port.slot,
-                        WireColor::Blue,
                     );
 
                     // If scope is inactive, suspend any active pairs created
@@ -151,25 +150,7 @@ pub fn build_term(arena: &mut Arena, env: &mut BuildEnv, sexp: &Sexp) -> Port {
                         }
                     }
 
-                    Port::new(barrier, 0, WireColor::Blue)
-                }
-
-                // Lens: [lens N expr]
-                "lens" if items.len() >= 3 => {
-                    let shift: i32 = items[1]
-                        .as_atom()
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or(0);
-                    let lens = arena.spawn(OpCode::Lens { shift });
-                    let inner_port = build_term(arena, env, &items[2]);
-                    arena.connect(
-                        lens,
-                        1,
-                        inner_port.target,
-                        inner_port.slot,
-                        WireColor::Blue,
-                    );
-                    Port::new(lens, 0, WireColor::Blue)
+                    Port::new(barrier, 0)
                 }
 
                 // De Bruijn variable: [var N]
@@ -182,11 +163,7 @@ pub fn build_term(arena: &mut Arena, env: &mut BuildEnv, sexp: &Sexp) -> Port {
                         name: format!("${}", idx),
                         arity: 0,
                     });
-                    // Store index in metadata for lens interactions
-                    if let Some(node) = arena.get_mut(sym) {
-                        node.metadata = idx as u64;
-                    }
-                    Port::new(sym, 0, WireColor::Blue)
+                    Port::new(sym, 0)
                 }
 
                 // Constant: [const name] — just a named symbol
@@ -196,7 +173,7 @@ pub fn build_term(arena: &mut Arena, env: &mut BuildEnv, sexp: &Sexp) -> Port {
                         name,
                         arity: 0,
                     });
-                    Port::new(sym, 0, WireColor::Blue)
+                    Port::new(sym, 0)
                 }
 
                 _ => {
@@ -216,10 +193,9 @@ pub fn build_term(arena: &mut Arena, env: &mut BuildEnv, sexp: &Sexp) -> Port {
                                 (i + 1) as u8,
                                 arg_port.target,
                                 arg_port.slot,
-                                WireColor::Blue,
-                            );
+                                    );
                         }
-                        Port::new(sym, 0, WireColor::Blue)
+                        Port::new(sym, 0)
                     } else if items.len() == 1 {
                         // Generic application: head applied to args
                         build_term(arena, env, &items[0])
@@ -235,18 +211,16 @@ pub fn build_term(arena: &mut Arena, env: &mut BuildEnv, sexp: &Sexp) -> Port {
                                 1,
                                 arg_port.target,
                                 arg_port.slot,
-                                WireColor::Blue,
-                            );
+                                    );
                             arena.connect(
                                 app,
                                 0,
                                 result.target,
                                 result.slot,
-                                WireColor::Blue,
-                            );
+                                    );
 
                             // The result of this application is App's port 2
-                            result = Port::new(app, 2, WireColor::Blue);
+                            result = Port::new(app, 2);
                         }
                         result
                     }
@@ -259,8 +233,8 @@ pub fn build_term(arena: &mut Arena, env: &mut BuildEnv, sexp: &Sexp) -> Port {
 fn build_atom(arena: &mut Arena, env: &mut BuildEnv, name: &str) -> Port {
     if name.starts_with('?') {
         // Meta-variable / future
-        let sym = arena.spawn(OpCode::Future { constraint_id: 0 });
-        Port::new(sym, 0, WireColor::Blue)
+        let sym = arena.spawn(OpCode::Future);
+        Port::new(sym, 0)
     } else {
         // Check if it's a bound variable
         // We need a placeholder node for the variable usage
@@ -270,10 +244,10 @@ fn build_atom(arena: &mut Arena, env: &mut BuildEnv, name: &str) -> Port {
         });
         if env.use_var(name, placeholder, 0) {
             // It's a bound variable — the placeholder will be wired later
-            Port::new(placeholder, 0, WireColor::Blue)
+            Port::new(placeholder, 0)
         } else {
             // It's a free constant
-            Port::new(placeholder, 0, WireColor::Blue)
+            Port::new(placeholder, 0)
         }
     }
 }
@@ -292,7 +266,7 @@ fn build_lam(arena: &mut Arena, env: &mut BuildEnv, var: &Sexp, body: &Sexp) -> 
     let body_port = build_term(arena, env, body);
 
     // Wire body to Lam's body port (slot 2)
-    arena.connect(lam, 2, body_port.target, body_port.slot, WireColor::Blue);
+    arena.connect(lam, 2, body_port.target, body_port.slot);
 
     // Handle variable usages
     let usages = env.take_usages(var_name);
@@ -301,7 +275,7 @@ fn build_lam(arena: &mut Arena, env: &mut BuildEnv, var: &Sexp, body: &Sexp) -> 
     wire_var_usages(arena, lam, 1, usages);
 
     // Return Lam's principal port
-    Port::new(lam, 0, WireColor::Blue)
+    Port::new(lam, 0)
 }
 
 fn build_app(arena: &mut Arena, env: &mut BuildEnv, fun: &Sexp, arg: &Sexp) -> Port {
@@ -311,12 +285,12 @@ fn build_app(arena: &mut Arena, env: &mut BuildEnv, fun: &Sexp, arg: &Sexp) -> P
     let arg_port = build_term(arena, env, arg);
 
     // Wire function to App's principal port (will auto-enqueue if fun is Lam)
-    arena.connect(app, 0, fun_port.target, fun_port.slot, WireColor::Blue);
+    arena.connect(app, 0, fun_port.target, fun_port.slot);
     // Wire argument to App's arg port (slot 1)
-    arena.connect(app, 1, arg_port.target, arg_port.slot, WireColor::Blue);
+    arena.connect(app, 1, arg_port.target, arg_port.slot);
 
     // Return App's result port (slot 2)
-    Port::new(app, 2, WireColor::Blue)
+    Port::new(app, 2)
 }
 
 /// Wire a binder's variable port to the usage sites.
@@ -333,7 +307,7 @@ fn wire_var_usages(arena: &mut Arena, binder: Ptr, var_slot: u8, usages: Vec<Dan
     match usages.len() {
         0 => {
             let erase = arena.spawn(OpCode::Erase);
-            arena.connect(binder, var_slot, erase, 0, WireColor::Blue);
+            arena.connect(binder, var_slot, erase, 0);
         }
         1 => {
             let u = &usages[0];
@@ -346,12 +320,11 @@ fn wire_var_usages(arena: &mut Arena, binder: Ptr, var_slot: u8, usages: Vec<Dan
                     var_slot,
                     body_conn.target,
                     body_conn.slot,
-                    WireColor::Blue,
                 );
                 arena.free(u.node); // free the placeholder
             } else {
                 // Placeholder not connected to anything yet — wire directly
-                arena.connect(binder, var_slot, u.node, u.slot, WireColor::Blue);
+                arena.connect(binder, var_slot, u.node, u.slot);
             }
         }
         _ => {
@@ -379,7 +352,6 @@ fn wire_var_usages(arena: &mut Arena, binder: Ptr, var_slot: u8, usages: Vec<Dan
                 var_slot,
                 root_port.target,
                 root_port.slot,
-                WireColor::Blue,
             );
         }
     }
@@ -394,13 +366,13 @@ fn build_dup_tree(arena: &mut Arena, usages: &[DanglingPort], label: u32) -> Por
 
     if usages.len() == 1 {
         // Single usage: return directly
-        Port::new(usages[0].node, usages[0].slot, WireColor::Blue)
+        Port::new(usages[0].node, usages[0].slot)
     } else if usages.len() == 2 {
         // Base case: single Dup node
         let dup = arena.spawn(OpCode::Dup { label });
-        arena.connect(dup, 1, usages[0].node, usages[0].slot, WireColor::Blue);
-        arena.connect(dup, 2, usages[1].node, usages[1].slot, WireColor::Blue);
-        Port::new(dup, 0, WireColor::Blue)
+        arena.connect(dup, 1, usages[0].node, usages[0].slot);
+        arena.connect(dup, 2, usages[1].node, usages[1].slot);
+        Port::new(dup, 0)
     } else {
         // Recursive case: split usages in half
         let mid = usages.len() / 2;
@@ -408,9 +380,9 @@ fn build_dup_tree(arena: &mut Arena, usages: &[DanglingPort], label: u32) -> Por
         let right_port = build_dup_tree(arena, &usages[mid..], label);
 
         let dup = arena.spawn(OpCode::Dup { label });
-        arena.connect(dup, 1, left_port.target, left_port.slot, WireColor::Blue);
-        arena.connect(dup, 2, right_port.target, right_port.slot, WireColor::Blue);
-        Port::new(dup, 0, WireColor::Blue)
+        arena.connect(dup, 1, left_port.target, left_port.slot);
+        arena.connect(dup, 2, right_port.target, right_port.slot);
+        Port::new(dup, 0)
     }
 }
 

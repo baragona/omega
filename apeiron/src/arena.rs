@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::node::{Node, OpCode, Port, Ptr, WireColor};
+use crate::node::{Node, OpCode, Port, Ptr};
 
 /// Statistics for the arena.
 #[derive(Default, Debug, Clone)]
@@ -131,17 +131,17 @@ impl Arena {
     ///
     /// Sets `a.ports[slot_a]` to point at `(b, slot_b)` and vice versa.
     /// If both slots are 0 (principal ports), auto-enqueues as an active pair.
-    pub fn connect(&mut self, a: Ptr, slot_a: u8, b: Ptr, slot_b: u8, color: WireColor) {
+    pub fn connect(&mut self, a: Ptr, slot_a: u8, b: Ptr, slot_b: u8) {
         // Set a -> b
         if let Some(node_a) = self.nodes.get_mut(a.index()).and_then(|s| s.as_mut()) {
             if (slot_a as usize) < node_a.ports.len() {
-                node_a.ports[slot_a as usize] = Port::new(b, slot_b, color);
+                node_a.ports[slot_a as usize] = Port::new(b, slot_b);
             }
         }
         // Set b -> a
         if let Some(node_b) = self.nodes.get_mut(b.index()).and_then(|s| s.as_mut()) {
             if (slot_b as usize) < node_b.ports.len() {
-                node_b.ports[slot_b as usize] = Port::new(a, slot_a, color);
+                node_b.ports[slot_b as usize] = Port::new(a, slot_a);
             }
         }
         // Auto-detect active pair: both principal ports connected
@@ -269,7 +269,7 @@ mod tests {
         let b = arena.spawn(OpCode::App);
 
         // Connect aux ports (not principal → no active pair)
-        arena.connect(a, 2, b, 1, WireColor::Blue);
+        arena.connect(a, 2, b, 1);
 
         let port_a2 = arena.get(a).unwrap().ports[2];
         assert_eq!(port_a2.target, b);
@@ -289,7 +289,7 @@ mod tests {
         let lam = arena.spawn(OpCode::Lam);
 
         // Connect principal ports → should auto-enqueue
-        arena.connect(app, 0, lam, 0, WireColor::Blue);
+        arena.connect(app, 0, lam, 0);
         assert_eq!(arena.active_pairs.len(), 1);
         assert_eq!(arena.active_pairs[0], (app, lam));
     }
@@ -299,7 +299,7 @@ mod tests {
         let mut arena = Arena::new();
         let a = arena.spawn(OpCode::Lam);
         let b = arena.spawn(OpCode::App);
-        arena.connect(a, 1, b, 2, WireColor::Blue);
+        arena.connect(a, 1, b, 2);
 
         arena.disconnect(a, 1);
         assert!(!arena.get(a).unwrap().ports[1].is_connected());
@@ -316,7 +316,7 @@ mod tests {
         });
 
         // Wire principal ports
-        arena.connect(barrier, 0, other, 0, WireColor::Blue);
+        arena.connect(barrier, 0, other, 0);
         // Clear the auto-enqueued pair (we'll test listener wakeup)
         arena.active_pairs.clear();
 

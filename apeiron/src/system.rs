@@ -22,10 +22,6 @@ pub enum BindingMode {
     /// Nominal binding: names are meaningful, not alpha-equivalent.
     /// Hashing does NOT canonicalize scope/label IDs.
     Nominal,
-    /// Distributed binding: variables carry location annotations.
-    Distributed,
-    /// Entangled binding: wire pairs share quantum-like state.
-    Entangled,
 }
 
 /// A checking capability.
@@ -34,7 +30,6 @@ pub enum CheckMode {
     Rewriting,
     Unification,
     BetaReduction,
-    IotaReduction,
     Oracle,
     Extensional,
     PatternUnification,
@@ -42,10 +37,6 @@ pub enum CheckMode {
     Reversible,
     /// Multiple rules may match; non-deterministic selection.
     ConfluentRace,
-    /// Differential: graph carries values + tangent vectors.
-    Differential,
-    /// Type-check: validate sort constraints on wires.
-    TypeCheck,
 }
 
 /// An operator declared in @syntax.
@@ -180,7 +171,12 @@ impl Session {
                     "@syntax" => parse_syntax_block(&block[1..], &mut config)?,
                     "@binding" => parse_binding_block(&block[1..], &mut config)?,
                     "@check" => parse_check_block(&block[1..], &mut config)?,
-                    _ => {} // ignore unknown blocks for now
+                    _ => {
+                        return Err(ApeironError::InvalidConfig {
+                            block: "System".into(),
+                            detail: format!("unknown block: {}", block_head),
+                        })
+                    }
                 }
             }
         }
@@ -381,7 +377,12 @@ impl Session {
                                                     &system,
                                                 )?;
                                             }
-                                            _ => {}
+                                            _ => {
+                                                return Err(ApeironError::InvalidConfig {
+                                                    block: "with-scope".into(),
+                                                    detail: format!("unknown declaration: {}", inner_head),
+                                                })
+                                            }
                                         }
                                     }
                                 }
@@ -410,7 +411,10 @@ impl Session {
                         }
                     }
                     _ => {
-                        // Unknown declaration — skip
+                        return Err(ApeironError::InvalidConfig {
+                            block: "Theory".into(),
+                            detail: format!("unknown declaration: {}", decl_head),
+                        })
                     }
                 }
             }
@@ -581,7 +585,12 @@ impl Session {
                             }
                         }
                     }
-                    _ => {} // ignore unknown blocks
+                    _ => {
+                        return Err(ApeironError::InvalidConfig {
+                            block: "AutoMorphism".into(),
+                            detail: format!("unknown block: {}", head),
+                        })
+                    }
                 }
             }
         }
@@ -751,6 +760,19 @@ impl Session {
         loop {
             let result = physics::run(&mut self.arena, &PhysicsConfig::default());
             total += result.interactions;
+
+            match result.halted_reason {
+                physics::HaltReason::NormalForm => {}
+                physics::HaltReason::FuelExhausted => {
+                    return Err(ApeironError::FuelExhausted { interactions: total });
+                }
+                physics::HaltReason::Error(msg) => {
+                    return Err(ApeironError::InvalidConfig {
+                        block: "physics".into(),
+                        detail: msg,
+                    });
+                }
+            }
 
             if graph_rules.is_empty() {
                 break;
@@ -980,10 +1002,7 @@ impl Session {
                     crate::node::OpCode::Erase => "Erase".to_string(),
                     crate::node::OpCode::Dup { label } => format!("Dup#{}", label),
                     crate::node::OpCode::Barrier { scope } => format!("Barrier#{}", scope),
-                    crate::node::OpCode::Lens { shift } => format!("Lens({})", shift),
-                    crate::node::OpCode::Future { constraint_id } => {
-                        format!("Future#{}", constraint_id)
-                    }
+                    crate::node::OpCode::Future => "Future".to_string(),
                     crate::node::OpCode::Sym { name, arity } => {
                         if *arity > 0 {
                             format!("{}(arity={})", name, arity)
@@ -1087,7 +1106,12 @@ fn parse_syntax_block(items: &[Sexp], config: &mut SystemConfig) -> Result<()> {
                         });
                     }
                 }
-                _ => {}
+                _ => {
+                    return Err(ApeironError::InvalidConfig {
+                        block: "@syntax".into(),
+                        detail: format!("unknown syntax declaration: {}", kind),
+                    })
+                }
             }
         }
     }
@@ -1103,8 +1127,6 @@ fn parse_binding_block(items: &[Sexp], config: &mut SystemConfig) -> Result<()> 
                 "contextual" => BindingMode::Contextual,
                 "linear-explicit" | "linear" => BindingMode::LinearExplicit,
                 "nominal" => BindingMode::Nominal,
-                "distributed" => BindingMode::Distributed,
-                "entangled" => BindingMode::Entangled,
                 _ => {
                     return Err(ApeironError::InvalidConfig {
                         block: "@binding".into(),
@@ -1136,15 +1158,17 @@ fn parse_check_block(items: &[Sexp], config: &mut SystemConfig) -> Result<()> {
             "rewriting" => CheckMode::Rewriting,
             "unification" => CheckMode::Unification,
             "beta-reduction" | "compute" => CheckMode::BetaReduction,
-            "iota-reduction" => CheckMode::IotaReduction,
             "oracle" => CheckMode::Oracle,
             "extensional" => CheckMode::Extensional,
             "pattern-unification" => CheckMode::PatternUnification,
             "reversible" => CheckMode::Reversible,
             "confluent-race" | "race" => CheckMode::ConfluentRace,
-            "differential" => CheckMode::Differential,
-            "type-check" | "typecheck" => CheckMode::TypeCheck,
-            _ => continue,
+            _ => {
+                return Err(ApeironError::InvalidConfig {
+                    block: "@check".into(),
+                    detail: format!("unknown check mode: {}", mode_name),
+                })
+            }
         };
         config.check_modes.insert(mode);
     }

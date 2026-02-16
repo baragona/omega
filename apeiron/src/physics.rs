@@ -177,7 +177,7 @@ fn dispatch(
         }
 
         // Future × anything → suspend (do nothing, don't re-enqueue)
-        (Future { .. }, _) | (_, Future { .. }) => Ok("Future-Suspend".into()),
+        (Future, _) | (_, Future) => Ok("Future-Suspend".into()),
 
         // Inert pair — skip silently
         _ => Ok("Inert".into()),
@@ -188,7 +188,7 @@ fn dispatch(
 mod tests {
     use super::*;
     use crate::arena::Arena;
-    use crate::node::{OpCode, WireColor};
+    use crate::node::OpCode;
 
     #[test]
     fn empty_arena_halts_immediately() {
@@ -205,7 +205,7 @@ mod tests {
         // Just test that fuel works by setting it to 0
         let app = arena.spawn(OpCode::App);
         let lam = arena.spawn(OpCode::Lam);
-        arena.connect(app, 0, lam, 0, WireColor::Blue);
+        arena.connect(app, 0, lam, 0);
 
         let config = PhysicsConfig {
             max_interactions: 0,

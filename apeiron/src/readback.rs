@@ -20,7 +20,7 @@ pub enum Term {
         body: Box<Term>,
     },
     /// An unresolved future (meta-variable).
-    Future(u32),
+    Future,
     /// A raw wire reference (for debugging).
     Wire(u32),
     /// Erased term.
@@ -42,7 +42,7 @@ impl fmt::Display for Term {
             Term::Binder { kind, var, body } => {
                 write!(f, "[{} {} {}]", kind, var, body)
             }
-            Term::Future(id) => write!(f, "?{}", id),
+            Term::Future => write!(f, "?"),
             Term::Wire(ptr) => write!(f, "<wire:{}>", ptr),
             Term::Erased => write!(f, "*"),
         }
@@ -231,14 +231,7 @@ fn readback_inner(arena: &Arena, ptr: Ptr, state: &mut ReadbackState) -> Term {
                 vec![inner],
             )
         }
-        OpCode::Lens { shift } => {
-            let inner = readback_port(arena, node.ports[1], state);
-            Term::App(
-                Box::new(Term::Const(format!("shift({})", shift))),
-                vec![inner],
-            )
-        }
-        OpCode::Future { constraint_id } => Term::Future(*constraint_id),
+        OpCode::Future => Term::Future,
     }
 }
 
@@ -246,7 +239,7 @@ fn readback_inner(arena: &Arena, ptr: Ptr, state: &mut ReadbackState) -> Term {
 mod tests {
     use super::*;
     use crate::arena::Arena;
-    use crate::node::{OpCode, WireColor};
+    use crate::node::OpCode;
 
     #[test]
     fn readback_constant() {
@@ -264,7 +257,7 @@ mod tests {
         let mut arena = Arena::new();
         let lam = arena.spawn(OpCode::Lam);
         // Identity: var port connects to body port (self-loop)
-        arena.connect(lam, 1, lam, 2, WireColor::Green);
+        arena.connect(lam, 1, lam, 2);
 
         let term = readback(&arena, lam);
         assert_eq!(format!("{}", term), "[lam x x]");

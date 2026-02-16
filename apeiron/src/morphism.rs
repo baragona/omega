@@ -56,6 +56,13 @@ pub enum BindingPass {
     EraseScopes,
     /// * -> LinearExplicit: validate linearity after transform.
     ValidateLinear,
+    /// * -> AffineExplicit: validate each var used at most once.
+    ValidateAffine,
+    /// Names -> CanonicalNames: rename bound vars deterministically (v0, v1, ...)
+    /// for reproducible builds and caching.
+    AlphaNormalize,
+    /// Replace Term::Erased with a specific constant for codegen targets.
+    MaterializeErasure(String),
 }
 
 /// How to translate checking semantics.
@@ -169,19 +176,6 @@ fn derive_binding_pass(
                 target
             ),
         }),
-        // Distributed/Entangled: not yet supported
-        (BindingMode::Distributed, _) | (_, BindingMode::Distributed) => {
-            Err(ApeironError::MorphismError {
-                name: morph_name.to_string(),
-                detail: "AutoMorphism does not yet support Distributed binding mode".into(),
-            })
-        }
-        (BindingMode::Entangled, _) | (_, BindingMode::Entangled) => {
-            Err(ApeironError::MorphismError {
-                name: morph_name.to_string(),
-                detail: "AutoMorphism does not yet support Entangled binding mode".into(),
-            })
-        }
         // Fallback
         _ => Ok(BindingPass::Identity),
     }
@@ -257,6 +251,29 @@ pub fn apply_binding_pass(
             }
             Ok(term.clone())
         }
+        BindingPass::ValidateAffine => {
+            let mut counts: HashMap<String, usize> = HashMap::new();
+            count_var_uses(term, &mut counts);
+            for (name, count) in &counts {
+                if *count > 1 {
+                    return Err(ApeironError::MorphismError {
+                        name: "ValidateAffine".to_string(),
+                        detail: format!(
+                            "variable '{}' used {} times (must be at most 1 for affine mode)",
+                            name, count
+                        ),
+                    });
+                }
+            }
+            Ok(term.clone())
+        }
+        BindingPass::AlphaNormalize => {
+            let mut counter = 0;
+            Ok(alpha_normalize(term, &mut HashMap::new(), &mut counter))
+        }
+        BindingPass::MaterializeErasure(default) => {
+            Ok(materialize_erasure(term, default))
+        }
     }
 }
 
@@ -286,7 +303,7 @@ fn debruijnize(term: &Term, env: &mut Vec<String>) -> Term {
             let new_args = args.iter().map(|a| debruijnize(a, env)).collect();
             Term::App(Box::new(new_func), new_args)
         }
-        Term::Const(_) | Term::Future(_) | Term::Wire(_) | Term::Erased => term.clone(),
+        Term::Const(_) | Term::Future | Term::Wire(_) | Term::Erased => term.clone(),
     }
 }
 
@@ -319,7 +336,7 @@ fn namify(term: &Term, env: &mut Vec<String>, counter: &mut usize) -> Term {
             let new_args = args.iter().map(|a| namify(a, env, counter)).collect();
             Term::App(Box::new(new_func), new_args)
         }
-        Term::Var(_) | Term::Const(_) | Term::Future(_) | Term::Wire(_) | Term::Erased => {
+        Term::Var(_) | Term::Const(_) | Term::Future | Term::Wire(_) | Term::Erased => {
             term.clone()
         }
     }
@@ -376,6 +393,99 @@ fn count_var_uses(term: &Term, counts: &mut HashMap<String, usize>) {
     }
 }
 
+/// Rename all bound variables deterministically: v0, v1, v2, ...
+/// Produces identical output for alpha-equivalent inputs.
+fn alpha_normalize(
+    term: &Term,
+    rename_env: &mut HashMap<String, String>,
+    counter: &mut usize,
+) -> Term {
+    match term {
+        Term::Var(name) => {
+            if let Some(canonical) = rename_env.get(name) {
+                Term::Var(canonical.clone())
+            } else {
+                term.clone() // free variable — keep as-is
+            }
+        }
+        Term::Binder { kind, var, body } => {
+            let canonical = format!("v{}", counter);
+            *counter += 1;
+            let old = rename_env.insert(var.clone(), canonical.clone());
+            let new_body = alpha_normalize(body, rename_env, counter);
+            // Restore previous binding (handles shadowing)
+            match old {
+                Some(prev) => { rename_env.insert(var.clone(), prev); }
+                None => { rename_env.remove(var); }
+            }
+            Term::Binder {
+                kind: kind.clone(),
+                var: canonical,
+                body: Box::new(new_body),
+            }
+        }
+        Term::App(func, args) => {
+            let new_func = alpha_normalize(func, rename_env, counter);
+            let new_args = args.iter().map(|a| alpha_normalize(a, rename_env, counter)).collect();
+            Term::App(Box::new(new_func), new_args)
+        }
+        Term::Const(_) | Term::Future | Term::Wire(_) | Term::Erased => term.clone(),
+    }
+}
+
+/// Replace Term::Erased with a constant value (e.g. "NOP", "0", "unit").
+fn materialize_erasure(term: &Term, default: &str) -> Term {
+    match term {
+        Term::Erased => Term::Const(default.to_string()),
+        Term::App(func, args) => {
+            let new_func = materialize_erasure(func, default);
+            let new_args = args.iter().map(|a| materialize_erasure(a, default)).collect();
+            Term::App(Box::new(new_func), new_args)
+        }
+        Term::Binder { kind, var, body } => Term::Binder {
+            kind: kind.clone(),
+            var: var.clone(),
+            body: Box::new(materialize_erasure(body, default)),
+        },
+        _ => term.clone(),
+    }
+}
+
+/// Shift free de Bruijn indices by `offset`.
+///
+/// Indices bound by enclosing Binders are left untouched. Only `$N`-style
+/// constants representing free indices (those beyond the current binding depth)
+/// are adjusted. Useful for splicing compiled fragments into larger contexts.
+pub fn shift_free_indices(term: &Term, offset: i32) -> Term {
+    shift_indices_inner(term, offset, 0)
+}
+
+fn shift_indices_inner(term: &Term, offset: i32, depth: usize) -> Term {
+    match term {
+        Term::Const(name) if name.starts_with('$') => {
+            if let Ok(idx) = name[1..].parse::<usize>() {
+                if idx >= depth {
+                    // Free index — shift it
+                    let new_idx = (idx as i32 + offset).max(0) as usize;
+                    return Term::Const(format!("${}", new_idx));
+                }
+            }
+            term.clone() // bound index or non-numeric — keep
+        }
+        Term::Binder { kind, var, body } => Term::Binder {
+            kind: kind.clone(),
+            var: var.clone(),
+            body: Box::new(shift_indices_inner(body, offset, depth + 1)),
+        },
+        Term::App(func, args) => {
+            let new_func = shift_indices_inner(func, offset, depth);
+            let new_args = args.iter().map(|a| shift_indices_inner(a, offset, depth)).collect();
+            Term::App(Box::new(new_func), new_args)
+        }
+        _ => term.clone(),
+    }
+}
+
 /// Apply operator renaming to a Term tree.
 pub fn apply_op_rename(term: &Term, op_map: &HashMap<String, String>) -> Term {
     match term {
@@ -415,12 +525,9 @@ pub fn apply_checking_pass(term: &Term, pass: &CheckingPass) -> Result<Term> {
 
 fn check_no_futures(term: &Term) -> Result<()> {
     match term {
-        Term::Future(id) => Err(ApeironError::MorphismError {
+        Term::Future => Err(ApeironError::MorphismError {
             name: "ExtractGround".to_string(),
-            detail: format!(
-                "cannot transport: source term contains unresolved meta-variable ?{}",
-                id
-            ),
+            detail: "cannot transport: source term contains unresolved meta-variable".into(),
         }),
         Term::App(func, args) => {
             check_no_futures(func)?;
@@ -518,8 +625,19 @@ pub fn transport(
 
     loop {
         let result = physics::run(arena, &PhysicsConfig::default());
-        if result.halted_reason == physics::HaltReason::FuelExhausted {
-            break;
+        match result.halted_reason {
+            physics::HaltReason::NormalForm => {}
+            physics::HaltReason::FuelExhausted => {
+                return Err(ApeironError::FuelExhausted {
+                    interactions: result.interactions,
+                });
+            }
+            physics::HaltReason::Error(msg) => {
+                return Err(ApeironError::MorphismError {
+                    name: morphism.name.clone(),
+                    detail: format!("physics error during transport: {}", msg),
+                });
+            }
         }
         if all_rules.is_empty() || !rewrite::try_rewrite_scan(arena, &all_rules) {
             break;
@@ -725,7 +843,7 @@ mod tests {
 
     #[test]
     fn extract_ground_with_future_fails() {
-        let term = Term::Future(42);
+        let term = Term::Future;
         let result = apply_checking_pass(&term, &CheckingPass::ExtractGround);
         assert!(result.is_err());
     }
@@ -764,5 +882,185 @@ mod tests {
         };
         let result = apply_binding_pass(&term, &BindingPass::ValidateLinear, None);
         assert!(result.is_err());
+    }
+
+    // -- ValidateAffine --
+
+    #[test]
+    fn validate_affine_allows_erasure() {
+        // [lam x z] — x unused, allowed in affine
+        let term = Term::Binder {
+            kind: "lam".into(),
+            var: "x".into(),
+            body: Box::new(Term::Const("z".into())),
+        };
+        let result = apply_binding_pass(&term, &BindingPass::ValidateAffine, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_affine_rejects_dup() {
+        // [lam x [app x x]] — x used twice, rejected
+        let term = Term::Binder {
+            kind: "lam".into(),
+            var: "x".into(),
+            body: Box::new(Term::App(
+                Box::new(Term::Var("x".into())),
+                vec![Term::Var("x".into())],
+            )),
+        };
+        let result = apply_binding_pass(&term, &BindingPass::ValidateAffine, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_affine_allows_single_use() {
+        // [lam x x] — x used once, fine
+        let term = Term::Binder {
+            kind: "lam".into(),
+            var: "x".into(),
+            body: Box::new(Term::Var("x".into())),
+        };
+        let result = apply_binding_pass(&term, &BindingPass::ValidateAffine, None);
+        assert!(result.is_ok());
+    }
+
+    // -- AlphaNormalize --
+
+    #[test]
+    fn alpha_normalize_identity() {
+        // [lam x x] → [lam v0 v0]
+        let term = Term::Binder {
+            kind: "lam".into(),
+            var: "x".into(),
+            body: Box::new(Term::Var("x".into())),
+        };
+        let result = apply_binding_pass(&term, &BindingPass::AlphaNormalize, None).unwrap();
+        assert_eq!(format!("{}", result), "[lam v0 v0]");
+    }
+
+    #[test]
+    fn alpha_normalize_equivalent_terms() {
+        // [lam x x] and [lam y y] should produce identical output
+        let t1 = Term::Binder {
+            kind: "lam".into(),
+            var: "x".into(),
+            body: Box::new(Term::Var("x".into())),
+        };
+        let t2 = Term::Binder {
+            kind: "lam".into(),
+            var: "y".into(),
+            body: Box::new(Term::Var("y".into())),
+        };
+        let r1 = apply_binding_pass(&t1, &BindingPass::AlphaNormalize, None).unwrap();
+        let r2 = apply_binding_pass(&t2, &BindingPass::AlphaNormalize, None).unwrap();
+        assert_eq!(format!("{}", r1), format!("{}", r2));
+    }
+
+    #[test]
+    fn alpha_normalize_nested() {
+        // [lam a [lam b [app a b]]] → [lam v0 [lam v1 [v0 v1]]]
+        let term = Term::Binder {
+            kind: "lam".into(),
+            var: "a".into(),
+            body: Box::new(Term::Binder {
+                kind: "lam".into(),
+                var: "b".into(),
+                body: Box::new(Term::App(
+                    Box::new(Term::Var("a".into())),
+                    vec![Term::Var("b".into())],
+                )),
+            }),
+        };
+        let result = apply_binding_pass(&term, &BindingPass::AlphaNormalize, None).unwrap();
+        assert_eq!(format!("{}", result), "[lam v0 [lam v1 [v0 v1]]]");
+    }
+
+    #[test]
+    fn alpha_normalize_preserves_free_vars() {
+        // [lam x [app x free]] → [lam v0 [v0 free]]
+        let term = Term::Binder {
+            kind: "lam".into(),
+            var: "x".into(),
+            body: Box::new(Term::App(
+                Box::new(Term::Var("x".into())),
+                vec![Term::Var("free".into())],
+            )),
+        };
+        let result = apply_binding_pass(&term, &BindingPass::AlphaNormalize, None).unwrap();
+        assert_eq!(format!("{}", result), "[lam v0 [v0 free]]");
+    }
+
+    // -- MaterializeErasure --
+
+    #[test]
+    fn materialize_erasure_replaces_erased() {
+        let term = Term::App(
+            Box::new(Term::Const("f".into())),
+            vec![Term::Erased, Term::Const("x".into())],
+        );
+        let result = apply_binding_pass(
+            &term,
+            &BindingPass::MaterializeErasure("NOP".into()),
+            None,
+        ).unwrap();
+        assert_eq!(format!("{}", result), "[f NOP x]");
+    }
+
+    #[test]
+    fn materialize_erasure_nested() {
+        let term = Term::Binder {
+            kind: "lam".into(),
+            var: "x".into(),
+            body: Box::new(Term::Erased),
+        };
+        let result = apply_binding_pass(
+            &term,
+            &BindingPass::MaterializeErasure("0".into()),
+            None,
+        ).unwrap();
+        assert_eq!(format!("{}", result), "[lam x 0]");
+    }
+
+    // -- shift_free_indices --
+
+    #[test]
+    fn shift_free_indices_bound_untouched() {
+        // [lam _ $0] — $0 is bound, should not shift
+        let term = Term::Binder {
+            kind: "lam".into(),
+            var: "_".into(),
+            body: Box::new(Term::Const("$0".into())),
+        };
+        let result = shift_free_indices(&term, 5);
+        assert_eq!(format!("{}", result), "[lam _ $0]");
+    }
+
+    #[test]
+    fn shift_free_indices_free_shifts() {
+        // [lam _ $1] — $1 is free (depth=1, idx=1 >= 1), shift by 3 → $4
+        let term = Term::Binder {
+            kind: "lam".into(),
+            var: "_".into(),
+            body: Box::new(Term::Const("$1".into())),
+        };
+        let result = shift_free_indices(&term, 3);
+        assert_eq!(format!("{}", result), "[lam _ $4]");
+    }
+
+    #[test]
+    fn shift_free_indices_top_level() {
+        // $2 at top level (depth=0) — free, shift by 1 → $3
+        let term = Term::Const("$2".into());
+        let result = shift_free_indices(&term, 1);
+        assert_eq!(format!("{}", result), "$3");
+    }
+
+    #[test]
+    fn shift_free_indices_negative() {
+        // $3 at top level, shift by -2 → $1
+        let term = Term::Const("$3".into());
+        let result = shift_free_indices(&term, -2);
+        assert_eq!(format!("{}", result), "$1");
     }
 }
