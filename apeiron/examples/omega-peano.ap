@@ -1,0 +1,92 @@
+;; Apeiron Port: Peano Arithmetic (from Omega's peano-compute.omega)
+;; "Same Rules, Different Engine" — Omega's rewrite rules on an interaction net.
+;;
+;; Omega proves 1+1=2 by: normalize both sides via rewrite rules, compare
+;; via eq-refl (definitional equality). Apeiron does the same: normalize
+;; both sides via graph rewriting on the interaction net, compare via
+;; topological hashing.
+;;
+;; Translation key:
+;;   Omega:   (rewrite add-z (add z ?n) ?n)
+;;   Apeiron: [@rule add-z [add z ?n] ==> ?n]
+;;
+;;   Omega:   (proof name :goal (eq X Y) :derivation (eq-refl))
+;;   Apeiron: [assert-eq name X Y]
+;;
+;; The rewrite rules are identical in meaning. The computation substrate
+;; is entirely different: Omega uses a hash-consed tree normalizer with
+;; memoization; Apeiron uses an interaction net with Dup/Erase nodes
+;; and a physics scheduler.
+
+[System OmegaPeano
+  [@syntax
+    [sort Nat]
+    [op z] [op s]
+    [op add] [op mul]
+  ]
+  [@binding implicit]
+  [@check rewriting]
+]
+
+[Theory PeanoCompute :in OmegaPeano
+
+  ;; ================================================================
+  ;; Computation rules (identical to Omega's rewrite rules)
+  ;; ================================================================
+
+  ;; add(0, n) = n
+  [@rule add-z [add z ?n] ==> ?n]
+  ;; add(S(n), m) = S(add(n, m))
+  [@rule add-s [add [s ?n] ?m] ==> [s [add ?n ?m]]]
+  ;; mul(0, n) = 0
+  [@rule mul-z [mul z ?n] ==> z]
+  ;; mul(S(n), m) = add(m, mul(n, m))
+  [@rule mul-s [mul [s ?n] ?m] ==> [add ?m [mul ?n ?m]]]
+
+  ;; ================================================================
+  ;; Proofs (Omega's eq-refl → Apeiron's assert-eq)
+  ;; ================================================================
+
+  ;; 0 + 0 = 0
+  [assert-eq zero-plus-zero
+    [add z z]
+    z
+  ]
+
+  ;; 1 + 1 = 2
+  [assert-eq one-plus-one
+    [add [s z] [s z]]
+    [s [s z]]
+  ]
+
+  ;; 2 + 1 = 3
+  [assert-eq two-plus-one
+    [add [s [s z]] [s z]]
+    [s [s [s z]]]
+  ]
+
+  ;; 2 + 3 = 5
+  [assert-eq two-plus-three
+    [add [s [s z]] [s [s [s z]]]]
+    [s [s [s [s [s z]]]]]
+  ]
+
+  ;; 2 * 3 = 6
+  [assert-eq two-times-three
+    [mul [s [s z]] [s [s [s z]]]]
+    [s [s [s [s [s [s z]]]]]]
+  ]
+
+  ;; 3 * 3 = 9
+  [assert-eq three-times-three
+    [mul [s [s [s z]]] [s [s [s z]]]]
+    [s [s [s [s [s [s [s [s [s z]]]]]]]]]
+  ]
+
+  ;; ================================================================
+  ;; Eval: Show interaction counts
+  ;; ================================================================
+
+  [eval peano-2x3 [mul [s [s z]] [s [s [s z]]]]]
+  [eval peano-3x3 [mul [s [s [s z]]] [s [s [s z]]]]]
+]

@@ -442,6 +442,25 @@ fn example_sharing_demo() {
 }
 
 // ================================================================
+// Omega Ports: Same Logic, Different Engine
+// ================================================================
+
+#[test]
+fn example_omega_peano() {
+    run_example("examples/omega-peano.ap");
+}
+
+#[test]
+fn example_omega_self() {
+    run_example("examples/omega-self.ap");
+}
+
+#[test]
+fn example_omega_stlc() {
+    run_example("examples/omega-stlc.ap");
+}
+
+// ================================================================
 // Linear-Explicit Rejection Tests
 // ================================================================
 

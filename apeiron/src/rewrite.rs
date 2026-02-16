@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::arena::Arena;
 use crate::node::{OpCode, Port, Ptr};
 use crate::parser::Sexp;
-use crate::readback::Term;
+use crate::readback::{self, Term};
 
 // ---------------------------------------------------------------------------
 // Sexp utilities (def expansion, term↔sexp conversion)
@@ -134,8 +134,17 @@ fn match_pattern(
 ) -> bool {
     match pattern {
         Pattern::MetaVar(name) => {
-            bindings.insert(name.clone(), ptr);
-            true
+            if let Some(&existing) = bindings.get(name) {
+                // Non-linear pattern: verify both occurrences are structurally equal.
+                // We compare via readback (subtree only) since topological_hash
+                // traverses the full connected component including parent wires.
+                let t1 = format!("{}", readback::readback(arena, existing));
+                let t2 = format!("{}", readback::readback(arena, ptr));
+                t1 == t2
+            } else {
+                bindings.insert(name.clone(), ptr);
+                true
+            }
         }
         Pattern::Sym { name, args } => {
             let node = match arena.get(ptr) {
@@ -547,5 +556,74 @@ mod tests {
         let term = readback::readback(&arena, result_port.target);
         assert_eq!(format!("{}", term), "[s [s [s [s z]]]]");
         assert_eq!(steps, 3); // 2 plus-s + 1 plus-z
+    }
+
+    #[test]
+    fn nonlinear_pattern_matches_equal() {
+        // Rule: [eq ?A ?A] ==> ok
+        let rules = vec![compile_rule(
+            "eq-refl",
+            &parser::parse("[eq ?A ?A]").unwrap()[0],
+            &parser::parse("ok").unwrap()[0],
+        )
+        .unwrap()];
+
+        let mut arena = Arena::new();
+        // [eq x x] — both args point to structurally equal atoms
+        let input = parser::parse("[eq x x]").unwrap().remove(0);
+        let root = build_sym_tree(&mut arena, &input);
+
+        assert!(try_rewrite_scan(&mut arena, &rules));
+
+        let result_port = arena.port(root, 1);
+        let term = readback::readback(&arena, result_port.target);
+        assert_eq!(format!("{}", term), "ok");
+    }
+
+    #[test]
+    fn nonlinear_pattern_rejects_different() {
+        // Rule: [eq ?A ?A] ==> ok
+        let rules = vec![compile_rule(
+            "eq-refl",
+            &parser::parse("[eq ?A ?A]").unwrap()[0],
+            &parser::parse("ok").unwrap()[0],
+        )
+        .unwrap()];
+
+        let mut arena = Arena::new();
+        // [eq x y] — different atoms, non-linear pattern should NOT match
+        let input = parser::parse("[eq x y]").unwrap().remove(0);
+        let root = build_sym_tree(&mut arena, &input);
+
+        assert!(!try_rewrite_scan(&mut arena, &rules));
+
+        // Term unchanged
+        let result_port = arena.port(root, 1);
+        let term = readback::readback(&arena, result_port.target);
+        assert_eq!(format!("{}", term), "[eq x y]");
+    }
+
+    #[test]
+    fn nonlinear_pattern_deep_equal() {
+        // Rule: [eq ?A ?A] ==> ok
+        let rules = vec![compile_rule(
+            "eq-refl",
+            &parser::parse("[eq ?A ?A]").unwrap()[0],
+            &parser::parse("ok").unwrap()[0],
+        )
+        .unwrap()];
+
+        let mut arena = Arena::new();
+        // [eq [s [s z]] [s [s z]]] — structurally equal nested terms
+        let input = parser::parse("[eq [s [s z]] [s [s z]]]")
+            .unwrap()
+            .remove(0);
+        let root = build_sym_tree(&mut arena, &input);
+
+        assert!(try_rewrite_scan(&mut arena, &rules));
+
+        let result_port = arena.port(root, 1);
+        let term = readback::readback(&arena, result_port.target);
+        assert_eq!(format!("{}", term), "ok");
     }
 }
