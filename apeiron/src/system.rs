@@ -91,6 +91,8 @@ pub struct Session {
     pub compiled_rules: HashMap<String, Vec<rewrite::GraphRule>>,
     /// Theory-level operator declarations (extend known_ops for builder).
     pub extra_known_ops: HashSet<String>,
+    /// Theory → System mapping (resolved system name for each theory).
+    pub theory_systems: HashMap<String, String>,
 }
 
 impl Session {
@@ -106,6 +108,7 @@ impl Session {
             morphisms: HashMap::new(),
             compiled_rules: HashMap::new(),
             extra_known_ops: HashSet::new(),
+            theory_systems: HashMap::new(),
         }
     }
 
@@ -127,6 +130,7 @@ impl Session {
         match head {
             "System" => self.process_system(items),
             "Theory" => self.process_theory(items),
+            "Proofs" => self.process_proofs(items),
             "AutoMorphism" => self.process_automorphism(items),
             _ => Err(ApeironError::ParseError {
                 message: format!("unknown top-level form: {}", head),
@@ -423,8 +427,241 @@ impl Session {
         self.rules.insert(theory_name.clone(), theory_rules);
         self.compiled_rules
             .insert(theory_name.clone(), graph_rules);
+        self.theory_systems
+            .insert(theory_name.clone(), system.name.clone());
         self.output
             .push(format!("[THEORY] {} loaded", theory_name));
+        Ok(())
+    }
+
+    /// Process a [Proofs Name :in TheoryName ...] block.
+    /// Sealed: inherits parent Theory's rules (read-only), rejects @rule.
+    /// Allows: assert-eq, assert-neq, eval, eval-reverse, def, with-scope, reflect.
+    fn process_proofs(&mut self, items: &[Sexp]) -> Result<()> {
+        if items.len() < 2 {
+            return Err(ApeironError::InvalidConfig {
+                block: "Proofs".into(),
+                detail: "missing proofs block name".into(),
+            });
+        }
+
+        let proofs_name = items[1].as_atom().unwrap_or("?").to_string();
+
+        // Require :in TheoryName
+        if items.len() < 4 || !items[2].is_atom(":in") {
+            return Err(ApeironError::InvalidConfig {
+                block: "Proofs".into(),
+                detail: "Proofs block requires ':in TheoryName'".into(),
+            });
+        }
+        let theory_name = items[3]
+            .as_atom()
+            .ok_or_else(|| ApeironError::InvalidConfig {
+                block: "Proofs".into(),
+                detail: "theory name must be an atom".into(),
+            })?
+            .to_string();
+
+        // Look up the parent Theory's compiled rules
+        let graph_rules = self
+            .compiled_rules
+            .get(&theory_name)
+            .cloned()
+            .ok_or_else(|| ApeironError::InvalidConfig {
+                block: "Proofs".into(),
+                detail: format!("unknown theory: {}", theory_name),
+            })?;
+
+        // Look up the System config via theory→system mapping
+        let system_name = self
+            .theory_systems
+            .get(&theory_name)
+            .cloned()
+            .ok_or_else(|| ApeironError::InvalidConfig {
+                block: "Proofs".into(),
+                detail: format!("theory '{}' has no registered system", theory_name),
+            })?;
+        let system = self
+            .systems
+            .get(&system_name)
+            .cloned()
+            .ok_or_else(|| ApeironError::UnknownSystem {
+                name: system_name.clone(),
+            })?;
+
+        // Build known_ops (same as Theory would see)
+        let mut known_ops: HashSet<String> = system
+            .operators
+            .iter()
+            .map(|op| op.name.clone())
+            .collect();
+        known_ops.extend(self.extra_known_ops.iter().cloned());
+
+        let is_reversible = system.check_modes.contains(&CheckMode::Reversible);
+        let inverse_graph_rules: Vec<rewrite::GraphRule> = if is_reversible {
+            graph_rules
+                .iter()
+                .filter_map(|gr| {
+                    // Reconstruct inverse from the theory's stored rules
+                    if let Some(theory_rules) = self.rules.get(&theory_name) {
+                        for rule in theory_rules {
+                            if rule.name == gr.name {
+                                return rewrite::compile_rule(
+                                    &format!("{}-inv", rule.name),
+                                    &rule.rhs,
+                                    &rule.lhs,
+                                );
+                            }
+                        }
+                    }
+                    None
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        // Snapshot defs for local scope isolation (fork pattern)
+        let defs_snapshot = self.defs.clone();
+
+        let mut assertion_count = 0u32;
+
+        // Process body (starts after :in TheoryName)
+        for item in &items[4..] {
+            if let Some(decl) = item.as_list() {
+                if decl.is_empty() {
+                    continue;
+                }
+                let decl_head = decl[0].as_atom().unwrap_or("");
+                match decl_head {
+                    "def" | "Define" => {
+                        // Local definition (doesn't persist after Proofs block)
+                        if decl.len() >= 3 {
+                            let name = decl[1].as_atom().unwrap_or("?").to_string();
+                            self.defs.insert(name.clone(), decl[2].clone());
+                            self.output.push(format!("[DEF] {} (local)", name));
+                        }
+                    }
+                    "assert-eq" => {
+                        self.process_assert_eq(
+                            &decl[1..],
+                            &graph_rules,
+                            &known_ops,
+                            &system,
+                        )?;
+                        assertion_count += 1;
+                    }
+                    "assert-neq" => {
+                        self.process_assert_neq(
+                            &decl[1..],
+                            &graph_rules,
+                            &known_ops,
+                            &system,
+                        )?;
+                        assertion_count += 1;
+                    }
+                    "eval" => {
+                        self.process_eval(&decl[1..], &graph_rules, &known_ops, &system)?;
+                    }
+                    "eval-reverse" => {
+                        self.process_eval(
+                            &decl[1..],
+                            &inverse_graph_rules,
+                            &known_ops,
+                            &system,
+                        )?;
+                    }
+                    "with-scope" => {
+                        if decl.len() >= 3 {
+                            let scope_name = decl[1].as_atom().unwrap_or("?");
+                            if let Some(&scope_id) = self.scopes.get(scope_name) {
+                                self.arena.activate_scope(scope_id);
+                                for inner in &decl[2..] {
+                                    if let Some(inner_decl) = inner.as_list() {
+                                        if inner_decl.is_empty() {
+                                            continue;
+                                        }
+                                        let inner_head =
+                                            inner_decl[0].as_atom().unwrap_or("");
+                                        match inner_head {
+                                            "eval" => {
+                                                self.process_eval(
+                                                    &inner_decl[1..],
+                                                    &graph_rules,
+                                                    &known_ops,
+                                                    &system,
+                                                )?;
+                                            }
+                                            "assert-eq" => {
+                                                self.process_assert_eq(
+                                                    &inner_decl[1..],
+                                                    &graph_rules,
+                                                    &known_ops,
+                                                    &system,
+                                                )?;
+                                                assertion_count += 1;
+                                            }
+                                            "assert-neq" => {
+                                                self.process_assert_neq(
+                                                    &inner_decl[1..],
+                                                    &graph_rules,
+                                                    &known_ops,
+                                                    &system,
+                                                )?;
+                                                assertion_count += 1;
+                                            }
+                                            _ => {
+                                                return Err(ApeironError::InvalidConfig {
+                                                    block: "Proofs/with-scope".into(),
+                                                    detail: format!(
+                                                        "unknown declaration: {}",
+                                                        inner_head
+                                                    ),
+                                                })
+                                            }
+                                        }
+                                    }
+                                }
+                                self.arena.deactivate_scope(scope_id);
+                            }
+                        }
+                    }
+                    "reflect" => {
+                        if decl.len() >= 2 {
+                            self.process_reflect(&decl[1..], &known_ops)?;
+                        }
+                    }
+                    "@rule" => {
+                        return Err(ApeironError::InvalidConfig {
+                            block: "Proofs".into(),
+                            detail: format!(
+                                "cannot add rules in Proofs block '{}' — \
+                                 rules belong in Theory '{}'",
+                                proofs_name, theory_name
+                            ),
+                        });
+                    }
+                    _ => {
+                        return Err(ApeironError::InvalidConfig {
+                            block: "Proofs".into(),
+                            detail: format!(
+                                "unknown declaration '{}' — Proofs blocks allow: \
+                                 assert-eq, assert-neq, eval, def",
+                                decl_head
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+
+        // Restore defs snapshot (local defs don't leak)
+        self.defs = defs_snapshot;
+
+        self.output.push(format!(
+            "[PROOFS] {} verified ({} assertions)",
+            proofs_name, assertion_count
+        ));
         Ok(())
     }
 
@@ -1253,5 +1490,91 @@ mod tests {
             .output
             .iter()
             .any(|s| s.contains("id-test") && s.contains("passed")));
+    }
+
+    #[test]
+    fn proofs_block_basic() {
+        let source = r#"
+        [System S
+          [@syntax [sort Nat] [op z] [op s] [op add]]
+          [@binding implicit]
+          [@check rewriting]
+        ]
+        [Theory T :in S
+          [@rule add-z [add z ?n] ==> ?n]
+          [@rule add-s [add [s ?n] ?m] ==> [s [add ?n ?m]]]
+        ]
+        [Proofs P :in T
+          [assert-eq one-plus-one [add [s z] [s z]] [s [s z]]]
+        ]
+        "#;
+
+        let sexps = parser::parse(source).unwrap();
+        let mut session = Session::new();
+        for sexp in &sexps {
+            session.process(sexp).unwrap();
+        }
+
+        assert!(session.output.iter().any(|s| s.contains("one-plus-one") && s.contains("passed")));
+        assert!(session.output.iter().any(|s| s.contains("[PROOFS] P verified (1 assertions)")));
+    }
+
+    #[test]
+    fn proofs_block_rejects_rule() {
+        let source = r#"
+        [System S
+          [@syntax [sort Nat] [op z] [op s]]
+          [@binding implicit]
+          [@check rewriting]
+        ]
+        [Theory T :in S]
+        [Proofs P :in T
+          [@rule sneaky z ==> [s z]]
+        ]
+        "#;
+
+        let sexps = parser::parse(source).unwrap();
+        let mut session = Session::new();
+        session.process(&sexps[0]).unwrap();
+        session.process(&sexps[1]).unwrap();
+        let result = session.process(&sexps[2]);
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(err.contains("cannot add rules"), "expected rule rejection, got: {}", err);
+    }
+
+    #[test]
+    fn proofs_block_local_defs_dont_leak() {
+        let source = r#"
+        [System S
+          [@syntax [sort Nat] [op z] [op s] [op add]]
+          [@binding implicit]
+          [@check rewriting]
+        ]
+        [Theory T :in S
+          [@rule add-z [add z ?n] ==> ?n]
+          [def two [s [s z]]]
+        ]
+        [Proofs P1 :in T
+          [def local-three [s [s [s z]]]]
+          [assert-eq test [add z local-three] local-three]
+        ]
+        [Proofs P2 :in T
+          [assert-eq test2 [add z two] two]
+        ]
+        "#;
+
+        let sexps = parser::parse(source).unwrap();
+        let mut session = Session::new();
+        for sexp in &sexps {
+            session.process(sexp).unwrap();
+        }
+
+        // Both proof blocks pass
+        assert!(session.output.iter().any(|s| s.contains("P1 verified")));
+        assert!(session.output.iter().any(|s| s.contains("P2 verified")));
+        // Theory def 'two' persists, but proof-local 'local-three' should not
+        assert!(session.defs.contains_key("two"));
+        assert!(!session.defs.contains_key("local-three"));
     }
 }

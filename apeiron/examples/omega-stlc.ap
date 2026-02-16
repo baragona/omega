@@ -1,41 +1,31 @@
 ;; Apeiron Port: Simply Typed Lambda Calculus (from Omega's stlc.omega)
 ;; "Type Checking as Computation" — typing judgments as rewrite rules.
 ;;
-;; Omega's STLC uses explicit typing judgments and derivation trees:
-;;   (has-type G e T) checked by rules t-vz, t-vs, t-lam, t-app
+;; Demonstrates Apeiron's three-layer architecture:
+;;   [System]  — How do I speak?  (syntax, binding, evaluation strategy)
+;;   [Theory]  — What do I believe? (rewrite rules = the type checker)
+;;   [Proofs]  — What do I know?  (verified typing theorems)
+;;
+;; The Theory defines the type checker. The Proofs block is SEALED:
+;; it cannot add new rules, only verify consequences of the Theory.
+;; This separation makes the "trusted base" explicit.
+;;
+;; Omega's STLC uses explicit judgments and derivation trees.
 ;; Apeiron encodes the TYPE CHECKER ITSELF as rewrite rules:
 ;;   [typeof ctx term] normalizes to [ty T] or type-error
+;; The derivation tree is implicit — the rewrite trace IS the proof.
 ;;
-;; The derivation tree is implicit — the sequence of rewrite rule firings
-;; IS the typing derivation. This is the "judgments-as-computation" encoding
-;; that makes Apeiron a viable logical framework host.
-;;
-;; Key differences from Omega:
-;;   - lam-t/app-t instead of lam/app (avoid Apeiron's built-in lambda/app)
+;; Key design:
+;;   - lam-t/app-t instead of lam/app (avoid Apeiron's built-in nodes)
 ;;   - Results wrapped in [ty ...] (prevents premature rule firing)
-;;   - chk-app combinator for application checking (non-linear ?A verifies domain)
-;;   - mk-arrow combinator for lambda type construction (waits for body type)
-;;
-;; Translation key:
-;;   Omega: (rule t-vz :premises () :conclusion (has-type (cons ?A ?G) vz ?A))
-;;   Apeiron: [@rule typeof-vz [typeof [ext ?A ?G] vz] ==> [ty ?A]]
-;;
-;;   Omega: (proof name :goal (has-type nil term type) :derivation ...)
-;;   Apeiron: [assert-eq name [typeof nil term] [ty type]]
-;;
-;; Proved here (matching Omega's 10 proofs):
-;;   1.  λx.x                : Base → Base                          (identity)
-;;   2.  λx.λy.x             : Base → Nat → Base                    (K combinator)
-;;   3.  λx.λy.y             : Base → Base → Base                   (Church false)
-;;   4.  (λx.x)(λx.x)        : (Base→Base) → (Base→Base)           (self-application)
-;;   5.  λf.λg.λx.f(g(x))    : (Nat→Bool)→(Base→Nat)→Base→Bool     (compose)
-;;   6.  λf.λg.λx.f(x)(g(x)) : (Base→Nat→Bool)→(Base→Nat)→Base→Bool (S combinator)
-;;   7.  λx.λy.λf.f(x)(y)    : Base→Nat→(Base→Nat→Bool)→Bool       (Church pair)
-;;   8.  λf.λx.λy.f(y)(x)    : (Base→Nat→Bool)→Nat→Base→Bool       (flip)
-;;   9.  Γ,f:Base→Nat ⊢ λx.f(x) : Base → Nat                       (eta-expansion)
-;;  10.  λf.λx.f(f(x))       : (Base→Base) → Base → Base            (Church 2)
+;;   - chk-app combinator with non-linear ?A verifies domain match
+;;   - mk-arrow combinator waits for body type to compute
 
-[System STLCCheck
+;; ════════════════════════════════════════════════════════════
+;; Layer 1: THE SYSTEM — Syntax & Physics
+;; ════════════════════════════════════════════════════════════
+
+[System STLC
   [@syntax
     [sort Ty]
     [sort Tm]
@@ -57,55 +47,57 @@
   [@check rewriting]
 ]
 
-[Theory STLCTypes :in STLCCheck
+;; ════════════════════════════════════════════════════════════
+;; Layer 2: THE THEORY — The Type Checker (Axioms)
+;; ════════════════════════════════════════════════════════════
+;; These rules define WHAT the type checker does. This is the
+;; "trusted base" — if a rule is wrong, the logic is unsound.
+;; No assertions here: Theory is purely declarative.
 
-  ;; ════════════════════════════════════════════════════════════
-  ;; THE TYPE CHECKER — Rewrite Rules
-  ;; ════════════════════════════════════════════════════════════
-  ;;
-  ;; Each Omega typing rule becomes a rewrite rule.
-  ;; Results wrapped in [ty T] to prevent premature rule firing
-  ;; (same strategy as omega-self.ap's ok/fail wrappers).
+[Theory STLCRules :in STLC
 
-  ;; ── Variable at index 0: type is head of context ──
+  ;; ── Typing Rules (syntax-directed) ──
+
+  ;; Variable at index 0: type is head of context
   [@rule typeof-vz [typeof [ext ?A ?G] vz] ==> [ty ?A]]
 
-  ;; ── Shift: look past head, recurse into tail ──
+  ;; Shift: look past head, recurse into tail
   [@rule typeof-vs [typeof [ext ?A ?G] [vs ?e]] ==> [typeof ?G ?e]]
 
-  ;; ── Lambda: extend context, compute body type, build arrow ──
+  ;; Lambda: extend context, compute body type, build arrow
   [@rule typeof-lam [typeof ?G [lam-t ?A ?e]]
     ==> [mk-arrow ?A [typeof [ext ?A ?G] ?e]]]
 
-  ;; ── Application: compute both types, check compatibility ──
+  ;; Application: compute both types, check compatibility
   [@rule typeof-app [typeof ?G [app-t ?e1 ?e2]]
     ==> [chk-app [typeof ?G ?e1] [typeof ?G ?e2]]]
 
-  ;; ════════════════════════════════════════════════════════════
-  ;; COMBINATORS — Wait for [ty ...] / type-error before firing
-  ;; ════════════════════════════════════════════════════════════
+  ;; ── Combinators (wait for arguments to reduce) ──
 
-  ;; ── mk-arrow: construct arrow type from body result ──
+  ;; mk-arrow: construct arrow type from body result
   [@rule mk-arrow-ok  [mk-arrow ?A [ty ?B]]    ==> [ty [arrow ?A ?B]]]
   [@rule mk-arrow-err [mk-arrow ?A type-error]  ==> type-error]
 
-  ;; ── chk-app: verify function domain matches argument type ──
-  ;; Non-linear ?A verifies domain-argument match (requires engine fix).
-  ;; Rules tried in declaration order: ok first, then specific failures.
+  ;; chk-app: verify function domain matches argument type
+  ;; Non-linear ?A verifies the match. Rules tried in declaration order.
   [@rule chk-app-ok   [chk-app [ty [arrow ?A ?B]] [ty ?A]] ==> [ty ?B]]
   [@rule chk-app-arr  [chk-app [ty [arrow ?A ?B]] [ty ?C]] ==> type-error]
   [@rule chk-app-base [chk-app [ty ?X] [ty ?Y]]            ==> type-error]
   [@rule chk-app-errl [chk-app type-error ?Y]               ==> type-error]
   [@rule chk-app-errr [chk-app [ty ?X] type-error]          ==> type-error]
+]
 
-  ;; ════════════════════════════════════════════════════════════
-  ;; PROOFS — 10 Typing Theorems
-  ;; ════════════════════════════════════════════════════════════
-  ;;
-  ;; Omega uses meta-variables for polymorphism (?A, ?B, ?C).
-  ;; Apeiron computes concrete types. We instantiate:
-  ;;   ?A → Base, ?B → Nat, ?C → Bool
-  ;; (except proof 5 which already uses concrete types in Omega)
+;; ════════════════════════════════════════════════════════════
+;; Layer 3: THE PROOFS — Verified Typing Theorems
+;; ════════════════════════════════════════════════════════════
+;; This block is SEALED: it inherits STLCRules' rewrite rules
+;; but CANNOT add new ones. Every assert-eq here is a theorem
+;; verified by running the type checker defined above.
+;;
+;; Omega uses meta-variables for polymorphism (?A, ?B, ?C).
+;; Apeiron computes concrete types: ?A→Base, ?B→Nat, ?C→Bool.
+
+[Proofs STLCCheck :in STLCRules
 
   ;; ────────────────────────────────────────────────────────────
   ;; 1. λx.x : Base → Base  (identity / I combinator)
@@ -142,10 +134,6 @@
   ;; 5. λf.λg.λx.f(g(x)) : (Nat→Bool)→(Base→Nat)→Base→Bool
   ;;    (compose / B combinator)
   ;; ────────────────────────────────────────────────────────────
-  ;; Context at body [Base, Base→Nat, Nat→Bool]:
-  ;;   vz         = x : Base        (index 0)
-  ;;   vs(vz)     = g : Base → Nat  (index 1)
-  ;;   vs(vs(vz)) = f : Nat → Bool  (index 2)
   [assert-eq compose
     [typeof nil
       [lam-t [arrow Nat Bool] [lam-t [arrow Base Nat] [lam-t Base
@@ -156,15 +144,6 @@
   ;; 6. λf.λg.λx.f(x)(g(x)) : (Base→Nat→Bool)→(Base→Nat)→Base→Bool
   ;;    (S combinator — the most complex STLC combinator)
   ;; ────────────────────────────────────────────────────────────
-  ;; Context at body [Base, Base→Nat, Base→Nat→Bool]:
-  ;;   vz         = x : Base               (index 0)
-  ;;   vs(vz)     = g : Base → Nat         (index 1)
-  ;;   vs(vs(vz)) = f : Base → Nat → Bool  (index 2)
-  ;;
-  ;; Body: app(app(f, x), app(g, x))
-  ;;   app(f, x) : Nat → Bool  [domain Base matches x:Base]
-  ;;   app(g, x) : Nat          [domain Base matches x:Base]
-  ;;   app(app(f,x), app(g,x)) : Bool  [domain Nat matches g(x):Nat]
   [assert-eq s-combinator
     [typeof nil
       [lam-t [arrow Base [arrow Nat Bool]] [lam-t [arrow Base Nat] [lam-t Base
@@ -175,12 +154,6 @@
   ;; 7. λx.λy.λf.f(x)(y) : Base→Nat→(Base→Nat→Bool)→Bool
   ;;    (Church pair constructor)
   ;; ────────────────────────────────────────────────────────────
-  ;; Context at body [Base→Nat→Bool, Nat, Base]:
-  ;;   vz         = f : Base → Nat → Bool  (index 0)
-  ;;   vs(vz)     = y : Nat                (index 1)
-  ;;   vs(vs(vz)) = x : Base               (index 2)
-  ;;
-  ;; Body: app(app(f, x), y) = f(x)(y)
   [assert-eq church-pair
     [typeof nil
       [lam-t Base [lam-t Nat [lam-t [arrow Base [arrow Nat Bool]]
@@ -191,12 +164,6 @@
   ;; 8. λf.λx.λy.f(y)(x) : (Base→Nat→Bool)→Nat→Base→Bool
   ;;    (flip — reorders arguments)
   ;; ────────────────────────────────────────────────────────────
-  ;; Context at body [Base, Nat, Base→Nat→Bool]:
-  ;;   vz         = y : Base               (index 0)
-  ;;   vs(vz)     = x : Nat                (index 1)
-  ;;   vs(vs(vz)) = f : Base → Nat → Bool  (index 2)
-  ;;
-  ;; Body: app(app(f, y), x) = f(y)(x)
   [assert-eq flip
     [typeof nil
       [lam-t [arrow Base [arrow Nat Bool]] [lam-t Nat [lam-t Base
@@ -206,10 +173,6 @@
   ;; ────────────────────────────────────────────────────────────
   ;; 9. Γ,f:Base→Nat ⊢ λx.f(x) : Base → Nat  (eta-expansion)
   ;; ────────────────────────────────────────────────────────────
-  ;; Non-empty context: f:Base→Nat already bound.
-  ;; Inside lambda body, context is [Base, Base→Nat]:
-  ;;   vz     = x : Base        (index 0)
-  ;;   vs(vz) = f : Base → Nat  (index 1)
   [assert-eq eta-expansion
     [typeof [ext [arrow Base Nat] nil]
       [lam-t Base [app-t [vs vz] vz]]]
@@ -219,21 +182,13 @@
   ;; 10. λf.λx.f(f(x)) : (Base→Base) → Base → Base
   ;;     (Church numeral 2 — applies f twice)
   ;; ────────────────────────────────────────────────────────────
-  ;; Context at body [Base, Base→Base]:
-  ;;   vz     = x : Base        (index 0)
-  ;;   vs(vz) = f : Base → Base (index 1)
-  ;;
-  ;; Body: app(vs(vz), app(vs(vz), vz)) = f(f(x))
   [assert-eq church-two
     [typeof nil
       [lam-t [arrow Base Base] [lam-t Base
         [app-t [vs vz] [app-t [vs vz] vz]]]]]
     [ty [arrow [arrow Base Base] [arrow Base Base]]]]
 
-  ;; ════════════════════════════════════════════════════════════
-  ;; Eval: Show interaction counts
-  ;; ════════════════════════════════════════════════════════════
-
+  ;; ── Eval: Show interaction counts ──
   [eval typeof-identity  [typeof nil [lam-t Base vz]]]
   [eval typeof-s-comb
     [typeof nil

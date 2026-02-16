@@ -1,39 +1,31 @@
 ;; Apeiron Port: Self-Representation (from Omega's self.omega)
 ;; "A Proof System Checking Itself" — ported from Omega to Apeiron.
 ;;
-;; Omega's self.omega encodes propositional logic and its derivation
-;; checker entirely as rewrite rules. The proof system can check
-;; its own proofs:
-;;   - Valid?  → normalizes to ok(conclusion)
-;;   - Broken? → normalizes to fail
+;; Demonstrates Apeiron's three-layer architecture across TWO logical systems:
 ;;
-;; Then a SOLVER (tauto) builds proof trees automatically via rewrite
-;; rules, and the CHECKER (concl) validates them. In Omega, a reflection
-;; principle lifts the result to a meta-level truth judgment. In Apeiron,
-;; the computation IS the proof — assert-eq directly verifies the result.
+;;   System 1: Propositional Logic
+;;     [System]  — Formulas, derivation trees, checker/solver operators
+;;     [Theory]  — The checker + solver as rewrite rules (trusted base)
+;;     [Proofs]  — 19 verified theorems (valid, invalid, automated, reflected)
+;;
+;;   System 2: Arithmetic + Ackermann
+;;     [System]  — Peano arithmetic + equality checker operators
+;;     [Theory]  — Arithmetic + Ackermann + manual equality checker
+;;     [Proofs]  — 11 verified theorems including ack(3,3) = 61
+;;
+;; Key insight: the Theory defines WHAT the checker/solver does (the rules).
+;; The Proofs block is SEALED — it can only verify consequences, never
+;; modify the trusted base. This makes the boundary explicit.
 ;;
 ;; Architecture note: Omega's tree normalizer uses innermost evaluation
 ;; (children normalize before parents). Apeiron's graph rewriter scans
 ;; nodes in allocation order. To prevent catch-all rules from firing on
 ;; unreduced arguments, we use specific failure patterns that only match
 ;; when arguments are fully reduced (ok or fail).
-;;
-;; For arithmetic, Omega encodes an equality solver using non-linear
-;; patterns that fire AFTER normalization (innermost strategy). Apeiron
-;; instead uses its NATIVE definitional equality: normalize both sides
-;; via rewrite rules, compare via topological hashing. Same result,
-;; different engine. The manual derivation checker is still ported.
-;;
-;; Five acts:
-;;   Act I:   The Checker (11 tests — valid + invalid derivations)
-;;   Act II:  The Solver with recursive list context (6 tests)
-;;   Act III: Reflection (2 tests)
-;;   Act IV:  Arithmetic — manual checker + native equality (10 tests)
-;;   Act V:   Ackermann function (3 tests — ack(3,3) = 61)
 
-;; ================================================================
-;; SYSTEM: Propositional Logic with Checker
-;; ================================================================
+;; ════════════════════════════════════════════════════════════
+;; SYSTEM 1: Propositional Logic with Checker
+;; ════════════════════════════════════════════════════════════
 
 [System SelfCheck
   [@syntax
@@ -65,21 +57,14 @@
   [@check rewriting]
 ]
 
-;; ================================================================
-;; THEORY: Propositional Logic Checker + Solver
-;; ================================================================
+;; ════════════════════════════════════════════════════════════
+;; THEORY: Propositional Logic Checker + Solver (Axioms)
+;; ════════════════════════════════════════════════════════════
+;; The trusted base. No catch-all rules: each combinator has
+;; specific success and failure patterns. Unreduced arguments
+;; don't match, forcing the engine to reduce children first.
 
 [Theory PropLogic :in SelfCheck
-
-  ;; ════════════════════════════════════════════════════════════
-  ;; LAYER 4: THE CHECKER — Rewrite Rules
-  ;; ════════════════════════════════════════════════════════════
-  ;;
-  ;; Key design: NO catch-all rules. Each checker combinator has:
-  ;;   1. Success pattern (specific argument shapes)
-  ;;   2. Failure patterns (explicitly match fail or non-matching ok)
-  ;; Rules with unreduced arguments don't match, forcing the engine
-  ;; to reduce children first — correct outermost behavior.
 
   ;; ── concl dispatch ──
   [@rule concl-assume [concl [d-assume ?F]]       ==> [ok ?F]]
@@ -90,42 +75,38 @@
   [@rule concl-imp-i  [concl [d-imp-i ?A ?D]]      ==> [chk-imp ?A [concl ?D]]]
   [@rule concl-mp     [concl [d-mp ?D1 ?D2]]       ==> [chk-mp [concl ?D1] [concl ?D2]]]
 
-  ;; ── ∧-intro: both must be ok ──
+  ;; ── and-intro: both must be ok ──
   [@rule chk-and-ok [chk-and [ok ?A] [ok ?B]] ==> [ok [f-and ?A ?B]]]
   [@rule chk-and-fl [chk-and fail ?Y]          ==> fail]
   [@rule chk-and-fr [chk-and [ok ?X] fail]     ==> fail]
 
-  ;; ── ∧-elim-l: must be conjunction ──
+  ;; ── and-elim-l: must be conjunction ──
   [@rule chk-and-l-ok     [chk-and-l [ok [f-and ?A ?B]]] ==> [ok ?A]]
   [@rule chk-and-l-fail   [chk-and-l fail]                ==> fail]
   [@rule chk-and-l-notand [chk-and-l [ok ?X]]             ==> fail]
 
-  ;; ── ∧-elim-r: must be conjunction ──
+  ;; ── and-elim-r: must be conjunction ──
   [@rule chk-and-r-ok     [chk-and-r [ok [f-and ?A ?B]]] ==> [ok ?B]]
   [@rule chk-and-r-fail   [chk-and-r fail]                ==> fail]
   [@rule chk-and-r-notand [chk-and-r [ok ?X]]             ==> fail]
 
-  ;; ── →-intro: sub-derivation must be ok ──
+  ;; ── imp-intro: sub-derivation must be ok ──
   [@rule chk-imp-ok   [chk-imp ?A [ok ?B]] ==> [ok [f-imp ?A ?B]]]
   [@rule chk-imp-fail [chk-imp ?A fail]     ==> fail]
 
   ;; ── Modus ponens ──
-  ;; Non-linear ?A verifies antecedent match (requires our engine fix).
+  ;; Non-linear ?A verifies antecedent match (requires engine fix).
   [@rule chk-mp-ok     [chk-mp [ok [f-imp ?A ?B]] [ok ?A]] ==> [ok ?B]]
   [@rule chk-mp-notimp [chk-mp [ok ?X] [ok ?Y]]             ==> fail]
   [@rule chk-mp-fl     [chk-mp fail ?Y]                      ==> fail]
   [@rule chk-mp-fr     [chk-mp [ok ?X] fail]                 ==> fail]
-
-  ;; ════════════════════════════════════════════════════════════
-  ;; LAYER 5: THE SOLVER — Recursive List Context
-  ;; ════════════════════════════════════════════════════════════
 
   ;; ── Flatten: decompose conjunctions into list ──
   [@rule flatten-and  [flatten [f-and ?A ?B] ?Ctx] ==> [flatten ?A [flatten ?B ?Ctx]]]
   [@rule flatten-atom [flatten ?A ?Ctx]             ==> [ctx-cons ?A ?Ctx]]
 
   ;; ── Lookup: recursive membership check ──
-  ;; Non-linear pattern: head matches goal → d-assume
+  ;; Non-linear pattern: head matches goal -> d-assume
   [@rule lookup-hit  [lookup [ctx-cons ?A ?Rest] ?A] ==> [d-assume ?A]]
   [@rule lookup-miss [lookup [ctx-cons ?B ?Rest] ?A] ==> [lookup ?Rest ?A]]
 
@@ -135,37 +116,44 @@
   [@rule auto-and    [auto ?G [f-and ?A ?B]] ==> [d-and-i [auto ?G ?A] [auto ?G ?B]]]
   [@rule auto-imp    [auto ?G [f-imp ?A ?B]] ==> [d-imp-i ?A [auto [flatten ?A ?G] ?B]]]
   [@rule auto-lookup [auto ?Ctx ?A]          ==> [lookup ?Ctx ?A]]
+]
 
-  ;; ════════════════════════════════════════════════════════════
-  ;; ACT I — THE CHECKER (11 tests)
-  ;; ════════════════════════════════════════════════════════════
+;; ════════════════════════════════════════════════════════════
+;; PROOFS: Propositional Logic (19 assertions)
+;; ════════════════════════════════════════════════════════════
+;; Sealed: inherits PropLogic's rules, cannot add new ones.
+;; Five acts: Checker, Solver, Reflection, plus invalid cases.
 
-  ;; 1. ⊤-intro → ok(⊤)
+[Proofs PropCheck :in PropLogic
+
+  ;; ── ACT I — THE CHECKER (11 tests) ──
+
+  ;; 1. top-intro -> ok(top)
   [assert-eq check-top-intro
     [concl d-top]
     [ok f-top]]
 
-  ;; 2. Assumption P → ok(P)
+  ;; 2. Assumption P -> ok(P)
   [assert-eq check-assume
     [concl [d-assume P]]
     [ok P]]
 
-  ;; 3. ∧-intro → ok(P ∧ Q)
+  ;; 3. and-intro -> ok(P and Q)
   [assert-eq check-and-intro
     [concl [d-and-i [d-assume P] [d-assume Q]]]
     [ok [f-and P Q]]]
 
-  ;; 4. ∧-elim-l → ok(P)
+  ;; 4. and-elim-l -> ok(P)
   [assert-eq check-and-elim-l
     [concl [d-and-el [d-assume [f-and P Q]]]]
     [ok P]]
 
-  ;; 5. Modus Ponens → ok(Q)
+  ;; 5. Modus Ponens -> ok(Q)
   [assert-eq check-modus-ponens
     [concl [d-mp [d-assume [f-imp P Q]] [d-assume P]]]
     [ok Q]]
 
-  ;; 6. ∧-commutativity — manual derivation tree
+  ;; 6. and-commutativity — manual derivation tree
   [assert-eq check-and-comm
     [concl [d-imp-i [f-and P Q]
       [d-and-i
@@ -173,7 +161,7 @@
         [d-and-el [d-assume [f-and P Q]]]]]]
     [ok [f-imp [f-and P Q] [f-and Q P]]]]
 
-  ;; 7. ∧-associativity — manual 9-node derivation tree
+  ;; 7. and-associativity — manual 9-node derivation tree
   [assert-eq check-and-assoc
     [concl [d-imp-i [f-and P [f-and Q R]]
       [d-and-i
@@ -183,7 +171,7 @@
         [d-and-er [d-and-er [d-assume [f-and P [f-and Q R]]]]]]]]
     [ok [f-imp [f-and P [f-and Q R]] [f-and [f-and P Q] R]]]]
 
-  ;; 8. INVALID — ∧-elim-l on ⊤ → fail
+  ;; 8. INVALID — and-elim-l on top -> fail
   [assert-eq reject-and-elim-on-top
     [concl [d-and-el d-top]]
     fail]
@@ -193,63 +181,58 @@
     [concl [d-and-i [d-and-el d-top] [d-assume Q]]]
     fail]
 
-  ;; 10. INVALID — MP on non-implication → fail
+  ;; 10. INVALID — MP on non-implication -> fail
   [assert-eq reject-mp-non-imp
     [concl [d-mp [d-assume P] [d-assume Q]]]
     fail]
 
-  ;; 11. INVALID — MP antecedent mismatch → fail
+  ;; 11. INVALID — MP antecedent mismatch -> fail
   [assert-eq reject-mp-mismatch
     [concl [d-mp [d-assume [f-imp P Q]] [d-assume R]]]
     fail]
 
-  ;; ════════════════════════════════════════════════════════════
-  ;; ACT II — THE SOLVER (6 tests)
-  ;; ════════════════════════════════════════════════════════════
+  ;; ── ACT II — THE SOLVER (6 tests) ──
 
-  ;; 12. tauto(P → P) — identity
+  ;; 12. tauto(P -> P) — identity
   [assert-eq auto-identity
     [concl [tauto [f-imp P P]]]
     [ok [f-imp P P]]]
 
-  ;; 13. tauto(P∧Q → Q∧P) — commutativity
+  ;; 13. tauto(P and Q -> Q and P) — commutativity
   [assert-eq auto-and-comm
     [concl [tauto [f-imp [f-and P Q] [f-and Q P]]]]
     [ok [f-imp [f-and P Q] [f-and Q P]]]]
 
-  ;; 14. tauto(P∧(Q∧R) → (P∧Q)∧R) — associativity
+  ;; 14. tauto(P and (Q and R) -> (P and Q) and R) — associativity
   [assert-eq auto-and-assoc
     [concl [tauto [f-imp [f-and P [f-and Q R]] [f-and [f-and P Q] R]]]]
     [ok [f-imp [f-and P [f-and Q R]] [f-and [f-and P Q] R]]]]
 
-  ;; 15. DEPTH-5 LOOKUP — P∧(Q∧(R∧(D∧E))) → E
+  ;; 15. DEPTH-5 LOOKUP — P and (Q and (R and (D and E))) -> E
   [assert-eq auto-deep-conj
     [concl [tauto [f-imp [f-and P [f-and Q [f-and R [f-and D E]]]] E]]]
     [ok [f-imp [f-and P [f-and Q [f-and R [f-and D E]]]] E]]]
 
-  ;; 16. 5-DEEP IMPLICATION CHAIN — P→Q→R→D→E→P
+  ;; 16. 5-DEEP IMPLICATION CHAIN — P->Q->R->D->E->P
   [assert-eq auto-deep-imp
     [concl [tauto [f-imp P [f-imp Q [f-imp R [f-imp D [f-imp E P]]]]]]]
     [ok [f-imp P [f-imp Q [f-imp R [f-imp D [f-imp E P]]]]]]]
 
-  ;; 17. WEAKENING — P → Q → P
+  ;; 17. WEAKENING — P -> Q -> P
   [assert-eq auto-weakening
     [concl [tauto [f-imp P [f-imp Q P]]]]
     [ok [f-imp P [f-imp Q P]]]]
 
-  ;; ════════════════════════════════════════════════════════════
-  ;; ACT III — REFLECTION (2 tests)
-  ;; ════════════════════════════════════════════════════════════
-  ;; In Omega, reflection uses a judgment rule to lift from
-  ;; "concl(tauto(φ)) = ok(φ)" to "true(φ)". In Apeiron, the
-  ;; computation IS the proof — assert-eq directly verifies.
+  ;; ── ACT III — REFLECTION (2 tests) ──
+  ;; In Omega, reflection lifts "concl(tauto(phi)) = ok(phi)" to "true(phi)".
+  ;; In Apeiron, the computation IS the proof — assert-eq directly verifies.
 
-  ;; 18. P∧Q → Q∧P is TRUE
+  ;; 18. P and Q -> Q and P is TRUE
   [assert-eq true-and-comm
     [concl [tauto [f-imp [f-and P Q] [f-and Q P]]]]
     [ok [f-imp [f-and P Q] [f-and Q P]]]]
 
-  ;; 19. P∧(Q∧(R∧(D∧E))) → E is TRUE
+  ;; 19. P and (Q and (R and (D and E))) -> E is TRUE
   [assert-eq true-deep-conj
     [concl [tauto [f-imp [f-and P [f-and Q [f-and R [f-and D E]]]] E]]]
     [ok [f-imp [f-and P [f-and Q [f-and R [f-and D E]]]] E]]]
@@ -259,14 +242,9 @@
   [eval solver-deep-5   [concl [tauto [f-imp [f-and P [f-and Q [f-and R [f-and D E]]]] E]]]]
 ]
 
-;; ================================================================
-;; SYSTEM: Arithmetic + Ackermann
-;; ================================================================
-;; Omega's arithmetic checker uses an encoded solver with non-linear
-;; patterns that rely on innermost evaluation. Apeiron instead uses
-;; its NATIVE definitional equality: the rewrite engine normalizes
-;; both sides, and assert-eq compares via topological hashing.
-;; Same results, different mechanism — computation is the proof.
+;; ════════════════════════════════════════════════════════════
+;; SYSTEM 2: Arithmetic + Ackermann
+;; ════════════════════════════════════════════════════════════
 
 [System ArithCheck
   [@syntax
@@ -290,32 +268,27 @@
   [@check rewriting]
 ]
 
+;; ════════════════════════════════════════════════════════════
+;; THEORY: Arithmetic + Ackermann + Manual Checker (Axioms)
+;; ════════════════════════════════════════════════════════════
+
 [Theory ArithSelf :in ArithCheck
 
-  ;; ════════════════════════════════════════════════════════════
-  ;; Peano Arithmetic
-  ;; ════════════════════════════════════════════════════════════
-
+  ;; ── Peano Arithmetic ──
   [@rule plus-z [plus Z ?n]      ==> ?n]
   [@rule plus-s [plus [S ?n] ?m] ==> [S [plus ?n ?m]]]
   [@rule mul-z  [mul Z ?n]       ==> Z]
   [@rule mul-s  [mul [S ?n] ?m]  ==> [plus ?m [mul ?n ?m]]]
 
-  ;; ════════════════════════════════════════════════════════════
-  ;; Ackermann Function
+  ;; ── Ackermann Function ──
   ;; ack(0,n) = n+1
   ;; ack(m+1,0) = ack(m,1)
   ;; ack(m+1,n+1) = ack(m, ack(m+1,n))
-  ;; ════════════════════════════════════════════════════════════
-
   [@rule ack-0   [ack Z ?n]          ==> [S ?n]]
   [@rule ack-m-0 [ack [S ?m] Z]      ==> [ack ?m [S Z]]]
   [@rule ack-m-n [ack [S ?m] [S ?n]] ==> [ack ?m [ack [S ?m] ?n]]]
 
-  ;; ════════════════════════════════════════════════════════════
-  ;; Manual Checker (derivation trees for equality)
-  ;; ════════════════════════════════════════════════════════════
-
+  ;; ── Manual Equality Checker ──
   [@rule concl-refl [concl [d-refl ?n]]  ==> [ok [f-eq ?n ?n]]]
   [@rule concl-succ [concl [d-succ ?D]]  ==> [chk-succ [concl ?D]]]
   [@rule concl-bad  [concl d-bad]        ==> fail]
@@ -323,27 +296,29 @@
   [@rule chk-succ-ok   [chk-succ [ok [f-eq ?A ?B]]] ==> [ok [f-eq [S ?A] [S ?B]]]]
   [@rule chk-succ-fail [chk-succ fail]               ==> fail]
   [@rule chk-succ-bad  [chk-succ [ok ?X]]            ==> fail]
+]
 
-  ;; ════════════════════════════════════════════════════════════
-  ;; ACT IV — ARITHMETIC: Manual Checker + Native Equality
-  ;; ════════════════════════════════════════════════════════════
+;; ════════════════════════════════════════════════════════════
+;; PROOFS: Arithmetic + Ackermann (11 assertions)
+;; ════════════════════════════════════════════════════════════
 
-  ;; --- Manual checker (hand-built derivation trees) ---
+[Proofs ArithCheck :in ArithSelf
 
-  ;; 20. d-refl(Z) → ok(0 = 0)
+  ;; ── Manual checker (hand-built derivation trees) ──
+
+  ;; 20. d-refl(Z) -> ok(0 = 0)
   [assert-eq arith-refl-zero
     [concl [d-refl Z]]
     [ok [f-eq Z Z]]]
 
-  ;; 21. d-succ(d-refl(Z)) → ok(S(0) = S(0))
+  ;; 21. d-succ(d-refl(Z)) -> ok(S(0) = S(0))
   [assert-eq arith-succ-cong
     [concl [d-succ [d-refl Z]]]
     [ok [f-eq [S Z] [S Z]]]]
 
-  ;; --- Native definitional equality (Apeiron's engine) ---
-  ;; Omega uses an encoded solver (arith/concl/reflect chain).
-  ;; Apeiron normalizes both sides via rewrite rules, then
-  ;; compares via topological hashing. The computation IS the proof.
+  ;; ── Native definitional equality (Apeiron's engine) ──
+  ;; Omega uses an encoded solver. Apeiron normalizes both sides
+  ;; via rewrite rules, then compares via topological hashing.
 
   ;; 22. 1+1 = 2
   [assert-eq native-one-plus-one
@@ -365,7 +340,7 @@
     [mul [S [S [S Z]]] [S [S [S Z]]]]
     [S [S [S [S [S [S [S [S [S Z]]]]]]]]]]
 
-  ;; 26. 1 ≠ 2 — certified rejection
+  ;; 26. 1 != 2 — certified rejection
   [assert-neq native-one-neq-two
     [S Z]
     [S [S Z]]]
@@ -375,12 +350,8 @@
     [mul [plus [S Z] [S Z]] [plus [S Z] [S Z]]]
     [S [S [S [S Z]]]]]
 
-  ;; ════════════════════════════════════════════════════════════
-  ;; ACT V — THE ACKERMANN TEST
-  ;; ════════════════════════════════════════════════════════════
+  ;; ── THE ACKERMANN TEST ──
   ;; Grows faster than any primitive recursive function.
-  ;; If the interaction net can compute ack(3,3)=61, it handles
-  ;; arbitrary recursion — not just structural induction.
 
   ;; 28. ack(1,1) = 3
   [assert-eq ack-1-1

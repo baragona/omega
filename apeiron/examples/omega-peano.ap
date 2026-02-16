@@ -1,22 +1,24 @@
 ;; Apeiron Port: Peano Arithmetic (from Omega's peano-compute.omega)
 ;; "Same Rules, Different Engine" — Omega's rewrite rules on an interaction net.
 ;;
+;; Demonstrates Apeiron's three-layer architecture:
+;;   [System]  — Syntax: Nat, z, s, add, mul
+;;   [Theory]  — Axioms: 4 rewrite rules defining addition and multiplication
+;;   [Proofs]  — Theorems: 6 verified equalities + 2 evaluated computations
+;;
 ;; Omega proves 1+1=2 by: normalize both sides via rewrite rules, compare
 ;; via eq-refl (definitional equality). Apeiron does the same: normalize
 ;; both sides via graph rewriting on the interaction net, compare via
 ;; topological hashing.
 ;;
-;; Translation key:
-;;   Omega:   (rewrite add-z (add z ?n) ?n)
-;;   Apeiron: [@rule add-z [add z ?n] ==> ?n]
-;;
-;;   Omega:   (proof name :goal (eq X Y) :derivation (eq-refl))
-;;   Apeiron: [assert-eq name X Y]
-;;
 ;; The rewrite rules are identical in meaning. The computation substrate
 ;; is entirely different: Omega uses a hash-consed tree normalizer with
 ;; memoization; Apeiron uses an interaction net with Dup/Erase nodes
 ;; and a physics scheduler.
+
+;; ════════════════════════════════════════════════════════════
+;; Layer 1: THE SYSTEM — Syntax & Physics
+;; ════════════════════════════════════════════════════════════
 
 [System OmegaPeano
   [@syntax
@@ -28,11 +30,13 @@
   [@check rewriting]
 ]
 
-[Theory PeanoCompute :in OmegaPeano
+;; ════════════════════════════════════════════════════════════
+;; Layer 2: THE THEORY — Peano Arithmetic (Axioms)
+;; ════════════════════════════════════════════════════════════
+;; Four computation rules, identical to Omega's rewrite rules.
+;; This is the trusted base: if a rule is wrong, proofs break.
 
-  ;; ================================================================
-  ;; Computation rules (identical to Omega's rewrite rules)
-  ;; ================================================================
+[Theory PeanoCompute :in OmegaPeano
 
   ;; add(0, n) = n
   [@rule add-z [add z ?n] ==> ?n]
@@ -42,10 +46,15 @@
   [@rule mul-z [mul z ?n] ==> z]
   ;; mul(S(n), m) = add(m, mul(n, m))
   [@rule mul-s [mul [s ?n] ?m] ==> [add ?m [mul ?n ?m]]]
+]
 
-  ;; ================================================================
-  ;; Proofs (Omega's eq-refl → Apeiron's assert-eq)
-  ;; ================================================================
+;; ════════════════════════════════════════════════════════════
+;; Layer 3: THE PROOFS — Verified Computations
+;; ════════════════════════════════════════════════════════════
+;; Sealed: inherits PeanoCompute's rules, cannot add new ones.
+;; Each assert-eq is a theorem: normalize both sides, compare.
+
+[Proofs PeanoCheck :in PeanoCompute
 
   ;; 0 + 0 = 0
   [assert-eq zero-plus-zero
@@ -83,10 +92,7 @@
     [s [s [s [s [s [s [s [s [s z]]]]]]]]]
   ]
 
-  ;; ================================================================
   ;; Eval: Show interaction counts
-  ;; ================================================================
-
   [eval peano-2x3 [mul [s [s z]] [s [s [s z]]]]]
   [eval peano-3x3 [mul [s [s [s z]]] [s [s [s z]]]]]
 ]
