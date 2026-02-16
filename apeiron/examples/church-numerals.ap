@@ -12,6 +12,14 @@
 
 [Theory ChurchNumerals :in HaskellMode
 
+  ;; Church addition: \m.\n.\f.\x. m f (n f x)
+  [def add [lam m [lam n [lam f [lam x
+    [app [app m f] [app [app n f] x]]
+  ]]]]]
+]
+
+[Proofs ChurchCheck :in ChurchNumerals
+
   ;; Church 0: \f.\x. x
   [eval church-zero [lam f [lam x x]]]
 
@@ -24,12 +32,7 @@
   ;; Apply church-two to S and Z: S(S(Z)) = 2
   [eval two [app [app [lam f [lam x [app f [app f x]]]] S] Z]]
 
-  ;; Church addition: \m.\n.\f.\x. m f (n f x)
   ;; (1 + 2): apply add to church-one and church-two, then to S and Z
-  [def add [lam m [lam n [lam f [lam x
-    [app [app m f] [app [app n f] x]]
-  ]]]]]
-
   [eval one-plus-two
     [app [app
       [app [app add

@@ -68,14 +68,14 @@
   [def two [s [s z]]]
   [def four [s [s [s [s z]]]]]
   [def computation [plus [s [s z]] [s [s z]]]]
+]
 
+[Proofs CalcCheck :in CalcArith
   ;; Local check: 2+2 = 4
   [assert-eq local-check [plus [s [s z]] [s [s z]]] [s [s [s [s z]]]]]
 ]
 
 ;; The Compiler: rewrite rules that flatten expressions to stack code.
-;; All seq nodes are binary (cons-list style) for uniform flattening.
-;; [compile] produces code *segments*; [program] wraps with HALT terminator.
 [Theory CodeGen :in Calculator
   ;; Theory-level operators: visible to builder + rewrite engine
   [op compile] [op program]
@@ -88,7 +88,6 @@
     [compile z] ==> [asm-push z]]
 
   ;; Successor: compile(s(n)) → seq(compile(n), seq(PUSH(1), ADD))
-  ;; Binary seq: [asm-seq A [asm-seq B C]] = "A then B then C"
   [@rule compile-s
     [compile [s ?n]] ==> [asm-seq [compile ?n] [asm-seq [asm-push [s z]] asm-add]]]
 
@@ -97,7 +96,6 @@
     [compile [plus ?a ?b]] ==> [asm-seq [compile ?a] [asm-seq [compile ?b] asm-add]]]
 
   ;; ---- Program Termination ----
-  ;; Wrap a code segment with HALT sentinel → proper cons-list
   [@rule program-halt
     [program ?code] ==> [asm-seq ?code asm-halt]]
 ]
@@ -119,9 +117,6 @@
   ;; Map value constructors to VM representation
   [Map z ZERO]
   [Map s SUCC]
-
-  ;; 'plus', 'compile', and 'program' are NOT mapped.
-  ;; If any leak through, @strict catches it.
 ]
 
 ;; ============================================================
@@ -129,27 +124,28 @@
 ;; ============================================================
 
 [Theory Main :in StackVM
-
   ;; ---- Test 1: Compile zero → [seq PUSH(ZERO) HALT] ----
   [Import compiled-zero [Linker [program [compile z]]]]
+
+  ;; ---- Test 2: Compile one ----
+  [Import compiled-one [Linker [program [compile [s z]]]]]
+
+  ;; ---- Test 3: Compile two ----
+  [Import compiled-two [Linker [program [compile two]]]]
+
+  ;; ---- Test 4: Compile 2+2 ----
+  [Import compiled-four [Linker [program [compile computation]]]]
+]
+
+[Proofs MainCheck :in Main
   [assert-eq check-zero compiled-zero [seq [PUSH ZERO] HALT]]
 
-  ;; ---- Test 2: Compile one → PUSH 0, PUSH 1, ADD, HALT ----
-  ;; (left-nested tree before flatten; HALT terminates the program)
-  [Import compiled-one [Linker [program [compile [s z]]]]]
   [assert-eq check-one compiled-one
     [seq [seq [PUSH ZERO] [seq [PUSH [SUCC ZERO]] ADD]] HALT]]
 
-  ;; ---- Test 3: Compile two → left-nested seq tree + HALT ----
-  ;; Stack trace: PUSH 0, PUSH 1, ADD, PUSH 1, ADD, HALT
-  [Import compiled-two [Linker [program [compile two]]]]
   [assert-eq check-two compiled-two
     [seq [seq [seq [PUSH ZERO] [seq [PUSH [SUCC ZERO]] ADD]] [seq [PUSH [SUCC ZERO]] ADD]] HALT]]
 
-  ;; ---- Test 4: Compile 2+2 → structural compilation + HALT ----
-  ;; compile-plus fires BEFORE plus-s (head-first builder order = call-by-name).
-  ;; Result: compile(2); compile(2); ADD; HALT — preserves the addition structure!
-  [Import compiled-four [Linker [program [compile computation]]]]
   [assert-eq check-four compiled-four
     [seq [seq [seq [seq [PUSH ZERO] [seq [PUSH [SUCC ZERO]] ADD]] [seq [PUSH [SUCC ZERO]] ADD]]
               [seq [seq [seq [PUSH ZERO] [seq [PUSH [SUCC ZERO]] ADD]] [seq [PUSH [SUCC ZERO]] ADD]]
@@ -160,31 +156,26 @@
 ;; ============================================================
 ;; PHASE 2: Linearization (flatten tree → cons-list)
 ;; ============================================================
-;; The raw compiler output is a binary tree of [seq ...] nodes.
-;; A real VM needs a flat instruction list. The associativity rule
-;; rotates left-nested seqs into right-nested (cons-list) form:
-;;   [seq [seq a b] c] ==> [seq a [seq b c]]
 
 [Theory Optimizer :in StackVM
   ;; The Linearizer: tree rotation to right-associative form
   [@rule flatten-seq [seq [seq ?a ?b] ?c] ==> [seq ?a [seq ?b ?c]]]
 
-  ;; ---- Test 5: Flatten compile(1) + HALT → proper cons-list ----
-  ;; PUSH 0; PUSH 1; ADD; HALT
   [Import opt-one [Linker [program [compile [s z]]]]]
+  [Import opt-two [Linker [program [compile two]]]]
+  [Import opt-four [Linker [program [compile computation]]]]
+]
+
+[Proofs OptimizerCheck :in Optimizer
+  ;; ---- Test 5: Flatten compile(1) + HALT → proper cons-list ----
   [assert-eq check-flat-one opt-one
     [seq [PUSH ZERO] [seq [PUSH [SUCC ZERO]] [seq ADD HALT]]]]
 
   ;; ---- Test 6: Flatten compile(2) + HALT → proper cons-list ----
-  ;; PUSH 0; PUSH 1; ADD; PUSH 1; ADD; HALT
-  [Import opt-two [Linker [program [compile two]]]]
   [assert-eq check-flat-two opt-two
     [seq [PUSH ZERO] [seq [PUSH [SUCC ZERO]] [seq ADD [seq [PUSH [SUCC ZERO]] [seq ADD HALT]]]]]]
 
   ;; ---- Test 7: Flatten compile(2+2) + HALT → fully linearized program ----
-  ;; 12 items as a flat right-nested cons-list (proper — terminates in HALT):
-  ;; PUSH 0, PUSH 1, ADD, PUSH 1, ADD, PUSH 0, PUSH 1, ADD, PUSH 1, ADD, ADD, HALT
-  [Import opt-four [Linker [program [compile computation]]]]
   [assert-eq check-flat-four opt-four
     [seq [PUSH ZERO] [seq [PUSH [SUCC ZERO]] [seq ADD [seq [PUSH [SUCC ZERO]] [seq ADD
     [seq [PUSH ZERO] [seq [PUSH [SUCC ZERO]] [seq ADD [seq [PUSH [SUCC ZERO]] [seq ADD [seq ADD HALT]]]]]]]]]]]

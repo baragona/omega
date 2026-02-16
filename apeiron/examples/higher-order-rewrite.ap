@@ -49,19 +49,11 @@
 
   ;; map f [] = []
   ;; map f (x:xs) = (f x) : map f xs
-  ;;
-  ;; The RHS [app ?f ?x] builds an App node in the graph.
-  ;; When ?f is a lambda, physics fires beta-reduction.
-  ;; ?f appears twice in the RHS → build_meta_fan creates a Dup chain.
   [@rule map-nil  [map ?f nil]           ==> nil]
   [@rule map-cons [map ?f [cons ?x ?xs]] ==> [cons [app ?f ?x] [map ?f ?xs]]]
 
   ;; foldr f acc [] = acc
   ;; foldr f acc (x:xs) = f x (foldr f acc xs)
-  ;;
-  ;; The RHS [app [app ?f ?x] ...] builds two nested App nodes.
-  ;; When ?f is a curried lambda, two beta-reductions fire in sequence.
-  ;; ?f appears twice in the RHS → Dup fan for the function.
   [@rule foldr-nil  [foldr ?f ?acc nil]           ==> ?acc]
   [@rule foldr-cons [foldr ?f ?acc [cons ?x ?xs]] ==> [app [app ?f ?x] [foldr ?f ?acc ?xs]]]
 
@@ -103,6 +95,9 @@
        [cons [s [s [s [s z]]]]
         [cons [s [s [s [s [s z]]]]] nil]]]]]
   ]
+]
+
+[Proofs HigherOrderCheck :in HigherOrder
 
   ;; ================================================================
   ;; Assertions
@@ -119,7 +114,6 @@
 
   ;; map double [1,2,3] = [2,4,6]
   ;; Nonlinear lambda: each element duplicated by Dup node, then plus fires.
-  ;; Cycle: map-cons (rewrite) → beta (physics) → plus (rewrite) per element.
   [assert-eq map-double
     [map fn-double list-123]
     [cons [s [s z]]
@@ -137,16 +131,13 @@
   ]
 
   ;; foldr (+) 0 [1,2,3] = 6
-  ;; foldr produces nested beta redexes:
-  ;;   (λx.λacc. plus x acc) 1 ((λx.λacc. plus x acc) 2 ((λx.λacc. plus x acc) 3 0))
-  ;; Each step: rewrite (foldr-cons) → beta (outer) → beta (inner) → rewrite (plus)
   [assert-eq foldr-sum
     [foldr fn-add z list-123]
     [s [s [s [s [s [s z]]]]]]
   ]
 
   ;; map double [1,2,3,4,5] = [2,4,6,8,10]
-  ;; Stress test: 5 elements, nonlinear lambda, 5 rewrite-beta-rewrite cycles.
+  ;; Stress test: 5 elements, nonlinear lambda.
   [assert-eq map-double-5
     [map fn-double list-12345]
     [cons [s [s z]]
@@ -157,8 +148,6 @@
   ]
 
   ;; chained map: map succ (map double [1,2,3]) = [3,5,7]
-  ;; Inner map reduces first (double each element), then outer map
-  ;; applies succ to each result. Two full map passes.
   [assert-eq chained-map
     [map fn-succ [map fn-double list-123]]
     [cons [s [s [s z]]]
@@ -167,7 +156,6 @@
   ]
 
   ;; append [1,2] [3] = [1,2,3]
-  ;; Pure rewriting (no beta-reduction needed).
   [assert-eq append-test
     [append [cons [s z] [cons [s [s z]] nil]] [cons [s [s [s z]]] nil]]
     list-123

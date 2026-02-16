@@ -51,8 +51,9 @@
   [@rule [take z [cons ?h ?t]] ==> nil]
   [@rule [take [s ?k] [cons ?h ?t]] ==> [cons ?h [take ?k ?t]]]
   [@rule [take ?n nil] ==> nil]
+]
 
-  ;; === Tests ===
+[Proofs StreamCheck :in Streams
 
   ;; take 3 from nats starting at 0: [0, 1, 2]
   [assert-eq take-three

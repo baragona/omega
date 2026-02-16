@@ -10,11 +10,14 @@
   [@check rewriting]
 ]
 
-[Theory DiffDemo :in DifferentialSystem
+[Theory DiffRules :in DifferentialSystem
 
   ;; Model derivative as a rewrite rule (symbolic differentiation)
   [@rule deriv-const [deriv z] ==> z]
   [@rule deriv-plus  [deriv [plus ?a ?b]] ==> [plus [deriv ?a] [deriv ?b]]]
+]
+
+[Proofs DiffCheck :in DiffRules
 
   ;; d/dx(0 + 0) = 0 + 0 = ... (symbolic)
   [eval diff-test [deriv [plus z z]]]

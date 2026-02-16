@@ -12,12 +12,15 @@
   [@check rewriting confluent-race]
 ]
 
-[Theory RaceDemo :in RaceSystem
+[Theory RaceRules :in RaceSystem
 
   ;; Both rules could match [choose x y] — but the result is the same
   ;; if the computation is confluent.
   [@rule choose-left  [choose ?a ?b] ==> [left ?a]]
   [@rule choose-right [choose ?a ?b] ==> [right ?b]]
+]
+
+[Proofs RaceCheck :in RaceRules
 
   ;; The first matching rule fires (choose-left in this implementation).
   ;; The user's responsibility is to ensure confluence.

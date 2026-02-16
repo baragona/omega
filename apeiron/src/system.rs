@@ -238,7 +238,6 @@ impl Session {
 
         let mut theory_rules = Vec::new();
         let mut graph_rules: Vec<rewrite::GraphRule> = Vec::new();
-        let mut inverse_graph_rules: Vec<rewrite::GraphRule> = Vec::new();
         let is_reversible = system.check_modes.contains(&CheckMode::Reversible);
 
         // Process theory body
@@ -291,108 +290,25 @@ impl Session {
                             {
                                 graph_rules.push(gr);
                             }
-                            // Reversible mode: auto-generate inverse rule
+                            // Reversible mode: log auto-generated inverse
                             if is_reversible {
                                 let inv_name = format!("{}-inv", rule.name);
-                                if let Some(inv_gr) =
-                                    rewrite::compile_rule(&inv_name, &rule.rhs, &rule.lhs)
-                                {
-                                    inverse_graph_rules.push(inv_gr);
-                                    self.output.push(format!(
-                                        "[RULE-INV] {} (auto-generated inverse)",
-                                        inv_name
-                                    ));
-                                }
+                                self.output.push(format!(
+                                    "[RULE-INV] {} (auto-generated inverse)",
+                                    inv_name
+                                ));
                             }
                         }
                     }
-                    "eval" => {
-                        self.process_eval(&decl[1..], &graph_rules, &known_ops, &system)?;
-                    }
-                    "eval-reverse" => {
-                        // Run with inverse rules (backward execution)
-                        self.process_eval(
-                            &decl[1..],
-                            &inverse_graph_rules,
-                            &known_ops,
-                            &system,
-                        )?;
-                    }
-                    "assert-eq" => {
-                        self.process_assert_eq(
-                            &decl[1..],
-                            &graph_rules,
-                            &known_ops,
-                            &system,
-                        )?;
-                    }
-                    "assert-neq" => {
-                        self.process_assert_neq(
-                            &decl[1..],
-                            &graph_rules,
-                            &known_ops,
-                            &system,
-                        )?;
-                    }
-                    "with-scope" => {
-                        // [with-scope ScopeName body...]
-                        if decl.len() >= 3 {
-                            let scope_name = decl[1].as_atom().unwrap_or("?");
-                            if let Some(&scope_id) = self.scopes.get(scope_name) {
-                                self.arena.activate_scope(scope_id);
-                                // Process inner declarations
-                                for inner in &decl[2..] {
-                                    if let Some(inner_decl) = inner.as_list() {
-                                        if inner_decl.is_empty() {
-                                            continue;
-                                        }
-                                        let inner_head =
-                                            inner_decl[0].as_atom().unwrap_or("");
-                                        match inner_head {
-                                            "eval" => {
-                                                self.process_eval(
-                                                    &inner_decl[1..],
-                                                    &graph_rules,
-                                                    &known_ops,
-                                                    &system,
-                                                )?;
-                                            }
-                                            "eval-reverse" => {
-                                                self.process_eval(
-                                                    &inner_decl[1..],
-                                                    &inverse_graph_rules,
-                                                    &known_ops,
-                                                    &system,
-                                                )?;
-                                            }
-                                            "assert-eq" => {
-                                                self.process_assert_eq(
-                                                    &inner_decl[1..],
-                                                    &graph_rules,
-                                                    &known_ops,
-                                                    &system,
-                                                )?;
-                                            }
-                                            "assert-neq" => {
-                                                self.process_assert_neq(
-                                                    &inner_decl[1..],
-                                                    &graph_rules,
-                                                    &known_ops,
-                                                    &system,
-                                                )?;
-                                            }
-                                            _ => {
-                                                return Err(ApeironError::InvalidConfig {
-                                                    block: "with-scope".into(),
-                                                    detail: format!("unknown declaration: {}", inner_head),
-                                                })
-                                            }
-                                        }
-                                    }
-                                }
-                                self.arena.deactivate_scope(scope_id);
-                            }
-                        }
+                    "eval" | "eval-reverse" | "assert-eq" | "assert-neq" | "with-scope" => {
+                        return Err(ApeironError::InvalidConfig {
+                            block: "Theory".into(),
+                            detail: format!(
+                                "'{}' belongs in a [Proofs] block, not [Theory]. \
+                                 Use: [Proofs Name :in {} ...]",
+                                decl_head, theory_name
+                            ),
+                        });
                     }
                     "reflect" => {
                         // [reflect name expr] — show graph structure
@@ -1445,14 +1361,15 @@ mod tests {
     }
 
     #[test]
-    fn process_theory_with_eval() {
+    fn process_theory_with_eval_in_proofs() {
         let source = r#"
         [System Test
           [@syntax [sort Term]]
           [@binding implicit]
           [@check beta-reduction]
         ]
-        [Theory Demo :in Test
+        [Theory Demo :in Test]
+        [Proofs DemoCheck :in Demo
           [eval test-id [app [lam x x] y]]
         ]
         "#;
@@ -1468,14 +1385,15 @@ mod tests {
     }
 
     #[test]
-    fn process_assert_eq_identity() {
+    fn process_assert_eq_in_proofs() {
         let source = r#"
         [System Test
           [@syntax [sort Term]]
           [@binding implicit]
           [@check beta-reduction]
         ]
-        [Theory Demo :in Test
+        [Theory Demo :in Test]
+        [Proofs DemoCheck :in Demo
           [assert-eq id-test [app [lam x x] y] y]
         ]
         "#;
@@ -1490,6 +1408,50 @@ mod tests {
             .output
             .iter()
             .any(|s| s.contains("id-test") && s.contains("passed")));
+    }
+
+    #[test]
+    fn theory_rejects_assertions() {
+        let source = r#"
+        [System Test
+          [@syntax [sort Term]]
+          [@binding implicit]
+          [@check beta-reduction]
+        ]
+        [Theory Demo :in Test
+          [assert-eq bad [app [lam x x] y] y]
+        ]
+        "#;
+
+        let sexps = parser::parse(source).unwrap();
+        let mut session = Session::new();
+        session.process(&sexps[0]).unwrap();
+        let result = session.process(&sexps[1]);
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(err.contains("Proofs"), "expected Proofs redirect, got: {}", err);
+    }
+
+    #[test]
+    fn theory_rejects_eval() {
+        let source = r#"
+        [System Test
+          [@syntax [sort Term]]
+          [@binding implicit]
+          [@check beta-reduction]
+        ]
+        [Theory Demo :in Test
+          [eval test [app [lam x x] y]]
+        ]
+        "#;
+
+        let sexps = parser::parse(source).unwrap();
+        let mut session = Session::new();
+        session.process(&sexps[0]).unwrap();
+        let result = session.process(&sexps[1]);
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(err.contains("Proofs"), "expected Proofs redirect, got: {}", err);
     }
 
     #[test]

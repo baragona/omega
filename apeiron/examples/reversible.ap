@@ -17,6 +17,9 @@
   ;; encode distributes over pairs and maps z to tagged-z
   [@rule encode-pair [encode [pair ?a ?b]] ==> [pair [encode ?a] [encode ?b]]]
   [@rule encode-atom [encode z] ==> tagged-z]
+]
+
+[Proofs ReversibleCheck :in ReversibleOps
 
   ;; === Test 1: Forward computation ===
   ;; [encode [pair z z]] → [pair [encode z] [encode z]] → [pair tagged-z tagged-z]

@@ -65,6 +65,9 @@
 
   [@rule [ite true ?t ?f] ==> ?t]
   [@rule [ite false ?t ?f] ==> ?f]
+]
+
+[Proofs InductiveCheck :in InductiveTypes
 
   ;; === Tests: Arithmetic ===
 

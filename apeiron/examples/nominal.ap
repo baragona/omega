@@ -15,6 +15,9 @@
 
   [Scope A]
   [Scope B]
+]
+
+[Proofs NominalCheck :in NominalTests
 
   ;; === Test 1: Same scope, same structure → equal ===
   [assert-eq same-scope

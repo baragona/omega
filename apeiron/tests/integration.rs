@@ -149,7 +149,8 @@ fn assert_eq_failure_reports_error() {
       [@binding implicit]
       [@check beta-reduction]
     ]
-    [Theory Demo :in Test
+    [Theory Demo :in Test]
+    [Proofs DemoCheck :in Demo
       [assert-eq should-fail x y]
     ]
     "#;
@@ -158,8 +159,9 @@ fn assert_eq_failure_reports_error() {
     let mut session = Session::new();
 
     session.process(&sexps[0]).unwrap(); // System
+    session.process(&sexps[1]).unwrap(); // Theory
 
-    let result = session.process(&sexps[1]); // Theory with failing assert
+    let result = session.process(&sexps[2]); // Proofs with failing assert
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(format!("{}", err).contains("should-fail"));
@@ -178,7 +180,8 @@ fn multiple_systems() {
       [@binding exposed]
       [@check beta-reduction]
     ]
-    [Theory T1 :in WeakLF
+    [Theory T1 :in WeakLF]
+    [Proofs T1Check :in T1
       [assert-eq test [app [lam x x] z] z]
     ]
     "#;
@@ -472,7 +475,8 @@ fn linear_rejects_duplication() {
       [@binding linear-explicit]
       [@check beta-reduction]
     ]
-    [Theory Dup :in LinearTest
+    [Theory Dup :in LinearTest]
+    [Proofs DupCheck :in Dup
       [eval dup-fail [lam x [app x x]]]
     ]
     "#;
@@ -480,7 +484,8 @@ fn linear_rejects_duplication() {
     let sexps = parser::parse(source).unwrap();
     let mut session = Session::new();
     session.process(&sexps[0]).unwrap();
-    let result = session.process(&sexps[1]);
+    session.process(&sexps[1]).unwrap();
+    let result = session.process(&sexps[2]);
     assert!(result.is_err());
     let err = format!("{}", result.unwrap_err());
     assert!(err.contains("linearity") || err.contains("duplicat"), "expected linearity error, got: {}", err);
@@ -494,7 +499,8 @@ fn linear_rejects_erasure() {
       [@binding linear-explicit]
       [@check beta-reduction]
     ]
-    [Theory Erase :in LinearTest
+    [Theory Erase :in LinearTest]
+    [Proofs EraseCheck :in Erase
       [eval erase-fail [lam x z]]
     ]
     "#;
@@ -502,7 +508,8 @@ fn linear_rejects_erasure() {
     let sexps = parser::parse(source).unwrap();
     let mut session = Session::new();
     session.process(&sexps[0]).unwrap();
-    let result = session.process(&sexps[1]);
+    session.process(&sexps[1]).unwrap();
+    let result = session.process(&sexps[2]);
     assert!(result.is_err());
     let err = format!("{}", result.unwrap_err());
     assert!(err.contains("linearity") || err.contains("erased"), "expected linearity error, got: {}", err);
@@ -516,7 +523,8 @@ fn linear_accepts_identity() {
       [@binding linear-explicit]
       [@check beta-reduction]
     ]
-    [Theory Ok :in LinearTest
+    [Theory Ok :in LinearTest]
+    [Proofs OkCheck :in Ok
       [assert-eq id-ok [app [lam x x] y] y]
     ]
     "#;
@@ -543,6 +551,8 @@ fn nominal_distinguishes_scopes() {
     [Theory Nom :in NomTest
       [Scope X]
       [Scope Y]
+    ]
+    [Proofs NomCheck :in Nom
       [assert-neq nom-diff [box X a] [box Y a]]
     ]
     "#;
@@ -568,6 +578,8 @@ fn reversible_generates_inverse() {
     ]
     [Theory Rev :in RevTest
       [@rule wrap-z [wrap z] ==> tagged]
+    ]
+    [Proofs RevCheck :in Rev
       [eval-reverse unwrap tagged]
     ]
     "#;

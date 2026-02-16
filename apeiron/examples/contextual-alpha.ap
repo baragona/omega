@@ -28,6 +28,9 @@
   [Scope World_B]
   [Scope World_C]
   [Scope World_D]
+]
+
+[Proofs ScopeAlphaCheck :in ScopeAlpha
 
   ;; === Test 1: Simple scope alpha ===
   ;; box(A, \x.x) == box(B, \y.y)

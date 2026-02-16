@@ -69,6 +69,9 @@
   ;; Applies the Church numeral to the Peano successor (wrapped in a
   ;; lambda so beta-reduction wires it into Sym nodes) and zero.
   [def to-peano [lam n [app [app n [lam x [s x]]] z]]]
+]
+
+[Proofs ChurchPowerCheck :in ChurchPower
 
   ;; ================================================================
   ;; Assertions: Dual Verification

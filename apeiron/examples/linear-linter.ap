@@ -10,7 +10,9 @@
   [@check beta-reduction]
 ]
 
-[Theory LinterTest :in LinearCheck
+[Theory LinterRules :in LinearCheck]
+
+[Proofs LinterCheck :in LinterRules
 
   ;; LINEAR: x used exactly once → direct wire (no Dup, no Erase)
   [eval linear [lam x x]]

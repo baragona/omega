@@ -14,7 +14,9 @@
   [@check beta-reduction]
 ]
 
-[Theory LogicProgramming :in LogicProg
+[Theory LogicProgramming :in LogicProg]
+
+[Proofs LogicCheck :in LogicProgramming
 
   ;; 1. A Future node survives identity application:
   ;; (\x. x) ?a  -->  ?a

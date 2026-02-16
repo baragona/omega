@@ -59,13 +59,6 @@
   ;; ================================================================
 
   ;; compose f g x = f(g(x))
-  ;; Both f and g are lambdas. When compose fires:
-  ;;   1. Beta reduces with f → body uses g(x)
-  ;;   2. Beta reduces with g → body uses x
-  ;; If f is quadruple and g is quadruple:
-  ;;   quadruple(quadruple(x)) = 4*(4*x) = 16*x
-  ;; The Dup tree for x cascades: first 3 nodes (from inner quadruple),
-  ;; then each copy gets 3 more nodes (from outer quadruple).
   [def fn-compose [lam f [lam g [lam x [app f [app g x]]]]]]
 
   ;; ================================================================
@@ -73,10 +66,6 @@
   ;; ================================================================
 
   ;; octuple n = quadruple(n) + quadruple(n)
-  ;; This is NOT compose — it's direct application. The Dup tree for n
-  ;; first fans into 2 copies (for the two quadruple calls), then each
-  ;; copy fans into 4 (inside quadruple's body). Total: 8 copies of n,
-  ;; but the Dup tree has only 7 nodes (balanced binary tree of depth 3).
   [def fn-octuple [lam n [plus [app fn-quadruple n] [app fn-quadruple n]]]]
 
   ;; ================================================================
@@ -86,6 +75,9 @@
   [def one   [s z]]
   [def two   [s [s z]]]
   [def three [s [s [s z]]]]
+]
+
+[Proofs SharingCheck :in SharingDemo
 
   ;; ================================================================
   ;; Assertions: Nonlinear Functions
@@ -143,8 +135,6 @@
 
   ;; compose(quadruple, quadruple)(1) = 16
   ;; quadruple(quadruple(1)) = quadruple(4) = 16
-  ;; Inner quadruple fires first: 4 copies of 1. Then outer: 4 copies of 4.
-  ;; Dup-Lam interaction when outer quadruple duplicates inner's lambda.
   [assert-eq compose-quad-quad-1
     [app [app [app fn-compose fn-quadruple] fn-quadruple] one]
     [s [s [s [s [s [s [s [s [s [s [s [s [s [s [s [s z]]]]]]]]]]]]]]]]
@@ -159,8 +149,6 @@
 
   ;; compose(quadruple, triple)(2) = 24
   ;; quadruple(triple(2)) = quadruple(6) = 24
-  ;; Deepest test: inner triple fans 2 into 3 copies (→6), then outer
-  ;; quadruple fans 6 into 4 copies (→24). Total: 12 copies of input.
   [assert-eq compose-quad-triple-2
     [app [app [app fn-compose fn-quadruple] fn-triple] two]
     [s [s [s [s [s [s [s [s [s [s [s [s [s [s [s [s [s [s [s [s [s [s [s [s z]]]]]]]]]]]]]]]]]]]]]]]]
@@ -168,10 +156,6 @@
 
   ;; compose(quadruple, quadruple)(3) = 48  — Crown Jewel
   ;; quadruple(quadruple(3)) = quadruple(12) = 48
-  ;; Inner: 4 copies of 3 → 12. Outer: 4 copies of 12 → 48.
-  ;; The Dup tree cascades through two levels of quadruple's 4-way fan.
-  ;; A tree rewriter would copy the entire intermediate result 4 times.
-  ;; The interaction net shares the intermediate structure.
   [assert-eq compose-quad-quad-3
     [app [app [app fn-compose fn-quadruple] fn-quadruple] three]
     ;; 48 = s^48(z)

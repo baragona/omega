@@ -29,6 +29,9 @@
 
   [Scope A]
   [Scope B]
+]
+
+[Proofs UnifiedCheck :in Unified
 
   ;; === Test 1: Blocked reduction (inactive scope) ===
   ;; [box A [app [lam x x] y]] != [box A y]

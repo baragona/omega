@@ -12,7 +12,9 @@
   [@check beta-reduction]
 ]
 
-[Theory LinearProofs :in LinearSystem
+[Theory LinearProofs :in LinearSystem]
+
+[Proofs LinearCheck :in LinearProofs
 
   ;; === Test 1: Identity is linear ===
   ;; \x. x uses x exactly once — should pass.

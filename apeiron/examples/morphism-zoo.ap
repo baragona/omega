@@ -7,9 +7,6 @@
 ;;                    MaterializeErasure
 ;;   Checking passes: Identity, NormalizeFirst, ExtractGround, InjectAxiom
 ;;   Utility:         Operator renaming, @strict validation
-;;
-;; Each section declares the minimal systems needed, creates a morphism,
-;; transports a term, and asserts the expected result.
 
 ;; ============================================================
 ;; SYSTEMS
@@ -81,62 +78,60 @@
 
 [Theory IdentityTest :in Implicit
   [Import id-result [IdPass id-term]]
+]
+
+[Proofs IdentityCheck :in IdentityTest
   [assert-eq identity-pass id-result [f [s z]]]
 ]
 
 ;; ============================================================
 ;; SECTION 2: DeBruijnize (Implicit -> Exposed)
 ;; ============================================================
-;; Named variables become $N indices.
 
 [AutoMorphism Debruijn Implicit Exposed]
 
 [Theory DebruijnSrc :in Implicit
-  ;; Ground term (no binders): operators pass through unchanged.
   [def db-ground [pair [s z] z]]
-  ;; Lambda with a bound variable: [lam x [f x]] -> [lam _ [f $0]]
   [def db-lam [lam x [f x]]]
-  ;; Nested: [lam x [lam y [pair x y]]] -> [lam _ [lam _ [pair $1 $0]]]
   [def db-nested [lam x [lam y [pair x y]]]]
 ]
 
 [Theory DebruijnTest :in Exposed
   [Import db-g [Debruijn db-ground]]
-  [assert-eq debruijn-ground db-g [pair [s z] z]]
-
   [Import db-l [Debruijn db-lam]]
-  [assert-eq debruijn-lam db-l [lam _ [f $0]]]
-
   [Import db-n [Debruijn db-nested]]
+]
+
+[Proofs DebruijnCheck :in DebruijnTest
+  [assert-eq debruijn-ground db-g [pair [s z] z]]
+  [assert-eq debruijn-lam db-l [lam _ [f $0]]]
   [assert-eq debruijn-nested db-n [lam _ [lam _ [pair $1 $0]]]]
 ]
 
 ;; ============================================================
 ;; SECTION 3: Namify (Exposed -> Implicit)
 ;; ============================================================
-;; $N indices become fresh names (x, y, z, w, x4, ...).
 
 [AutoMorphism NameIt Exposed Implicit]
 
 [Theory NamifySrc :in Exposed
-  ;; [lam _ [f $0]] should become [lam x [f x]]
   [def nm-lam [lam _ [f $0]]]
-  ;; [lam _ [lam _ [pair $1 $0]]] -> [lam x [lam y [pair x y]]]
   [def nm-nested [lam _ [lam _ [pair $1 $0]]]]
 ]
 
 [Theory NamifyTest :in Implicit
   [Import nm-l [NameIt nm-lam]]
-  [assert-eq namify-lam nm-l [lam x [f x]]]
-
   [Import nm-n [NameIt nm-nested]]
+]
+
+[Proofs NamifyCheck :in NamifyTest
+  [assert-eq namify-lam nm-l [lam x [f x]]]
   [assert-eq namify-nested nm-n [lam x [lam y [pair x y]]]]
 ]
 
 ;; ============================================================
 ;; SECTION 4: InjectScope (Implicit -> Contextual)
 ;; ============================================================
-;; Wraps term in [box ScopeName ...].
 
 [AutoMorphism Scope Implicit Contextual]
 
@@ -147,51 +142,52 @@
 [Theory ScopeTest :in Contextual
   [Scope Boundary]
   [Import sc-val [Scope scope-term :scope Boundary]]
+]
+
+[Proofs ScopeCheck :in ScopeTest
   [assert-eq inject-scope sc-val [box Boundary [f z]]]
 ]
 
 ;; ============================================================
 ;; SECTION 5: EraseScopes (Contextual -> Implicit)
 ;; ============================================================
-;; Strips [barrier#N ...] wrappers.
 
 [AutoMorphism Unscope Contextual Implicit]
 
 [Theory UnscopeSrc :in Contextual
   [Scope Inner]
-  ;; In contextual mode, terms live inside scope barriers.
-  ;; We define a plain term; the morphism strips any barrier on readback.
   [def unscope-term [f z]]
 ]
 
 [Theory UnscopeTest :in Implicit
   [Import us-val [Unscope unscope-term]]
+]
+
+[Proofs UnscopeCheck :in UnscopeTest
   [assert-eq erase-scopes us-val [f z]]
 ]
 
 ;; ============================================================
 ;; SECTION 6: ValidateLinear (Implicit -> Linear)
 ;; ============================================================
-;; Passes only if every bound variable is used exactly once.
 
 [AutoMorphism GoLinear Implicit Linear]
 
 [Theory LinearSrc :in Implicit
-  ;; Identity: x used once — valid.
   [def lin-ok [lam x x]]
-  ;; Constant: x unused — INVALID for linear (would fail).
-  ;; We only test the passing case via Import.
 ]
 
 [Theory LinearTest :in Linear
   [Import lin-val [GoLinear lin-ok]]
+]
+
+[Proofs LinearValidation :in LinearTest
   [assert-eq validate-linear lin-val [lam x x]]
 ]
 
 ;; ============================================================
 ;; SECTION 7: NormalizeFirst (Compute -> Oracle)
 ;; ============================================================
-;; Runs the interaction net before sending to an oracle system.
 
 [AutoMorphism Freeze Implicit OracleOnly]
 
@@ -202,32 +198,34 @@
 ]
 
 [Theory FreezeTest :in OracleOnly
-  ;; Oracle can't compute — but NormalizeFirst reduced 2+1 to 3.
   [Import frozen [Freeze freeze-computation]]
+]
+
+[Proofs FreezeCheck :in FreezeTest
   [assert-eq normalize-first frozen [s [s [s z]]]]
 ]
 
 ;; ============================================================
 ;; SECTION 8: ExtractGround (Pattern -> Implicit)
 ;; ============================================================
-;; Validates no unresolved meta-variables (Futures) in the term.
 
 [AutoMorphism Extract PatternSys Implicit]
 
 [Theory ExtractSrc :in PatternSys
-  ;; Ground term — no Futures, passes ExtractGround.
   [def ext-term [pair [s z] z]]
 ]
 
 [Theory ExtractTest :in Implicit
   [Import ext-val [Extract ext-term]]
+]
+
+[Proofs ExtractCheck :in ExtractTest
   [assert-eq extract-ground ext-val [pair [s z] z]]
 ]
 
 ;; ============================================================
 ;; SECTION 9: InjectAxiom (Oracle -> Compute)
 ;; ============================================================
-;; Oracle terms imported as trusted definitions into a compute system.
 
 [AutoMorphism Trust OracleOnly Implicit]
 
@@ -237,13 +235,15 @@
 
 [Theory TrustTest :in Implicit
   [Import trusted [Trust axiom-val]]
+]
+
+[Proofs TrustCheck :in TrustTest
   [assert-eq inject-axiom trusted [s [s z]]]
 ]
 
 ;; ============================================================
 ;; SECTION 10: Operator Renaming
 ;; ============================================================
-;; Explicit [Map] + auto-matched names.
 
 [AutoMorphism Rename Implicit Renamed
   [Map z zero]
@@ -260,13 +260,15 @@
 
 [Theory RenameTest :in Renamed
   [Import ren-val [Rename ren-term]]
+]
+
+[Proofs RenameCheck :in RenameTest
   [assert-eq op-rename ren-val [tuple [apply zero] [compose [succ zero]]]]
 ]
 
 ;; ============================================================
 ;; SECTION 11: Combined — DeBruijnize + Rename
 ;; ============================================================
-;; Binding translation AND operator renaming in one morphism.
 
 [AutoMorphism CompileAll Implicit Renamed
   [Map z zero]
@@ -278,23 +280,20 @@
 ]
 
 [Theory CompileAllSrc :in Implicit
-  ;; [lam x [f x z]] → debruijn → [lam _ [f $0 z]] → rename → [lam _ [apply $0 zero]]
-  ;; But target is also implicit binding, so... let me check.
-  ;; Actually Renamed is implicit binding too, so binding pass = Identity.
-  ;; Names pass through.
   [def ca-term [lam x [pair x [f z]]]]
 ]
 
 [Theory CompileAllTest :in Renamed
-  ;; Both Implicit: Identity binding pass. Only op renaming.
   [Import ca-val [CompileAll ca-term]]
+]
+
+[Proofs CompileAllCheck :in CompileAllTest
   [assert-eq compile-all ca-val [lam x [tuple x [apply zero]]]]
 ]
 
 ;; ============================================================
 ;; SECTION 12: @strict validation
 ;; ============================================================
-;; @strict rejects unmapped source operators that leak through.
 
 [System StrictSrc
   [@syntax [sort Term] [op high-level] [op low-level]]
@@ -310,34 +309,25 @@
 
 [AutoMorphism StrictMorph StrictSrc StrictTgt
   [Map low-level LOW]
-  ;; high-level is NOT mapped — @strict will catch it if it leaks.
   [@strict true]
 ]
 
 [Theory StrictSrcT :in StrictSrc
-  ;; Rewrite eliminates high-level before transport.
   [@rule elim-hl [high-level ?x] ==> ?x]
   [def strict-ok [high-level [low-level [high-level z]]]]
 ]
 
-;; After rewrite: high-level reduces away, only low-level remains.
-;; Strict validation passes because no unmapped ops leak.
 [Theory StrictTest :in StrictTgt
   [Import strict-val [StrictMorph strict-ok]]
-  ;; high-level(low-level(high-level(z))) rewrites to low-level(z), renamed to LOW(z)
-  ;; Actually: high-level(low-level(high-level(z)))
-  ;;   → low-level(high-level(z))  (outer high-level peels)
-  ;;   → low-level(z)              (inner high-level peels)
-  ;;   rename → LOW(z)
-  ;; Wait — z is not in StrictTgt's ops but z is not an op, it's a free symbol.
-  ;; The strict check only validates declared source operators, not free symbols.
+]
+
+[Proofs StrictCheck :in StrictTest
   [assert-eq strict-pass strict-val [LOW z]]
 ]
 
 ;; ============================================================
 ;; SECTION 13: Roundtrip — DeBruijnize then Namify
 ;; ============================================================
-;; Implicit -> Exposed -> Implicit should produce alpha-equivalent output.
 
 [AutoMorphism ToDBI Implicit Exposed]
 [AutoMorphism FromDBI Exposed Implicit]
@@ -348,19 +338,23 @@
 
 [Theory RoundtripMid :in Exposed
   [Import rt-dbi [ToDBI rt-term]]
+]
+
+[Proofs RoundtripMidCheck :in RoundtripMid
   [assert-eq roundtrip-to-dbi rt-dbi [lam _ [lam _ [pair $1 $0]]]]
 ]
 
 [Theory RoundtripDst :in Implicit
   [Import rt-named [FromDBI rt-dbi]]
-  ;; Namify generates fresh names: x, y (from counter 0, 1)
+]
+
+[Proofs RoundtripDstCheck :in RoundtripDst
   [assert-eq roundtrip-from-dbi rt-named [lam x [lam y [pair x y]]]]
 ]
 
 ;; ============================================================
 ;; SECTION 14: Contextual roundtrip
 ;; ============================================================
-;; Implicit -> Contextual (InjectScope) -> Implicit (EraseScopes)
 
 [AutoMorphism WrapScope Implicit Contextual]
 [AutoMorphism StripScope Contextual Implicit]
@@ -372,27 +366,34 @@
 [Theory CtxRoundtripMid :in Contextual
   [Scope Shell]
   [Import ctx-wrapped [WrapScope ctx-term :scope Shell]]
+]
+
+[Proofs CtxRoundtripMidCheck :in CtxRoundtripMid
   [assert-eq ctx-inject ctx-wrapped [box Shell [f [s z]]]]
 ]
 
 [Theory CtxRoundtripDst :in Implicit
   [Import ctx-unwrapped [StripScope ctx-wrapped]]
+]
+
+[Proofs CtxRoundtripDstCheck :in CtxRoundtripDst
   [assert-eq ctx-erase ctx-unwrapped [f [s z]]]
 ]
 
 ;; ============================================================
 ;; SECTION 15: NormalizeFirst with binders
 ;; ============================================================
-;; Beta-reduction runs before transport to oracle.
 
 [AutoMorphism FreezeComputed Implicit OracleOnly]
 
 [Theory FreezeLamSrc :in Implicit
-  ;; (λx.x) applied to [s z] should beta-reduce to [s z].
   [def beta-term [app [lam x x] [s z]]]
 ]
 
 [Theory FreezeLamTest :in OracleOnly
   [Import beta-frozen [FreezeComputed beta-term]]
+]
+
+[Proofs FreezeLamCheck :in FreezeLamTest
   [assert-eq normalize-beta beta-frozen [s z]]
 ]

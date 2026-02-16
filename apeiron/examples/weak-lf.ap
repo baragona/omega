@@ -30,6 +30,9 @@
   [const z Term]
   [const s Term]
   [const plus Term]
+]
+
+[Proofs SimpleCheck :in SimpleLogic
 
   ;; --- Beta reduction tests ---
 

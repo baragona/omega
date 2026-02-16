@@ -34,6 +34,9 @@
   ;; [case (inr y) f g] --> [app g y]
   [@rule [case [inl ?x] ?f ?g] ==> [app ?f ?x]]
   [@rule [case [inr ?y] ?f ?g] ==> [app ?g ?y]]
+]
+
+[Proofs MixedCheck :in MixedBinding
 
   ;; === Tests: Beta then Rewrite ===
 

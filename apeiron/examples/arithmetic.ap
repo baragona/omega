@@ -23,6 +23,9 @@
 
   ;; 2. Recursive case: plus(s(n), m) -> s(plus(n, m))
   [@rule [plus [s ?n] ?m] ==> [s [plus ?n ?m]]]
+]
+
+[Proofs ArithCheck :in Arithmetic
 
   ;; 2 + 2 = 4
   [assert-eq two-plus-two
