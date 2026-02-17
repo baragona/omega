@@ -57,7 +57,7 @@
 ;;;    Quarks classified as timelike (physical causal class, not Nat mass).
 ;;;    Bethe-Heitler: γ+target → e⁻+e⁺+target (recoil pair production).
 ;;;
-;;;  RESULTS: 20 proofs (VALID) + 20 refutations (VERIFIED) = 40
+;;;  RESULTS: 21 proofs (VALID) + 20 refutations (VERIFIED) = 41
 ;;;
 ;;;  Remaining simplifications: no bottom/top quarks, single L
 ;;;  (no Lₑ/Lμ/Lτ), no spin, no CKM matrix, discrete mass scale.
@@ -649,7 +649,7 @@
       (eq-bool (allowed ?Ch (tensor ?A ?B) (tensor ?C ?D)) true)
       (cms-energy ?S)
       (eq-mc (check-mass ?S (total-rest-mass (tensor ?C ?D))) mass-ok)
-      (scatter-4mom-ok (tensor ?A ?B)))
+      (scatter-4mom-ok (tensor ?A ?B) true))
     :conclusion (has (tensor ?C ?D)))
 
   ;; DECAY: 1 particle → products, channel-parameterized.
@@ -679,7 +679,7 @@
       (cms-energy ?S)
       (eq-mc (check-mass ?S (total-rest-mass (tensor ?C ?D))) mass-ok)
       (eq-bool (nat-geq ?Budget (penalty ?Ch)) true)
-      (scatter-4mom-ok (tensor ?A ?B)))
+      (scatter-4mom-ok (tensor ?A ?B) true))
     :conclusion (has-under (tensor ?C ?D) ?Budget))
 
   (rule interact-decay-under
@@ -836,24 +836,39 @@
   (judgment (eq-vk ?a ?b) :where a : VKind b : VKind)
   (rule eq-vk-refl :premises () :conclusion (eq-vk ?a ?a))
 
-  ;; scatter-4mom-ok: input resource has valid (timelike) 4-momentum.
-  ;; This is a CAUSAL-TYPE SANITY FILTER, not full 4-vector conservation.
-  ;; We rule out transitions requiring a COM frame when none exists
-  ;; (collinear massless beams).  The mass threshold (check-mass) is
-  ;; the real energy gate; scatter-4mom-ok is a necessary precondition.
-  (judgment (scatter-4mom-ok ?R) :where R : Resource)
+  ;; scatter-4mom-ok: DECIDABLE boolean gate for 4-momentum admissibility.
+  ;; Second argument is the decision: true (scatter allowed) or false
+  ;; (scatter blocked).  This is a causal-type sanity filter, not full
+  ;; 4-vector conservation.  The mass threshold (check-mass) is the real
+  ;; energy gate; scatter-4mom-ok is a necessary precondition.
+  ;;
+  ;; Scatter rules require (scatter-4mom-ok ?IN true).  Refutations
+  ;; succeed when no rule can derive the true case; the explicit false
+  ;; rules document WHY the gate blocks (collinear geometry, spacelike
+  ;; input) rather than relying on proof absence.
+  (judgment (scatter-4mom-ok ?R ?B) :where R : Resource B : Bool)
 
-  ;; If the input kind computes to timelike, we're done.
-  (rule mom-ok-timelike
+  ;; OK: input kind computes to timelike (massive beam → COM frame exists).
+  (rule sr-ok-timelike
     :premises ((eq-vk (mom-kind ?IN) timelike))
-    :conclusion (scatter-4mom-ok ?IN))
+    :conclusion (scatter-4mom-ok ?IN true))
 
-  ;; If the input kind is unknown but we have a noncollinear witness
-  ;; for this specific resource, the beams produce timelike total 4-momentum.
-  (rule mom-ok-nc
+  ;; OK: input kind is unknown + noncollinear geometry witness.
+  (rule sr-ok-nc
     :premises ((eq-vk (mom-kind ?IN) vk-unknown)
                (noncollinear-beams ?IN))
-    :conclusion (scatter-4mom-ok ?IN))
+    :conclusion (scatter-4mom-ok ?IN true))
+
+  ;; BLOCKED: input kind is unknown + collinear geometry → no COM frame.
+  (rule sr-blocked-collinear
+    :premises ((eq-vk (mom-kind ?IN) vk-unknown)
+               (collinear-beams ?IN))
+    :conclusion (scatter-4mom-ok ?IN false))
+
+  ;; BLOCKED: spacelike input → tachyonic, unphysical.
+  (rule sr-blocked-spacelike
+    :premises ((eq-vk (mom-kind ?IN) spacelike))
+    :conclusion (scatter-4mom-ok ?IN false))
 
   ;; ═════════════════════════════════════════════════════════════
   ;; §12e  RECOIL TARGET + BETHE-HEITLER VERTEX
@@ -885,6 +900,34 @@
                (tensor (tensor (particle electron) (particle positron))
                        (particle target)))
     true)
+
+  ;; ═════════════════════════════════════════════════════════════
+  ;; §12f  KIND-CONSISTENCY AUDIT
+  ;; ═════════════════════════════════════════════════════════════
+  ;;
+  ;; Since particle-kind reflects physical causal class (not derived
+  ;; from Nat rest-mass), we add a lightweight consistency check:
+  ;;   mass > 0  ⇒  kind must be timelike
+  ;;   mass = 0  ⇒  any kind is acceptable (modeling choice)
+  ;; This catches future edits that accidentally make a massive
+  ;; particle lightlike or vice versa.
+
+  (constructor is-zero-nat : (-> Nat Bool))
+  (rewrite izn-z (is-zero-nat z)      true)
+  (rewrite izn-s (is-zero-nat (s ?n)) false)
+
+  (constructor is-timelike : (-> VKind Bool))
+  (rewrite it-t (is-timelike timelike)   true)
+  (rewrite it-l (is-timelike lightlike)  false)
+  (rewrite it-s (is-timelike spacelike)  false)
+  (rewrite it-u (is-timelike vk-unknown) false)
+
+  ;; kind-consistent p = (mass=0) OR (kind=timelike)
+  ;; Computes to true for every well-configured particle.
+  (constructor kind-consistent : (-> Particle Bool))
+  (rewrite kc-def (kind-consistent ?p)
+    (or-bool (is-zero-nat (rest-mass ?p))
+             (is-timelike (particle-kind ?p))))
 )
 
 (check-theory GUTPhys)
@@ -930,7 +973,7 @@
       (eq-bool-refl)
       (assumption 2)
       (eq-mc-refl)
-      (mom-ok-nc (eq-vk-refl) (assumption 3))))
+      (sr-ok-nc (eq-vk-refl) (assumption 3))))
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
@@ -961,7 +1004,7 @@
       (eq-bool-refl)
       (assumption 2)
       (eq-mc-refl)
-      (mom-ok-timelike (eq-vk-refl))))
+      (sr-ok-timelike (eq-vk-refl))))
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
@@ -982,7 +1025,7 @@
       (eq-bool-refl)
       (assumption 1)
       (eq-mc-refl)
-      (mom-ok-timelike (eq-vk-refl))))
+      (sr-ok-timelike (eq-vk-refl))))
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
@@ -1014,7 +1057,7 @@
       (eq-bool-refl)
       (assumption 2)
       (eq-mc-refl)
-      (mom-ok-timelike (eq-vk-refl))))
+      (sr-ok-timelike (eq-vk-refl))))
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
@@ -1048,7 +1091,7 @@
       (eq-bool-refl)
       (assumption 3)
       (eq-mc-refl)
-      (mom-ok-timelike (eq-vk-refl))))
+      (sr-ok-timelike (eq-vk-refl))))
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
@@ -1079,7 +1122,7 @@
       (eq-bool-refl)
       (assumption 2)
       (eq-mc-refl)
-      (mom-ok-timelike (eq-vk-refl))))
+      (sr-ok-timelike (eq-vk-refl))))
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
@@ -1146,7 +1189,7 @@
       (eq-bool-refl)
       (assumption 1)
       (eq-mc-refl)
-      (mom-ok-timelike (eq-vk-refl))))
+      (sr-ok-timelike (eq-vk-refl))))
 
 
 ;;; 9. KAON WEAK DECAY:  K⁺ → π⁰ + e⁺ + ν  (weak decay, ΔS=1)
@@ -1495,7 +1538,7 @@
       (assumption 2)
       (eq-mc-refl)
       (eq-bool-refl)
-      (mom-ok-nc (eq-vk-refl) (assumption 3))))
+      (sr-ok-nc (eq-vk-refl) (assumption 3))))
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
@@ -1629,7 +1672,7 @@
       (eq-bool-refl)
       (assumption 2)
       (eq-mc-refl)
-      (mom-ok-nc (eq-vk-refl) (assumption 3))))
+      (sr-ok-nc (eq-vk-refl) (assumption 3))))
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
@@ -1656,7 +1699,7 @@
       (assumption 2)
       (eq-mc-refl)
       (eq-bool-refl)
-      (mom-ok-nc (eq-vk-refl) (assumption 3))))
+      (sr-ok-nc (eq-vk-refl) (assumption 3))))
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
@@ -1788,22 +1831,26 @@
       (eq-bool-refl)
       (assumption 2)
       (eq-mc-refl)
-      (mom-ok-timelike (eq-vk-refl))))
+      (sr-ok-timelike (eq-vk-refl))))
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
-;;;  38R. NO COLLINEAR PAIR PRODUCTION:  γ+γ ⊬ e⁻+e⁺  (explicit collinear)
+;;;  38R. NO COLLINEAR PAIR PRODUCTION:  γ+γ ⊬ e⁻+e⁺  (SR-only block)
 ;;; ═══════════════════════════════════════════════════════════════════
 ;;;
-;;;  Two collinear photons cannot produce a pair, even with sufficient
-;;;  energy.  We provide an EXPLICIT collinear-beams assertion (not just
-;;;  a missing witness).  mom-kind(tensor(γ,γ)) = vk-unknown.
-;;;  No rule derives scatter-4mom-ok from vk-unknown + collinear-beams
-;;;  (only noncollinear-beams would help).
+;;;  The definitive SR-only refutation.  Every other check PASSES:
+;;;    Conservation: Q=B=L=S=C=0 → 0                                ✓
+;;;    Vertex: allow-em-pair exists for γ+γ→e⁻+e⁺                   ✓
+;;;    Mass: cms(2) ≥ 1+1 = 2                                       ✓
+;;;    Free: is-free(particle photon) = true                         ✓
+;;;    Triality: t0+t0=t0 → t0+t0=t0                                ✓
+;;;  The ONLY obstruction is the SR gate:
+;;;    mom-kind(tensor(γ,γ)) = kind-add(lightlike,lightlike) = vk-unknown
+;;;    collinear-beams provided → sr-blocked-collinear fires (→ false)
+;;;    No rule produces scatter-4mom-ok(input, true).
 ;;;
-;;;  This is the SR obstruction: collinear lightlike beams have zero
-;;;  invariant mass in every frame.  Compare with proof 1 (pair-production)
-;;;  which succeeds WITH noncollinear-beams for the same beam pair.
+;;;  Compare with proof 1 (pair-production) which succeeds with
+;;;  noncollinear-beams for the identical reaction.
 
 (refute no-collinear-pair-production
   :theory GUTPhys
@@ -1838,3 +1885,49 @@
   :goal (has (tensor (tensor (particle electron) (particle positron))
                      (particle target)))
   :depth 5)
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  39. KIND-CONSISTENCY AUDIT (all 18 particles)
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  Batch verification that particle-kind is consistent with rest-mass:
+;;;    mass > 0  ⇒  kind = timelike
+;;;    mass = 0  ⇒  any kind acceptable (modeling choice)
+;;;  Each (kind-consistent P) rewrites to true; the nested and-bool
+;;;  chain reduces to true, so eq-bool-refl closes it.
+;;;
+;;;  If a future edit makes a massive particle lightlike (or vice versa),
+;;;  this proof breaks immediately.
+
+(proof kind-audit :theory GUTPhys
+  :assumptions ()
+  :goal (eq-bool
+    (and-bool (kind-consistent proton)
+    (and-bool (kind-consistent neutron)
+    (and-bool (kind-consistent electron)
+    (and-bool (kind-consistent positron)
+    (and-bool (kind-consistent neutrino)
+    (and-bool (kind-consistent antineutrino)
+    (and-bool (kind-consistent photon)
+    (and-bool (kind-consistent pion-zero)
+    (and-bool (kind-consistent kaon-plus)
+    (and-bool (kind-consistent up-quark)
+    (and-bool (kind-consistent down-quark)
+    (and-bool (kind-consistent strange-quark)
+    (and-bool (kind-consistent charm-quark)
+    (and-bool (kind-consistent anti-up)
+    (and-bool (kind-consistent anti-down)
+    (and-bool (kind-consistent anti-strange)
+    (and-bool (kind-consistent anti-charm)
+              (kind-consistent target))))))))))))))))))
+    true)
+  :derivation (eq-bool-refl))
+
+
+;;; NOTE: Collinear light-by-light (γ+γ→γ+γ) is NOT a valid SR refutation
+;;; because tensor-intro can construct has(tensor(photon,photon)) directly
+;;; from the two photon assumptions without any scatter reaction.  The
+;;; definitive SR-only refutation is 38R (collinear pair production),
+;;; where the output (e⁻+e⁺) DIFFERS from the input (γ+γ) and thus
+;;; requires an actual scatter reaction that SR can gate.
