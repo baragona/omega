@@ -75,6 +75,8 @@ pub enum OmegaError {
     AssumptionMismatch { goal: Expr },
     /// An assumption was already consumed (affine mode).
     UseAfterMove { index: usize, expr: Expr },
+    /// An assumption was not consumed (linear mode requires all assumptions used).
+    LinearUnused { index: usize, expr: Expr },
 
     // --- Metatheorem errors ---
     /// Case analysis is not exhaustive.
@@ -174,7 +176,14 @@ impl fmt::Display for OmegaError {
             OmegaError::UseAfterMove { index, expr } => {
                 write!(
                     f,
-                    "affine violation: assumption {} ({}) already consumed",
+                    "linear/affine violation: assumption {} ({}) already consumed",
+                    index, expr
+                )
+            }
+            OmegaError::LinearUnused { index, expr } => {
+                write!(
+                    f,
+                    "linear violation: assumption {} ({}) was not consumed",
                     index, expr
                 )
             }

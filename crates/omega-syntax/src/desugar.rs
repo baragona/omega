@@ -298,10 +298,10 @@ fn desugar_theory(items: &[Sexp], span: Span) -> Result<Command> {
                 theory.add_binding_spec(bs);
             }
             "context-mode" => {
-                // (context-mode affine) or (context-mode structural)
+                // (context-mode affine) or (context-mode structural) or (context-mode linear)
                 if decl.len() != 2 {
                     return Err(DesugarError {
-                        message: "context-mode expects exactly one argument: affine or structural".to_string(),
+                        message: "context-mode expects exactly one argument: affine, structural, or linear".to_string(),
                         span: decl[0].span(),
                     });
                 }
@@ -309,9 +309,10 @@ fn desugar_theory(items: &[Sexp], span: Span) -> Result<Command> {
                 match mode {
                     "affine" => theory.set_context_mode(ContextMode::Affine),
                     "structural" => theory.set_context_mode(ContextMode::Structural),
+                    "linear" => theory.set_context_mode(ContextMode::Linear),
                     _ => {
                         return Err(DesugarError {
-                            message: format!("unknown context mode: {} (expected affine or structural)", mode),
+                            message: format!("unknown context mode: {} (expected affine, structural, or linear)", mode),
                             span: decl[1].span(),
                         });
                     }

@@ -16,6 +16,7 @@ use omega_core::derivation::normalize_expr;
 use omega_core::expr::Expr;
 use omega_core::judgment::RewriteRule;
 use omega_core::pattern;
+use omega_core::pattern::Substitution;
 use omega_core::theory::{ContextMode, Theory};
 
 /// Result of an exhaustive refutation attempt.
@@ -46,7 +47,9 @@ pub fn exhaustive_refute(
     max_depth: usize,
 ) -> RefuteResult {
     assert!(assumptions.len() <= 64, "refute supports at most 64 assumptions");
-    let affine = theory.context_mode() == ContextMode::Affine;
+    let mode = theory.context_mode();
+    let track_usage = matches!(mode, ContextMode::Affine | ContextMode::Linear);
+    let linear = mode == ContextMode::Linear;
     let rewrites = theory.rewrites();
     let mut budget = BUDGET;
 
@@ -54,11 +57,20 @@ pub fn exhaustive_refute(
     let norm_assumptions: Vec<Expr> = assumptions.iter().map(|a| normalize(a, rewrites)).collect();
     let norm_goal = normalize(goal, rewrites);
 
+    // Bitmask of all base assumptions (for linear mode completeness check)
+    let all_consumed = if norm_assumptions.len() < 64 {
+        (1u64 << norm_assumptions.len()) - 1
+    } else {
+        u64::MAX
+    };
+
     if can_derive(
         theory,
         &norm_assumptions,
         0u64,
-        affine,
+        track_usage,
+        linear,
+        all_consumed,
         &norm_goal,
         max_depth,
         &mut budget,
@@ -96,15 +108,173 @@ fn has_metas(expr: &Expr) -> bool {
     }
 }
 
+/// Merge two substitutions. Returns None if they conflict (same key, different value).
+fn merge_subst(a: &Substitution, b: &Substitution) -> Option<Substitution> {
+    let mut merged = a.clone();
+    for (k, v) in b {
+        if let Some(existing) = merged.get(k) {
+            if existing != v {
+                return None;
+            }
+        } else {
+            merged.insert(k.clone(), v.clone());
+        }
+    }
+    Some(merged)
+}
+
+/// Resolve meta-bearing premises by matching them against assumptions or zero-premise rules.
+///
+/// `raw_premises`: original premises from the rule (before any substitution).
+/// `base_subst`: substitution from matching the rule's conclusion against the goal.
+/// `meta_indices`: indices of premises that still have metas after applying base_subst.
+/// `step`: current index into meta_indices.
+/// `extra_subst`: bindings accumulated during resolution (merged with base_subst at the end).
+/// `resolved`: bitmask of premise indices resolved by assumption matching.
+///
+/// When all meta-bearing premises are resolved, calls `on_done(extra_subst, consumed, resolved)`.
+fn resolve_meta_step(
+    theory: &Theory,
+    raw_premises: &[Expr],
+    base_subst: &Substitution,
+    meta_indices: &[usize],
+    step: usize,
+    assumptions: &[Expr],
+    consumed: u64,
+    track_usage: bool,
+    extra_subst: &Substitution,
+    resolved: u64,
+    rewrites: &[RewriteRule],
+    budget: &mut usize,
+    on_done: &dyn Fn(&Substitution, u64, u64, &mut usize) -> bool,
+) -> bool {
+    if *budget == 0 {
+        return false;
+    }
+    *budget -= 1;
+
+    if step >= meta_indices.len() {
+        return on_done(extra_subst, consumed, resolved, budget);
+    }
+
+    let pidx = meta_indices[step];
+
+    // Apply base_subst + extra_subst to get current premise
+    let premise = apply_subst_norm(
+        &apply_subst(&raw_premises[pidx], base_subst),
+        extra_subst,
+        rewrites,
+    );
+
+    if !has_metas(&premise) {
+        // Already resolved by earlier substitutions — still needs derivation, not resolved by assumption
+        return resolve_meta_step(
+            theory, raw_premises, base_subst, meta_indices, step + 1,
+            assumptions, consumed, track_usage, extra_subst, resolved,
+            rewrites, budget, on_done,
+        );
+    }
+
+    // Try matching against each unconsumed assumption
+    for i in 0..assumptions.len().min(64) {
+        if *budget == 0 {
+            return false;
+        }
+        if track_usage && (consumed & (1u64 << i)) != 0 {
+            continue;
+        }
+
+        if let Ok(new_bindings) = pattern::match_expr(&premise, &assumptions[i]) {
+            if let Some(merged) = merge_subst(extra_subst, &new_bindings) {
+                let new_consumed = if track_usage {
+                    consumed | (1u64 << i)
+                } else {
+                    consumed
+                };
+                let new_resolved = resolved | (1u64 << pidx);
+
+                if resolve_meta_step(
+                    theory, raw_premises, base_subst, meta_indices, step + 1,
+                    assumptions, new_consumed, track_usage, &merged, new_resolved,
+                    rewrites, budget, on_done,
+                ) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    // Try zero-premise rules
+    for rule in theory.rules() {
+        if *budget == 0 {
+            return false;
+        }
+        if !rule.premises().is_empty() {
+            continue;
+        }
+
+        if let Ok(new_bindings) = pattern::match_expr(&premise, rule.conclusion()) {
+            if let Some(merged) = merge_subst(extra_subst, &new_bindings) {
+                let new_resolved = resolved | (1u64 << pidx);
+
+                if resolve_meta_step(
+                    theory, raw_premises, base_subst, meta_indices, step + 1,
+                    assumptions, consumed, track_usage, &merged, new_resolved,
+                    rewrites, budget, on_done,
+                ) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
+/// Build resolved premises and extensions from a completed meta-resolution.
+/// Returns (remaining_premises, remaining_extensions) excluding resolved premises.
+fn build_resolved_premises(
+    rule_premises: &[Expr],
+    full_subst: &Substitution,
+    resolved_mask: u64,
+    context_extensions: &[(usize, Expr)],
+    rewrites: &[RewriteRule],
+) -> (Vec<Expr>, Vec<Vec<Expr>>) {
+    let mut remaining_premises = Vec::new();
+    let mut remaining_extensions = Vec::new();
+
+    for (i, p) in rule_premises.iter().enumerate() {
+        if resolved_mask & (1u64 << i) != 0 {
+            continue; // Already satisfied by assumption matching
+        }
+        remaining_premises.push(apply_subst_norm(p, full_subst, rewrites));
+        remaining_extensions.push(
+            context_extensions
+                .iter()
+                .filter(|(ext_idx, _)| *ext_idx == i)
+                .map(|(_, ext)| apply_subst_norm(ext, full_subst, rewrites))
+                .collect(),
+        );
+    }
+
+    (remaining_premises, remaining_extensions)
+}
+
 /// Try to derive `goal` from `assumptions` with the given consumed bitmask.
 /// Returns true if ANY proof exists (the refutation fails).
 ///
 /// Both `goal` and `assumptions` are expected to be pre-normalized.
+///
+/// In linear mode (`linear=true`), a proof is only valid if ALL base
+/// assumptions are consumed. `all_consumed` is the bitmask of all base
+/// assumption bits that must be set.
 fn can_derive(
     theory: &Theory,
     assumptions: &[Expr],
     consumed: u64,
-    affine: bool,
+    track_usage: bool,
+    linear: bool,
+    all_consumed: u64,
     goal: &Expr,
     depth: usize,
     budget: &mut usize,
@@ -116,10 +286,19 @@ fn can_derive(
 
     // 1. Try matching each available assumption against the goal
     for i in 0..assumptions.len() {
-        if affine && (consumed & (1u64 << i)) != 0 {
+        if track_usage && (consumed & (1u64 << i)) != 0 {
             continue;
         }
         if &assumptions[i] == goal {
+            let new_consumed = if track_usage {
+                consumed | (1u64 << i)
+            } else {
+                consumed
+            };
+            // In linear mode, all base assumptions must be consumed
+            if linear && (new_consumed & all_consumed) != all_consumed {
+                continue; // Not all consumed — not a valid linear proof
+            }
             return true; // Proof found via assumption
         }
     }
@@ -140,8 +319,60 @@ fn can_derive(
                 .map(|p| apply_subst_norm(p, &subst, rewrites))
                 .collect();
 
-            // Skip if any premise still has unresolved metas
             if premises.iter().any(|p| has_metas(p)) {
+                // Meta-resolution: try matching meta-bearing premises against assumptions
+                let meta_indices: Vec<usize> = premises
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, p)| has_metas(p))
+                    .map(|(i, _)| i)
+                    .collect();
+
+                let empty_extra = Substitution::new();
+
+                if resolve_meta_step(
+                    theory,
+                    rule.premises(),
+                    &subst,
+                    &meta_indices,
+                    0,
+                    assumptions,
+                    consumed,
+                    track_usage,
+                    &empty_extra,
+                    0u64,
+                    rewrites,
+                    budget,
+                    &|extra_subst, resolved_consumed, resolved_mask, budget| {
+                        let full_subst = merge_subst(&subst, extra_subst)
+                            .unwrap_or_else(|| subst.clone());
+                        let (rem_premises, rem_extensions) = build_resolved_premises(
+                            rule.premises(),
+                            &full_subst,
+                            resolved_mask,
+                            rule.context_extensions(),
+                            rewrites,
+                        );
+                        if rem_premises.iter().any(|p| has_metas(p)) {
+                            return false;
+                        }
+                        can_derive_all(
+                            theory,
+                            assumptions,
+                            resolved_consumed,
+                            track_usage,
+                            linear,
+                            all_consumed,
+                            &rem_premises,
+                            &rem_extensions,
+                            0,
+                            depth - 1,
+                            budget,
+                        )
+                    },
+                ) {
+                    return true;
+                }
                 continue;
             }
 
@@ -161,7 +392,9 @@ fn can_derive(
                 theory,
                 assumptions,
                 consumed,
-                affine,
+                track_usage,
+                linear,
+                all_consumed,
                 &premises,
                 &extensions,
                 0,
@@ -186,7 +419,9 @@ fn can_derive_all(
     theory: &Theory,
     assumptions: &[Expr],
     consumed: u64,
-    affine: bool,
+    track_usage: bool,
+    linear: bool,
+    all_consumed: u64,
     premises: &[Expr],
     extensions: &[Vec<Expr>],
     idx: usize,
@@ -194,6 +429,10 @@ fn can_derive_all(
     budget: &mut usize,
 ) -> bool {
     if idx >= premises.len() {
+        // In linear mode, check that all base assumptions are consumed
+        if linear && (consumed & all_consumed) != all_consumed {
+            return false;
+        }
         return true; // All premises derived
     }
 
@@ -206,7 +445,7 @@ fn can_derive_all(
             theory,
             assumptions,
             consumed,
-            affine,
+            track_usage,
             goal,
             depth,
             budget,
@@ -215,7 +454,9 @@ fn can_derive_all(
                     theory,
                     assumptions,
                     new_consumed,
-                    affine,
+                    track_usage,
+                    linear,
+                    all_consumed,
                     premises,
                     extensions,
                     idx + 1,
@@ -231,7 +472,7 @@ fn can_derive_all(
             theory,
             &extended,
             consumed,
-            affine,
+            track_usage,
             goal,
             depth,
             budget,
@@ -246,7 +487,9 @@ fn can_derive_all(
                     theory,
                     assumptions,
                     base_consumed,
-                    affine,
+                    track_usage,
+                    linear,
+                    all_consumed,
                     premises,
                     extensions,
                     idx + 1,
@@ -266,7 +509,7 @@ fn enumerate_proofs(
     theory: &Theory,
     assumptions: &[Expr],
     consumed: u64,
-    affine: bool,
+    track_usage: bool,
     goal: &Expr,
     depth: usize,
     budget: &mut usize,
@@ -279,11 +522,11 @@ fn enumerate_proofs(
 
     // 1. Try matching each available assumption
     for i in 0..assumptions.len().min(64) {
-        if affine && (consumed & (1u64 << i)) != 0 {
+        if track_usage && (consumed & (1u64 << i)) != 0 {
             continue;
         }
         if &assumptions[i] == goal {
-            let new_consumed = if affine {
+            let new_consumed = if track_usage {
                 consumed | (1u64 << i)
             } else {
                 consumed
@@ -314,6 +557,61 @@ fn enumerate_proofs(
                 .collect();
 
             if premises.iter().any(|p| has_metas(p)) {
+                // Meta-resolution path
+                let meta_indices: Vec<usize> = premises
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, p)| has_metas(p))
+                    .map(|(i, _)| i)
+                    .collect();
+
+                let empty_extra = Substitution::new();
+
+                if resolve_meta_step(
+                    theory,
+                    rule.premises(),
+                    &subst,
+                    &meta_indices,
+                    0,
+                    assumptions,
+                    consumed,
+                    track_usage,
+                    &empty_extra,
+                    0u64,
+                    rewrites,
+                    budget,
+                    &|extra_subst, resolved_consumed, resolved_mask, budget| {
+                        let full_subst = merge_subst(&subst, extra_subst)
+                            .unwrap_or_else(|| subst.clone());
+                        let (rem_premises, rem_extensions) = build_resolved_premises(
+                            rule.premises(),
+                            &full_subst,
+                            resolved_mask,
+                            rule.context_extensions(),
+                            rewrites,
+                        );
+                        if rem_premises.iter().any(|p| has_metas(p)) {
+                            return false;
+                        }
+                        if rem_premises.is_empty() {
+                            return on_success(resolved_consumed, budget);
+                        }
+                        enumerate_premises_then(
+                            theory,
+                            assumptions,
+                            resolved_consumed,
+                            track_usage,
+                            &rem_premises,
+                            &rem_extensions,
+                            0,
+                            depth - 1,
+                            budget,
+                            on_success,
+                        )
+                    },
+                ) {
+                    return true;
+                }
                 continue;
             }
 
@@ -339,7 +637,7 @@ fn enumerate_proofs(
                 theory,
                 assumptions,
                 consumed,
-                affine,
+                track_usage,
                 &premises,
                 &extensions,
                 0,
@@ -360,7 +658,7 @@ fn enumerate_premises_then(
     theory: &Theory,
     assumptions: &[Expr],
     consumed: u64,
-    affine: bool,
+    track_usage: bool,
     premises: &[Expr],
     extensions: &[Vec<Expr>],
     idx: usize,
@@ -380,7 +678,7 @@ fn enumerate_premises_then(
             theory,
             assumptions,
             consumed,
-            affine,
+            track_usage,
             goal,
             depth,
             budget,
@@ -389,7 +687,7 @@ fn enumerate_premises_then(
                     theory,
                     assumptions,
                     new_consumed,
-                    affine,
+                    track_usage,
                     premises,
                     extensions,
                     idx + 1,
@@ -406,7 +704,7 @@ fn enumerate_premises_then(
             theory,
             &extended,
             consumed,
-            affine,
+            track_usage,
             goal,
             depth,
             budget,
@@ -421,7 +719,7 @@ fn enumerate_premises_then(
                     theory,
                     assumptions,
                     base_consumed,
-                    affine,
+                    track_usage,
                     premises,
                     extensions,
                     idx + 1,

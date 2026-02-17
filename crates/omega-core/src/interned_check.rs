@@ -113,7 +113,20 @@ impl InternedTheory {
             fresh_counter: &mut self.fresh_counter,
             consumed: &mut consumed,
         };
-        check_inner(&mut state, h_goal, derivation, &h_assumptions)
+        check_inner(&mut state, h_goal, derivation, &h_assumptions)?;
+
+        // Linear mode: every assumption must be used exactly once
+        if self.context_mode == ContextMode::Linear {
+            for idx in 0..h_assumptions.len() {
+                if !consumed.contains(&idx) {
+                    return Err(OmegaError::LinearUnused {
+                        index: idx,
+                        expr: self.arena.to_expr(h_assumptions[idx]),
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Check a derivation with a pre-interned goal and assumptions.
@@ -137,7 +150,20 @@ impl InternedTheory {
             fresh_counter: &mut self.fresh_counter,
             consumed: &mut consumed,
         };
-        check_inner(&mut state, h_goal, derivation, h_assumptions)
+        check_inner(&mut state, h_goal, derivation, h_assumptions)?;
+
+        // Linear mode: every assumption must be used exactly once
+        if self.context_mode == ContextMode::Linear {
+            for idx in 0..h_assumptions.len() {
+                if !consumed.contains(&idx) {
+                    return Err(OmegaError::LinearUnused {
+                        index: idx,
+                        expr: self.arena.to_expr(h_assumptions[idx]),
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Mutable access to the arena for direct term construction.
@@ -400,20 +426,20 @@ fn check_inner(
     derivation: &Derivation,
     assumptions: &[HExpr],
 ) -> Result<()> {
-    let affine = state.context_mode == ContextMode::Affine;
+    let track_usage = matches!(state.context_mode, ContextMode::Affine | ContextMode::Linear);
     let mut fuel = state.reduce_fuel;
     match derivation {
         Derivation::Assumption => {
             let goal_resolved = apply_fixpoint(state.arena, goal, state.global_subst);
             let goal_norm = normalize(state.arena, state.rewrites, state.reduce_cache, goal_resolved, &mut fuel);
 
-            // In affine mode, iterate from the end (most recent first),
+            // In affine/linear mode, iterate from the end (most recent first),
             // skipping consumed entries — this gives shadowing for free.
             for idx in (0..assumptions.len()).rev() {
-                if affine && state.consumed.contains(&idx) {
+                if track_usage && state.consumed.contains(&idx) {
                     continue;
                 }
-                if try_match_assumption(state, goal_norm, assumptions[idx], idx, affine) {
+                if try_match_assumption(state, goal_norm, assumptions[idx], idx, track_usage) {
                     return Ok(());
                 }
             }
@@ -429,7 +455,7 @@ fn check_inner(
                     count: assumptions.len(),
                 });
             }
-            if affine && state.consumed.contains(idx) {
+            if track_usage && state.consumed.contains(idx) {
                 return Err(OmegaError::UseAfterMove {
                     index: *idx,
                     expr: state.arena.to_expr(assumptions[*idx]),
@@ -438,7 +464,7 @@ fn check_inner(
             let goal_resolved = apply_fixpoint(state.arena, goal, state.global_subst);
             let goal_norm = normalize(state.arena, state.rewrites, state.reduce_cache, goal_resolved, &mut fuel);
 
-            if try_match_assumption(state, goal_norm, assumptions[*idx], *idx, affine) {
+            if try_match_assumption(state, goal_norm, assumptions[*idx], *idx, track_usage) {
                 return Ok(());
             }
             let assumption_resolved = apply_fixpoint(state.arena, assumptions[*idx], state.global_subst);

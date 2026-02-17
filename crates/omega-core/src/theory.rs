@@ -46,11 +46,13 @@ pub struct Import {
 ///
 /// - **Structural**: Contraction allowed — assumptions can be reused freely.
 /// - **Affine**: Contraction banned — each assumption can be used at most once.
+/// - **Linear**: Each assumption must be used exactly once (no contraction, no weakening).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ContextMode {
     #[default]
     Structural,
     Affine,
+    Linear,
 }
 
 /// A validated, immutable theory. Created by [`TheoryBuilder::build()`].
@@ -430,7 +432,7 @@ impl Theory {
         for rw in &self.rewrites {
             rw.name().hash(&mut hasher);
         }
-        matches!(self.context_mode, ContextMode::Affine).hash(&mut hasher);
+        (self.context_mode as u8).hash(&mut hasher);
         self.content_hash = hasher.finish();
     }
 }

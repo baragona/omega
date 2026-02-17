@@ -1,0 +1,549 @@
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  RevPhys: Reversible Physics — The Foundations of Computation
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  A resource theory for reversible computing grounded in:
+;;;    - LINEAR logic (every resource used exactly once)
+;;;    - Bijective transformations (CNOT + RCNOT gates)
+;;;    - Conservation of information (Liouville / unitarity)
+;;;
+;;;  Key insight: this is a MORE FUNDAMENTAL layer than PhysRes.
+;;;    PhysRes (affine) models thermodynamics: fuel, waste, erasure.
+;;;    RevPhys (linear) models unitarity: information is conserved.
+;;;
+;;;  The thermodynamic phenomena — Landauer erasure, measurement,
+;;;  waste — are DERIVED here as emergent behavior when you split
+;;;  the universe into "system" and "environment."
+;;;
+;;;    Old system: "Erasure costs fuel." (Axiom)
+;;;    This system: "Erasure is impossible. What looks like erasure
+;;;                  is moving entropy to the environment." (Theorem)
+;;;
+;;;  Linear mode is STRONGER than affine:
+;;;    Affine: failure = "ran out of resources" (at most once)
+;;;    Linear: failure = "ran out" OR "too many left over" (exactly once)
+;;; ═══════════════════════════════════════════════════════════════════
+
+(theory RevPhys
+  ;; ═══════════════════════════════════════════════════════════════
+  ;; LINEAR MODE: strict resource accounting.
+  ;; Every assumption must be used EXACTLY once.
+  ;; This is the computational equivalent of unitarity:
+  ;; no bit is created or destroyed, only transformed.
+  ;; ═══════════════════════════════════════════════════════════════
+  (context-mode linear)
+
+  ;; --- Bit values ---
+  (sort Bit)
+  (constructor z : Bit)   ;; Zero (known state, "cold")
+  (constructor u : Bit)   ;; One/Unknown (carries information, "hot")
+
+  ;; --- Resources ---
+  (sort Resource)
+  (constructor bit : (-> Bit Resource))
+  (constructor tensor : (-> Resource Resource Resource))
+
+  ;; ═══════════════════════════════════════════════════════════════
+  ;; JUDGMENTS
+  ;; ═══════════════════════════════════════════════════════════════
+  (judgment (has ?R) :where R : Resource)
+
+  ;; ═══════════════════════════════════════════════════════════════
+  ;; STRUCTURAL RULES (Monoidal)
+  ;; ═══════════════════════════════════════════════════════════════
+
+  ;; Tensor introduction: combine two resources
+  (rule tensor-intro
+    :premises ((has ?A) (has ?B))
+    :conclusion (has (tensor ?A ?B)))
+
+  ;; Tensor elimination: decompose a composite resource
+  ;;   Γ ⊢ A⊗B    Δ,A,B ⊢ C
+  ;;   ────────────────────────
+  ;;         Γ,Δ ⊢ C
+  (rule tensor-elim
+    :premises ((has (tensor ?A ?B)) (has ?C))
+    :conclusion (has ?C)
+    :context ((1 (has ?A)) (1 (has ?B))))
+
+  ;; ═══════════════════════════════════════════════════════════════
+  ;; CNOT: Controlled-NOT (first bit = control, second bit = target)
+  ;;
+  ;; CNOT(control, target) = (control, target XOR control)
+  ;;
+  ;;   (0, 0) → (0, 0)   (0, 1) → (0, 1)
+  ;;   (1, 0) → (1, 1)   (1, 1) → (1, 0)
+  ;;
+  ;; A bijection on {0,1}². Self-inverse: CNOT(CNOT(c,t)) = (c,t).
+  ;; ═══════════════════════════════════════════════════════════════
+
+  (rule cnot-zz
+    :premises ((has (tensor (bit z) (bit z))))
+    :conclusion (has (tensor (bit z) (bit z))))
+
+  (rule cnot-zu
+    :premises ((has (tensor (bit z) (bit u))))
+    :conclusion (has (tensor (bit z) (bit u))))
+
+  (rule cnot-uz
+    :premises ((has (tensor (bit u) (bit z))))
+    :conclusion (has (tensor (bit u) (bit u))))
+
+  (rule cnot-uu
+    :premises ((has (tensor (bit u) (bit u))))
+    :conclusion (has (tensor (bit u) (bit z))))
+
+  ;; ═══════════════════════════════════════════════════════════════
+  ;; RCNOT: Reverse Controlled-NOT (second bit = control, first = target)
+  ;;
+  ;; RCNOT(target, control) = (target XOR control, control)
+  ;;
+  ;;   (0, 0) → (0, 0)   (1, 0) → (1, 0)
+  ;;   (0, 1) → (1, 1)   (1, 1) → (0, 1)
+  ;;
+  ;; Same gate, different wiring. Together with CNOT, enables SWAP:
+  ;;   SWAP(a,b) = CNOT(a,b); RCNOT(a,b); CNOT(a,b)
+  ;; ═══════════════════════════════════════════════════════════════
+
+  (rule rcnot-zz
+    :premises ((has (tensor (bit z) (bit z))))
+    :conclusion (has (tensor (bit z) (bit z))))
+
+  (rule rcnot-uz
+    :premises ((has (tensor (bit u) (bit z))))
+    :conclusion (has (tensor (bit u) (bit z))))
+
+  (rule rcnot-zu
+    :premises ((has (tensor (bit z) (bit u))))
+    :conclusion (has (tensor (bit u) (bit u))))
+
+  (rule rcnot-uu
+    :premises ((has (tensor (bit u) (bit u))))
+    :conclusion (has (tensor (bit z) (bit u))))
+)
+
+(check-theory RevPhys)
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  ╔════════════════════════════════════════════════════════════╗
+;;;  ║  PART I: THE REVERSIBLE KERNEL — Impossibility Results   ║
+;;;  ╚════════════════════════════════════════════════════════════╝
+;;; ═══════════════════════════════════════════════════════════════════
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  1. NO-RESET (Liouville's Theorem)
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  A single bit cannot be reset from u to z without auxiliary resources.
+;;;
+;;;  Physics: Liouville's theorem says phase space volume is conserved.
+;;;  u represents information (2 possible states); z is the null state.
+;;;  No bijection maps 2 states to 1.
+
+(refute no-isolated-reset
+  :theory RevPhys
+  :assumptions ((has (bit u)))
+  :goal (has (bit z))
+  :depth 5)
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  2. NO-DISCARD (Linear Conservation)
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  Even when the goal IS available, unconsumed resources block it.
+;;;
+;;;    Affine:  bit(u), bit(z) ⊢ bit(z)    ✓  (discard bit(u))
+;;;    Linear:  bit(u), bit(z) ⊢ bit(z)    ✗  (bit(u) not consumed!)
+;;;
+;;;  This is the key difference. You can't throw away information.
+
+(refute no-discard
+  :theory RevPhys
+  :assumptions ((has (bit u)) (has (bit z)))
+  :goal (has (bit z))
+  :depth 3)
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  3. NO-CREATE (Conservation of Information)
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  One bit cannot become two bits. Even with all gates and tensor
+;;;  operations, a single bit lacks the ancilla needed for copying.
+;;;  This IS the No-Cloning theorem in the reversible setting.
+
+(refute no-create
+  :theory RevPhys
+  :assumptions ((has (bit u)))
+  :goal (has (tensor (bit u) (bit u)))
+  :depth 5)
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  4. NO-COOLING (Second Law of Thermodynamics)
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  Two hot bits cannot become two cold bits.  No combination of
+;;;  CNOT, RCNOT, tensor-intro/elim can map (u,u) → (z,z).
+;;;  Total information is conserved: two bits of entropy in,
+;;;  two bits of entropy out.
+
+(refute no-cooling
+  :theory RevPhys
+  :assumptions ((has (tensor (bit u) (bit u))))
+  :goal (has (tensor (bit z) (bit z)))
+  :depth 5)
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  ╔════════════════════════════════════════════════════════════╗
+;;;  ║  PART II: THE REVERSIBLE KERNEL — Constructive Proofs    ║
+;;;  ╚════════════════════════════════════════════════════════════╝
+;;; ═══════════════════════════════════════════════════════════════════
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  5. FAN-OUT (Copying with an Ancilla)
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  You CAN copy a bit — if you provide a clean zero (ancilla).
+;;;
+;;;  This replaces PhysRes's !-comonad: no "classical modality"
+;;;  needed — just supply blank paper and CNOT.  Every photocopy
+;;;  machine needs blank paper.  The ancilla IS the hidden cost
+;;;  that PhysRes's "free copying" was implicitly paying.
+
+(proof fan-out :theory RevPhys
+  :assumptions ((has (bit u)) (has (bit z)))
+  :goal (has (tensor (bit u) (bit u)))
+  :derivation (cnot-uz (tensor-intro (assumption) (assumption))))
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  6. CNOT IS SELF-INVERSE (Involution)
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  CNOT(CNOT(u,z)) = CNOT(u,u) = (u,z).
+;;;  Every reversible gate can be undone by running it again.
+;;;  This is what makes uncomputing possible.
+
+(proof cnot-involution :theory RevPhys
+  :assumptions ((has (tensor (bit u) (bit z))))
+  :goal (has (tensor (bit u) (bit z)))
+  :derivation (cnot-uu (cnot-uz (assumption))))
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  7. CONDITIONAL RESET (Information Transfer)
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  CNOT(u,u) → (u,z): the target bit is "reset," but the
+;;;  information wasn't destroyed — it was absorbed by the control.
+
+(proof conditional-reset :theory RevPhys
+  :assumptions ((has (bit u)) (has (bit u)))
+  :goal (has (tensor (bit u) (bit z)))
+  :derivation (cnot-uu (tensor-intro (assumption) (assumption))))
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  8. BENNETT'S TRICK (Un-Computing — Zero Garbage)
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  Compute → Copy result → Uncompute.  Uses only CNOT (no RCNOT).
+;;;
+;;;    Start:  x=u, a=z, o=z   (input, ancilla, output register)
+;;;      1. Compute:   CNOT(x, a) → (u, u)
+;;;      2. Copy out:  CNOT(a, o) → (u, u)
+;;;      3. Uncompute: CNOT(x, a) → (u, z)    ancilla cleaned!
+;;;    End:    x=u, a=z, o=u
+;;;
+;;;  Net: x, 0, 0 → x, 0, f(x) with ZERO garbage.
+;;;  The ancilla is borrowed and returned — a catalyst.
+;;;
+;;;  This is how reversible computers avoid Landauer's heat:
+;;;  no information erased, no energy dissipated.
+
+(proof bennett-trick :theory RevPhys
+  :assumptions (
+    (has (bit u))         ;; x: input
+    (has (bit z))         ;; a: ancilla
+    (has (bit z)))        ;; o: output register
+  :goal (has (tensor (bit u) (tensor (bit z) (bit u))))
+  :derivation
+    ;; Step 1: CNOT(x, a) → (u, u)
+    (tensor-elim
+      (cnot-uz (tensor-intro (assumption 0) (assumption 1)))
+
+      ;; Step 2: CNOT(copy, o) → (u, u)
+      (tensor-elim
+        (cnot-uz (tensor-intro (assumption) (assumption 2)))
+
+        ;; Step 3: CNOT(x, copy) → (u, z)  [uncompute!]
+        (tensor-elim
+          (cnot-uu (tensor-intro (assumption) (assumption)))
+
+          ;; Assemble: (x, (clean-a, output))
+          (tensor-intro (assumption)
+            (tensor-intro (assumption) (assumption)))))))
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  9. SWAP via CNOT + RCNOT
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  SWAP(a,b) exchanges two bits. Built from CNOT + RCNOT:
+;;;    SWAP(u,z): CNOT(u,z)→(u,u), RCNOT(u,u)→(z,u)
+;;;    SWAP(z,u): RCNOT(z,u)→(u,u), CNOT(u,u)→(u,z)
+;;;
+;;;  This is the primitive that enables Landauer erasure and
+;;;  teleportation — both are just SWAP with different names.
+
+(proof swap-uz :theory RevPhys
+  :assumptions ((has (tensor (bit u) (bit z))))
+  :goal (has (tensor (bit z) (bit u)))
+  :derivation (rcnot-uu (cnot-uz (assumption))))
+
+(proof swap-zu :theory RevPhys
+  :assumptions ((has (tensor (bit z) (bit u))))
+  :goal (has (tensor (bit u) (bit z)))
+  :derivation (cnot-uu (rcnot-zu (assumption))))
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  ╔════════════════════════════════════════════════════════════╗
+;;;  ║  PART III: DERIVED THERMODYNAMICS                        ║
+;;;  ║  How PhysRes emerges from RevPhys                        ║
+;;;  ╚════════════════════════════════════════════════════════════╝
+;;;
+;;;  The key insight: thermodynamics is what happens when you split
+;;;  the universe into "system" and "environment" and lose track
+;;;  of the environment's state.
+;;;
+;;;    Erasure      = SWAP(system, environment)
+;;;    Measurement  = CNOT(system, observer)     [= fan-out]
+;;;    Waste        = bits you've lost track of
+;;;    Fuel         = clean bits from the environment
+;;;
+;;;  None of these are fundamental. They all reduce to reversible
+;;;  bit operations + the system/environment split.
+;;; ═══════════════════════════════════════════════════════════════════
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  10. LANDAUER ERASURE (Entropy Transfer to Environment)
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  "To erase 1 bit, you must increase the entropy of the
+;;;   environment by 1 bit."  — Rolf Landauer, 1961
+;;;
+;;;  In RevPhys, erasure is a SWAP: the system's hot bit (u) is
+;;;  exchanged with the environment's cold bit (z).
+;;;
+;;;  Input:  System(u) + Environment(z)
+;;;  Output: System(z) + Environment(u)
+;;;
+;;;  The information isn't destroyed — it's dumped into the
+;;;  environment. The system is "reset" but the universe's total
+;;;  information is conserved. The environment got dirtier.
+;;;
+;;;  PhysRes encoded this as: erase(!A, fuel) → waste
+;;;  RevPhys reveals: there is no "waste." There is only
+;;;  environment bits that now carry information.
+
+(proof landauer-erasure :theory RevPhys
+  :assumptions (
+    (has (bit u))         ;; System: hot bit (information to "erase")
+    (has (bit z)))        ;; Environment: cold bit ("fuel" in PhysRes terms)
+  :goal (has (tensor (bit z) (bit u)))
+  ;;     System is now cold   Environment is now hot ("waste")
+  :derivation (rcnot-uu (cnot-uz (tensor-intro (assumption) (assumption)))))
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  11. MEASUREMENT (Von Neumann Pre-Measurement)
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  Measurement = CNOT(system, observer).  The observer's state
+;;;  becomes correlated with the system.  Structurally identical
+;;;  to fan-out (Theorem 5) — different physical interpretation.
+;;;
+;;;  In PhysRes, this was:  qalt + fuel → either + waste
+;;;  In RevPhys:            system(u) + observer(z) → system(u) + observer(u)
+;;;
+;;;  Where is the "collapse"?  There IS no collapse in unitary QM.
+;;;  The system and observer become entangled.  What looks like
+;;;  "collapse" is tracing out the environment's degrees of freedom.
+;;;
+;;;  The measurement outcome (observer = u) IS the classical record.
+;;;  No !-comonad needed — the observer IS the record.
+
+(proof measurement :theory RevPhys
+  :assumptions (
+    (has (bit u))         ;; System (unknown state)
+    (has (bit z)))        ;; Observer (clean detector)
+  :goal (has (tensor (bit u) (bit u)))
+  ;;     System preserved,  Observer now records the state
+  :derivation (cnot-uz (tensor-intro (assumption) (assumption))))
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  12. MAXWELL'S DEMON — Full Measurement + Erasure Cycle
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  The demon measures a system, then erases its own memory.
+;;;
+;;;  Protocol:
+;;;    1. Measure:  CNOT(system, demon)   → (u, u)
+;;;    2. Erase:    SWAP(demon, env)      → demon(z), env(u)
+;;;
+;;;  Input:  System(u) + Demon(z) + Environment(z)
+;;;  Output: System(u) + Demon(z) + Environment(u)
+;;;
+;;;  The system is preserved. The demon's memory is clean (ready for
+;;;  another measurement). But the environment absorbed the entropy.
+;;;
+;;;  This IS the exorcism of Maxwell's Demon:
+;;;    - Measuring is free (CNOT costs nothing)
+;;;    - Erasing the measurement costs exactly 1 bit of environment
+;;;    - Total entropy: conserved (environment gets hotter)
+;;;
+;;;  PhysRes needed explicit fuel + waste rules for this.
+;;;  RevPhys derives it from CNOT + SWAP.
+
+(proof maxwell-demon :theory RevPhys
+  :assumptions (
+    (has (bit u))         ;; System (particle to measure)
+    (has (bit z))         ;; Demon (memory, initially clean)
+    (has (bit z)))        ;; Environment (cold reservoir)
+  :goal (has (tensor (bit u) (tensor (bit z) (bit u))))
+  ;;     System preserved,   Demon clean,     Env heated
+  :derivation
+    ;; Step 1: CNOT(system, demon) → (u, u)  [measurement]
+    (tensor-elim
+      (cnot-uz (tensor-intro (assumption 0) (assumption 1)))
+
+      ;; Context: [env: bit(z)] ++ [sys: bit(u), demon: bit(u)]
+      ;; Step 2: SWAP(demon, env) → (z, u)  [erasure]
+      (tensor-intro
+        (assumption)            ;; sys preserved (bit u)
+        (rcnot-uu (cnot-uz (tensor-intro (assumption) (assumption)))))))
+        ;; inner: demon(u) + env(z) → CNOT → (u,u) → RCNOT → (z,u)
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  13. TELEPORTATION (Information Transfer = SWAP)
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  In PhysRes, teleportation required:
+;;;    - 3 units of fuel (create pair, Bell measure, Pauli correct)
+;;;    - 2 units of waste
+;;;    - An entangled pair (EPR)
+;;;    - A classical channel (!-comonad for copying the record)
+;;;
+;;;  In RevPhys, teleportation IS just SWAP:
+;;;    Alice(u) + Bob(z) → Alice(z) + Bob(u)
+;;;
+;;;  The information moved. No cloning occurred (Alice lost u).
+;;;  No fuel consumed. No waste produced. Zero thermodynamic cost.
+;;;
+;;;  The PhysRes version's complexity was entirely due to modeling
+;;;  the irreversible measurement/communication steps.  In the
+;;;  unitary picture, those steps compose to a simple SWAP.
+
+(proof teleportation :theory RevPhys
+  :assumptions (
+    (has (bit u))         ;; Alice's qubit
+    (has (bit z)))        ;; Bob's ancilla
+  :goal (has (tensor (bit z) (bit u)))
+  ;;     Alice empty,       Bob has the qubit
+  :derivation (rcnot-uu (cnot-uz (tensor-intro (assumption) (assumption)))))
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  ╔════════════════════════════════════════════════════════════╗
+;;;  ║  PART IV: ADDITIONAL IMPOSSIBILITY RESULTS               ║
+;;;  ╚════════════════════════════════════════════════════════════╝
+;;; ═══════════════════════════════════════════════════════════════════
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  14. NO-PERPETUAL-MOTION (Can't Create Cold from Hot)
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  Two hot bits cannot both become cold. You can cool ONE bit by
+;;;  dumping its entropy into the OTHER (conditional-reset), but
+;;;  you cannot cool both. Total entropy is conserved.
+;;;
+;;;  PhysRes encoded this as "machines need fuel."
+;;;  RevPhys reveals the deeper truth: the fuel IS the cold bits.
+
+(refute no-perpetual-motion
+  :theory RevPhys
+  :assumptions ((has (bit u)) (has (bit u)))
+  :goal (has (tensor (bit z) (bit z)))
+  :depth 5)
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  15. NO-FREE-ERASURE (Landauer is Mandatory)
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  You cannot "erase" a bit (convert u to z) without consuming
+;;;  a cold bit from the environment. The bit doesn't vanish —
+;;;  it has to go somewhere.
+;;;
+;;;  This is Landauer's principle proved from first principles:
+;;;  erasure MUST increase environmental entropy.
+
+(refute no-free-erasure
+  :theory RevPhys
+  :assumptions ((has (bit u)))
+  :goal (has (tensor (bit z) (bit u)))
+  :depth 5)
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  16. NO-FREE-MEASUREMENT (Observers Need Blank Tape)
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  You cannot record a measurement without a clean observer bit.
+;;;  There is no "free" measurement device — the observer must
+;;;  bring a blank register (z) to receive the information.
+;;;
+;;;  In PhysRes this was "measurement costs fuel."
+;;;  In RevPhys: "measurement costs a clean bit."
+
+(refute no-free-measurement
+  :theory RevPhys
+  :assumptions ((has (bit u)))
+  :goal (has (tensor (bit u) (bit u)))
+  :depth 5)
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  ╔════════════════════════════════════════════════════════════╗
+;;;  ║  CORRESPONDENCE TABLE: PhysRes → RevPhys                 ║
+;;;  ╚════════════════════════════════════════════════════════════╝
+;;;
+;;;    PhysRes Concept           RevPhys Equivalent
+;;;    ─────────────────         ────────────────────────────────
+;;;    fuel(n)                   n cold bits: bit(z), bit(z), ...
+;;;    waste(n)                  n hot bits in environment
+;;;    erase(!A, fuel) → waste   SWAP(system, env): u↔z
+;;;    collapse(qalt, fuel)      CNOT(system, observer)
+;;;    !A (classical modality)   bit with a fresh z ancilla
+;;;    copy(!A) → !A ⊗ !A       CNOT(bit, ancilla-z) = fan-out
+;;;    machine-apply             sequence of CNOT/RCNOT gates
+;;;    teleportation (3 fuel)    SWAP (0 fuel!)
+;;;    Maxwell's demon           measure + erase = CNOT + SWAP
+;;;    no-cloning                no-create (deeper: no ancilla)
+;;;    affine weakening          NOT ALLOWED (linear is stricter)
+;;;
+;;;  The pattern: every PhysRes axiom either DISAPPEARS (it was
+;;;  modeling something that doesn't exist at the fundamental level)
+;;;  or becomes a THEOREM (derivable from CNOT + linear logic).
+;;; ═══════════════════════════════════════════════════════════════════
