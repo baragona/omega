@@ -2,109 +2,175 @@
 ;;;  GUTPhys: Grand Unified Logic — The Standard Model in Omega
 ;;; ═══════════════════════════════════════════════════════════════════
 ;;;
-;;;  A resource theory encoding the Standard Model's conservation laws:
-;;;    - Electric charge (Q)
-;;;    - Baryon number (B)
-;;;    - Lepton number (L)
-;;;    - Color confinement (observable states must be color singlets)
+;;;  A resource theory encoding Standard Model conservation laws.
 ;;;
-;;;  Key design: ONE universal interaction rule enforces ALL conservation
-;;;  laws via rewrite-based quantum number computation + eq-refl.
+;;;  MODEL CONSTRAINTS (not fundamental laws):
+;;;    - Q: electric charge (exact U(1)_EM gauge symmetry)
+;;;    - B: baryon number (modelled global charge; sphalerons violate)
+;;;    - L: lepton number (modelled global charge; sphalerons violate)
+;;;    - S: strangeness (conserved by strong/EM; violated by weak)
+;;;    - C: charm (conserved by strong/EM; violated by weak)
+;;;    - Center-neutral: triality(Z₃) = t0 (NECESSARY but NOT
+;;;      SUFFICIENT for color singlet — see §3)
+;;;    - Mass/energy thresholds (proxy for 4-momentum conservation)
 ;;;
-;;;    (interact (has INPUT) (conserved INPUT OUTPUT)) ⊢ (has OUTPUT)
+;;;  TWO INTERACTION FAMILIES:
+;;;    strong/EM: conserves Q, B, L, S, C + center-neutral + energy
+;;;    weak:      conserves Q, B, L       + center-neutral + energy
+;;;              (allows ΔS, ΔC — no CKM constraint modelled)
 ;;;
-;;;  Conservation checking is COMPUTATIONAL: total-charge, total-baryon,
-;;;  etc. are defined as rewrite rules that recursively extract quantum
-;;;  numbers from particle collections. The eq-refl rule then verifies
-;;;  that input and output totals normalize to the same value.
+;;;  SCATTER OUTPUT: 2+ particles (tensor). Prevents unphysical
+;;;  2→1 processes like e⁻+e⁺→γ (forbidden by 4-momentum
+;;;  conservation). Hadron formation requires a spectator photon
+;;;  to absorb recoil: u+ū→π⁰+γ, not u+ū→π⁰.
 ;;;
-;;;  Impossibility results (proton decay, quark escape, etc.) are
-;;;  verified by EXHAUSTIVE SEARCH: the refutation engine tries every
-;;;  combination of rules and proves no derivation exists.
+;;;  COMPOSITES AS ATOMS: Proton, neutron, pion, kaon are modelled
+;;;  as primitive constructors (stand-ins for quark bound states).
+;;;  We do not model hadronization or spectroscopy.
 ;;;
-;;;  Ancestry:
-;;;    PhysRes (affine)  →  RevPhys (linear)  →  GUTPhys (affine + conservation)
-;;;    fuel/waste axioms    CNOT + unitarity      quantum numbers + interact
+;;;  INFORMATION LAYER: Classical reversible bits, NOT quantum.
+;;;  CNOT/RCNOT implement truth tables on {0,1}.
 ;;;
-;;;  Known simplifications (vs. full Standard Model):
-;;;
-;;;    A. "Total Energy" not "Rest Mass": The Nat field in conservation checks
-;;;       represents total energy. Pair-production (γ → e⁻ + e⁺) balances Q/B/L
-;;;       but the model does not track E=mc² / threshold energy. Treat the photon
-;;;       as carrying sufficient energy; the conservation check is on quantum
-;;;       numbers only.
-;;;
-;;;    B. Single lepton number: Real physics has three flavors (Lₑ, Lμ, Lτ)
-;;;       and neutrino oscillation mixes them. This model uses total L only,
-;;;       which correctly conserves in all modeled reactions (beta decay, pair
-;;;       production) but would forbid νₑ → νμ. Acceptable: we don't model
-;;;       flavor oscillation.
-;;;
-;;;    C. Scalar spin addition: Real angular momentum adds vectorially via
-;;;       Clebsch-Gordan coefficients (|S₁-S₂| ≤ S_tot ≤ S₁+S₂). This model
-;;;       uses scalar Nat addition, which might allow unphysical spin states.
-;;;       Acceptable for a conservation-law demo; vector addition in rewrite
-;;;       rules is not worth the complexity.
-;;;
-;;;    D. Abelian confinement: Real QCD uses SU(3) color charge (RGB). This
-;;;       model uses an integer counter (confined=±1), closer to "Abelian
-;;;       confinement." For proving "no isolated quarks," the integer model
-;;;       is logically isomorphic and valid.
+;;;  Remaining simplifications: no bottom/top quarks, single L
+;;;  (no Lₑ/Lμ/Lτ), no spin, no CKM matrix, discrete mass scale.
 ;;;
 ;;; ═══════════════════════════════════════════════════════════════════
 
 (theory GUTPhys
-  ;; AFFINE MODE: resources used at most once (no cloning).
-  ;; Conservation laws handle the physics; affine prevents
-  ;; using the same particle in multiple reactions.
   (context-mode affine)
 
   ;; ═════════════════════════════════════════════════════════════
-  ;; ARITHMETIC: Signed integers via Peano naturals
+  ;; §1  ARITHMETIC
   ;; ═════════════════════════════════════════════════════════════
-  ;;
-  ;; Int = (int pos neg) represents pos - neg.
-  ;; Canonical form: at least one component is zero.
-  ;; Rewrite rules handle addition and cancellation.
 
   (sort Nat)
   (constructor z : Nat)
   (constructor s : (-> Nat Nat))
   (constructor add : (-> Nat Nat Nat))
 
-  (sort Int)
-  (constructor int : (-> Nat Nat Int))      ;; int(pos, neg) = pos - neg
-  (constructor i-add : (-> Int Int Int))
-
-  ;; Nat addition
   (rewrite add-z (add z ?n) ?n)
   (rewrite add-s (add (s ?n) ?m) (s (add ?n ?m)))
 
-  ;; Int cancellation: (s p) - (s n) = p - n
-  (rewrite cancel (int (s ?p) (s ?n)) (int ?p ?n))
+  (sort Int)
+  (constructor int : (-> Nat Nat Int))
+  (constructor i-add : (-> Int Int Int))
 
-  ;; Int addition: (p1-n1) + (p2-n2) = (p1+p2)-(n1+n2)
+  (rewrite cancel (int (s ?p) (s ?n)) (int ?p ?n))
   (rewrite i-add-def (i-add (int ?p1 ?n1) (int ?p2 ?n2))
                       (int (add ?p1 ?p2) (add ?n1 ?n2)))
 
+  (sort Bool)
+  (constructor true : Bool)
+  (constructor false : Bool)
+  (constructor and-bool : (-> Bool Bool Bool))
+
+  (rewrite and-tt (and-bool true true) true)
+  (rewrite and-tf (and-bool true false) false)
+  (rewrite and-ft (and-bool false true) false)
+  (rewrite and-ff (and-bool false false) false)
+
   ;; ═════════════════════════════════════════════════════════════
-  ;; PARTICLES: The cast of the Standard Model (simplified)
+  ;; §2  MASS / ENERGY THRESHOLD
   ;; ═════════════════════════════════════════════════════════════
+
+  (sort MassCheck)
+  (constructor mass-ok : MassCheck)
+  (constructor mass-fail : MassCheck)
+  (constructor check-mass : (-> Nat Nat MassCheck))
+
+  (rewrite cm-z  (check-mass ?n z) mass-ok)
+  (rewrite cm-sz (check-mass z (s ?n)) mass-fail)
+  (rewrite cm-ss (check-mass (s ?n) (s ?m)) (check-mass ?n ?m))
+
+  ;; ═════════════════════════════════════════════════════════════
+  ;; §3  COLOR TRIALITY (Z₃ center of SU(3))
+  ;; ═════════════════════════════════════════════════════════════
+  ;;
+  ;; Triality = Z₃ center charge of SU(3) color:
+  ;;   t0 = 0 mod 3  (hadrons, leptons, photon)
+  ;;   t1 = 1 mod 3  (quarks)
+  ;;   t2 = 2 mod 3  (antiquarks)
+  ;;
+  ;; Total triality = t0 is NECESSARY but NOT SUFFICIENT for
+  ;; being a color singlet.
+  ;;
+  ;; Counterexample: 3 ⊗ 3̄ = 1 ⊕ 8. Both the singlet (1) and
+  ;; the octet (8) have triality 0, but the octet is NOT a
+  ;; singlet. Similarly, multi-parton states can have triality 0
+  ;; while living in non-singlet representations.
+  ;;
+  ;; Our model uses triality as a FILTER for "not obviously
+  ;; colored." It correctly blocks isolated quarks (t1≠t0),
+  ;; diquarks (t1+t1=t2≠t0), and allows mesons (t1+t2=t0),
+  ;; baryons (t1+t1+t1=t0). But it cannot distinguish a true
+  ;; singlet from an octet or other center-neutral rep.
+
+  (sort Triality)
+  (constructor t0 : Triality)
+  (constructor t1 : Triality)
+  (constructor t2 : Triality)
+  (constructor tri-add : (-> Triality Triality Triality))
+
+  (rewrite ta-00 (tri-add t0 t0) t0)
+  (rewrite ta-01 (tri-add t0 t1) t1)
+  (rewrite ta-02 (tri-add t0 t2) t2)
+  (rewrite ta-10 (tri-add t1 t0) t1)
+  (rewrite ta-11 (tri-add t1 t1) t2)
+  (rewrite ta-12 (tri-add t1 t2) t0)
+  (rewrite ta-20 (tri-add t2 t0) t2)
+  (rewrite ta-21 (tri-add t2 t1) t0)
+  (rewrite ta-22 (tri-add t2 t2) t1)
+
+  ;; ═════════════════════════════════════════════════════════════
+  ;; §4  PARTICLES
+  ;; ═════════════════════════════════════════════════════════════
+  ;;
+  ;; All quantum numbers in units of 1/3 (avoids rationals).
+  ;; Seven properties per particle: Q, B, L, S, C, triality, mass.
+  ;;
+  ;;   Particle        Q    B    L    S    C   Tri   Mass
+  ;;   ─────────      ───  ───  ───  ───  ───  ───   ────
+  ;;   proton (uud)   +3   +3    0    0    0   t0     5
+  ;;   neutron (udd)   0   +3    0    0    0   t0     6
+  ;;   electron       −3    0   +3    0    0   t0     1
+  ;;   positron       +3    0   −3    0    0   t0     1
+  ;;   neutrino        0    0   +3    0    0   t0     0
+  ;;   antineutrino    0    0   −3    0    0   t0     0
+  ;;   photon          0    0    0    0    0   t0     0
+  ;;   pion-zero       0    0    0    0    0   t0     2
+  ;;   kaon-plus (us̄) +3    0    0   +1    0   t0     3
+  ;;   up-quark       +2   +1    0    0    0   t1     0
+  ;;   down-quark     −1   +1    0    0    0   t1     0
+  ;;   strange-quark  −1   +1    0   −1    0   t1     1
+  ;;   charm-quark    +2   +1    0    0   +1   t1     2
+  ;;   anti-up        −2   −1    0    0    0   t2     0
+  ;;   anti-down      +1   −1    0    0    0   t2     0
+  ;;   anti-strange   +1   −1    0   +1    0   t2     1
+  ;;   anti-charm     −2   −1    0    0   −1   t2     2
+  ;;
+  ;; Mass scale: ν=0, e=1, π=2, K=3, p=5, n=6.
 
   (sort Particle)
-  (constructor proton : Particle)         ;; p:  Q=+1, B=+1, L=0
-  (constructor neutron : Particle)        ;; n:  Q= 0, B=+1, L=0
-  (constructor electron : Particle)       ;; e⁻: Q=-1, B= 0, L=+1
-  (constructor positron : Particle)       ;; e⁺: Q=+1, B= 0, L=-1
-  (constructor neutrino : Particle)       ;; νₑ: Q= 0, B= 0, L=+1
-  (constructor antineutrino : Particle)   ;; ν̄ₑ: Q= 0, B= 0, L=-1
-  (constructor photon : Particle)         ;; γ:  Q= 0, B= 0, L=0
-  (constructor pion-zero : Particle)      ;; π⁰: Q= 0, B= 0, L=0
-  (constructor up-quark : Particle)       ;; u:  confined (never free)
-  (constructor down-quark : Particle)     ;; d:  confined (never free)
+  (constructor proton : Particle)
+  (constructor neutron : Particle)
+  (constructor electron : Particle)
+  (constructor positron : Particle)
+  (constructor neutrino : Particle)
+  (constructor antineutrino : Particle)
+  (constructor photon : Particle)
+  (constructor pion-zero : Particle)
+  (constructor kaon-plus : Particle)
+  (constructor up-quark : Particle)
+  (constructor down-quark : Particle)
+  (constructor strange-quark : Particle)
+  (constructor charm-quark : Particle)
+  (constructor anti-up : Particle)
+  (constructor anti-down : Particle)
+  (constructor anti-strange : Particle)
+  (constructor anti-charm : Particle)
 
   ;; ═════════════════════════════════════════════════════════════
-  ;; RESOURCES: Tensor products of particles
+  ;; §5  RESOURCES
   ;; ═════════════════════════════════════════════════════════════
 
   (sort Resource)
@@ -112,254 +178,346 @@
   (constructor tensor : (-> Resource Resource Resource))
 
   ;; ═════════════════════════════════════════════════════════════
-  ;; QUANTUM NUMBER EXTRACTORS (per-particle)
+  ;; §6  PER-PARTICLE PROPERTIES (7 × 17 = 119 rewrites)
   ;; ═════════════════════════════════════════════════════════════
 
   (constructor charge : (-> Particle Int))
   (constructor baryon : (-> Particle Int))
   (constructor lepton : (-> Particle Int))
-  (constructor confined : (-> Particle Int))
+  (constructor strangeness : (-> Particle Int))
+  (constructor charm-num : (-> Particle Int))
+  (constructor triality-of : (-> Particle Triality))
+  (constructor rest-mass : (-> Particle Nat))
 
-  ;; --- Proton: Q=+1, B=+1, L=0, free ---
-  (rewrite q-proton   (charge proton)   (int (s z) z))
-  (rewrite b-proton   (baryon proton)   (int (s z) z))
-  (rewrite l-proton   (lepton proton)   (int z z))
-  (rewrite c-proton   (confined proton) (int z z))
+  ;; --- Proton: Q=+3, B=+3, L=0, S=0, C=0, t0, mass=5 ---
+  (rewrite q-proton      (charge proton)       (int (s (s (s z))) z))
+  (rewrite b-proton      (baryon proton)       (int (s (s (s z))) z))
+  (rewrite l-proton      (lepton proton)       (int z z))
+  (rewrite s-proton      (strangeness proton)  (int z z))
+  (rewrite c-proton      (charm-num proton)    (int z z))
+  (rewrite tri-proton    (triality-of proton)  t0)
+  (rewrite m-proton      (rest-mass proton)    (s (s (s (s (s z))))))
 
-  ;; --- Neutron: Q=0, B=+1, L=0, free ---
-  (rewrite q-neutron   (charge neutron)   (int z z))
-  (rewrite b-neutron   (baryon neutron)   (int (s z) z))
-  (rewrite l-neutron   (lepton neutron)   (int z z))
-  (rewrite c-neutron   (confined neutron) (int z z))
+  ;; --- Neutron: Q=0, B=+3, L=0, S=0, C=0, t0, mass=6 ---
+  (rewrite q-neutron      (charge neutron)       (int z z))
+  (rewrite b-neutron      (baryon neutron)       (int (s (s (s z))) z))
+  (rewrite l-neutron      (lepton neutron)       (int z z))
+  (rewrite s-neutron      (strangeness neutron)  (int z z))
+  (rewrite c-neutron      (charm-num neutron)    (int z z))
+  (rewrite tri-neutron    (triality-of neutron)  t0)
+  (rewrite m-neutron      (rest-mass neutron)    (s (s (s (s (s (s z)))))))
 
-  ;; --- Electron: Q=-1, B=0, L=+1, free ---
-  (rewrite q-electron   (charge electron)   (int z (s z)))
-  (rewrite b-electron   (baryon electron)   (int z z))
-  (rewrite l-electron   (lepton electron)   (int (s z) z))
-  (rewrite c-electron   (confined electron) (int z z))
+  ;; --- Electron: Q=-3, B=0, L=+3, S=0, C=0, t0, mass=1 ---
+  (rewrite q-electron      (charge electron)       (int z (s (s (s z)))))
+  (rewrite b-electron      (baryon electron)       (int z z))
+  (rewrite l-electron      (lepton electron)       (int (s (s (s z))) z))
+  (rewrite s-electron      (strangeness electron)  (int z z))
+  (rewrite c-electron      (charm-num electron)    (int z z))
+  (rewrite tri-electron    (triality-of electron)  t0)
+  (rewrite m-electron      (rest-mass electron)    (s z))
 
-  ;; --- Positron: Q=+1, B=0, L=-1, free ---
-  (rewrite q-positron   (charge positron)   (int (s z) z))
-  (rewrite b-positron   (baryon positron)   (int z z))
-  (rewrite l-positron   (lepton positron)   (int z (s z)))
-  (rewrite c-positron   (confined positron) (int z z))
+  ;; --- Positron: Q=+3, B=0, L=-3, S=0, C=0, t0, mass=1 ---
+  (rewrite q-positron      (charge positron)       (int (s (s (s z))) z))
+  (rewrite b-positron      (baryon positron)       (int z z))
+  (rewrite l-positron      (lepton positron)       (int z (s (s (s z)))))
+  (rewrite s-positron      (strangeness positron)  (int z z))
+  (rewrite c-positron      (charm-num positron)    (int z z))
+  (rewrite tri-positron    (triality-of positron)  t0)
+  (rewrite m-positron      (rest-mass positron)    (s z))
 
-  ;; --- Neutrino: Q=0, B=0, L=+1, free ---
-  (rewrite q-neutrino   (charge neutrino)   (int z z))
-  (rewrite b-neutrino   (baryon neutrino)   (int z z))
-  (rewrite l-neutrino   (lepton neutrino)   (int (s z) z))
-  (rewrite c-neutrino   (confined neutrino) (int z z))
+  ;; --- Neutrino: Q=0, B=0, L=+3, S=0, C=0, t0, mass=0 ---
+  (rewrite q-neutrino      (charge neutrino)       (int z z))
+  (rewrite b-neutrino      (baryon neutrino)       (int z z))
+  (rewrite l-neutrino      (lepton neutrino)       (int (s (s (s z))) z))
+  (rewrite s-neutrino      (strangeness neutrino)  (int z z))
+  (rewrite c-neutrino      (charm-num neutrino)    (int z z))
+  (rewrite tri-neutrino    (triality-of neutrino)  t0)
+  (rewrite m-neutrino      (rest-mass neutrino)    z)
 
-  ;; --- Antineutrino: Q=0, B=0, L=-1, free ---
-  (rewrite q-antineutrino   (charge antineutrino)   (int z z))
-  (rewrite b-antineutrino   (baryon antineutrino)   (int z z))
-  (rewrite l-antineutrino   (lepton antineutrino)   (int z (s z)))
-  (rewrite c-antineutrino   (confined antineutrino) (int z z))
+  ;; --- Antineutrino: Q=0, B=0, L=-3, S=0, C=0, t0, mass=0 ---
+  (rewrite q-antineutrino      (charge antineutrino)       (int z z))
+  (rewrite b-antineutrino      (baryon antineutrino)       (int z z))
+  (rewrite l-antineutrino      (lepton antineutrino)       (int z (s (s (s z)))))
+  (rewrite s-antineutrino      (strangeness antineutrino)  (int z z))
+  (rewrite c-antineutrino      (charm-num antineutrino)    (int z z))
+  (rewrite tri-antineutrino    (triality-of antineutrino)  t0)
+  (rewrite m-antineutrino      (rest-mass antineutrino)    z)
 
-  ;; --- Photon: Q=0, B=0, L=0, free ---
-  (rewrite q-photon   (charge photon)   (int z z))
-  (rewrite b-photon   (baryon photon)   (int z z))
-  (rewrite l-photon   (lepton photon)   (int z z))
-  (rewrite c-photon   (confined photon) (int z z))
+  ;; --- Photon: all zero, t0, mass=0 ---
+  (rewrite q-photon      (charge photon)       (int z z))
+  (rewrite b-photon      (baryon photon)       (int z z))
+  (rewrite l-photon      (lepton photon)       (int z z))
+  (rewrite s-photon      (strangeness photon)  (int z z))
+  (rewrite c-photon      (charm-num photon)    (int z z))
+  (rewrite tri-photon    (triality-of photon)  t0)
+  (rewrite m-photon      (rest-mass photon)    z)
 
-  ;; --- Pion-zero: Q=0, B=0, L=0, free ---
-  (rewrite q-pion   (charge pion-zero)   (int z z))
-  (rewrite b-pion   (baryon pion-zero)   (int z z))
-  (rewrite l-pion   (lepton pion-zero)   (int z z))
-  (rewrite c-pion   (confined pion-zero) (int z z))
+  ;; --- Pion-zero: all zero, t0, mass=2 ---
+  (rewrite q-pion      (charge pion-zero)       (int z z))
+  (rewrite b-pion      (baryon pion-zero)       (int z z))
+  (rewrite l-pion      (lepton pion-zero)       (int z z))
+  (rewrite s-pion      (strangeness pion-zero)  (int z z))
+  (rewrite c-pion      (charm-num pion-zero)    (int z z))
+  (rewrite tri-pion    (triality-of pion-zero)  t0)
+  (rewrite m-pion      (rest-mass pion-zero)    (s (s z)))
 
-  ;; --- Up quark: CONFINED (can never appear as a free particle) ---
-  (rewrite q-up   (charge up-quark)   (int (s z) z))
-  (rewrite b-up   (baryon up-quark)   (int z z))
-  (rewrite l-up   (lepton up-quark)   (int z z))
-  (rewrite c-up   (confined up-quark) (int (s z) z))
+  ;; --- Kaon-plus (us̄): Q=+3, B=0, L=0, S=+1, C=0, t0, mass=3 ---
+  (rewrite q-kaon      (charge kaon-plus)       (int (s (s (s z))) z))
+  (rewrite b-kaon      (baryon kaon-plus)       (int z z))
+  (rewrite l-kaon      (lepton kaon-plus)       (int z z))
+  (rewrite s-kaon      (strangeness kaon-plus)  (int (s z) z))
+  (rewrite c-kaon      (charm-num kaon-plus)    (int z z))
+  (rewrite tri-kaon    (triality-of kaon-plus)  t0)
+  (rewrite m-kaon      (rest-mass kaon-plus)    (s (s (s z))))
 
-  ;; --- Down quark: CONFINED ---
-  (rewrite q-down   (charge down-quark)   (int z (s z)))
-  (rewrite b-down   (baryon down-quark)   (int z z))
-  (rewrite l-down   (lepton down-quark)   (int z z))
-  (rewrite c-down   (confined down-quark) (int (s z) z))
+  ;; --- Up quark: Q=+2, B=+1, L=0, S=0, C=0, t1, mass=0 ---
+  (rewrite q-up      (charge up-quark)       (int (s (s z)) z))
+  (rewrite b-up      (baryon up-quark)       (int (s z) z))
+  (rewrite l-up      (lepton up-quark)       (int z z))
+  (rewrite s-up      (strangeness up-quark)  (int z z))
+  (rewrite c-up      (charm-num up-quark)    (int z z))
+  (rewrite tri-up    (triality-of up-quark)  t1)
+  (rewrite m-up      (rest-mass up-quark)    z)
+
+  ;; --- Down quark: Q=-1, B=+1, L=0, S=0, C=0, t1, mass=0 ---
+  (rewrite q-down      (charge down-quark)       (int z (s z)))
+  (rewrite b-down      (baryon down-quark)       (int (s z) z))
+  (rewrite l-down      (lepton down-quark)       (int z z))
+  (rewrite s-down      (strangeness down-quark)  (int z z))
+  (rewrite c-down      (charm-num down-quark)    (int z z))
+  (rewrite tri-down    (triality-of down-quark)  t1)
+  (rewrite m-down      (rest-mass down-quark)    z)
+
+  ;; --- Strange quark: Q=-1, B=+1, L=0, S=-1, C=0, t1, mass=1 ---
+  (rewrite q-strange      (charge strange-quark)       (int z (s z)))
+  (rewrite b-strange      (baryon strange-quark)       (int (s z) z))
+  (rewrite l-strange      (lepton strange-quark)       (int z z))
+  (rewrite s-strange      (strangeness strange-quark)  (int z (s z)))
+  (rewrite c-strange      (charm-num strange-quark)    (int z z))
+  (rewrite tri-strange    (triality-of strange-quark)  t1)
+  (rewrite m-strange      (rest-mass strange-quark)    (s z))
+
+  ;; --- Charm quark: Q=+2, B=+1, L=0, S=0, C=+1, t1, mass=2 ---
+  (rewrite q-charm      (charge charm-quark)       (int (s (s z)) z))
+  (rewrite b-charm      (baryon charm-quark)       (int (s z) z))
+  (rewrite l-charm      (lepton charm-quark)       (int z z))
+  (rewrite s-charm      (strangeness charm-quark)  (int z z))
+  (rewrite c-charm      (charm-num charm-quark)    (int (s z) z))
+  (rewrite tri-charm    (triality-of charm-quark)  t1)
+  (rewrite m-charm      (rest-mass charm-quark)    (s (s z)))
+
+  ;; --- Anti-up: Q=-2, B=-1, L=0, S=0, C=0, t2, mass=0 ---
+  (rewrite q-antiup      (charge anti-up)       (int z (s (s z))))
+  (rewrite b-antiup      (baryon anti-up)       (int z (s z)))
+  (rewrite l-antiup      (lepton anti-up)       (int z z))
+  (rewrite s-antiup      (strangeness anti-up)  (int z z))
+  (rewrite c-antiup      (charm-num anti-up)    (int z z))
+  (rewrite tri-antiup    (triality-of anti-up)  t2)
+  (rewrite m-antiup      (rest-mass anti-up)    z)
+
+  ;; --- Anti-down: Q=+1, B=-1, L=0, S=0, C=0, t2, mass=0 ---
+  (rewrite q-antidown      (charge anti-down)       (int (s z) z))
+  (rewrite b-antidown      (baryon anti-down)       (int z (s z)))
+  (rewrite l-antidown      (lepton anti-down)       (int z z))
+  (rewrite s-antidown      (strangeness anti-down)  (int z z))
+  (rewrite c-antidown      (charm-num anti-down)    (int z z))
+  (rewrite tri-antidown    (triality-of anti-down)  t2)
+  (rewrite m-antidown      (rest-mass anti-down)    z)
+
+  ;; --- Anti-strange: Q=+1, B=-1, L=0, S=+1, C=0, t2, mass=1 ---
+  (rewrite q-antistrange      (charge anti-strange)       (int (s z) z))
+  (rewrite b-antistrange      (baryon anti-strange)       (int z (s z)))
+  (rewrite l-antistrange      (lepton anti-strange)       (int z z))
+  (rewrite s-antistrange      (strangeness anti-strange)  (int (s z) z))
+  (rewrite c-antistrange      (charm-num anti-strange)    (int z z))
+  (rewrite tri-antistrange    (triality-of anti-strange)  t2)
+  (rewrite m-antistrange      (rest-mass anti-strange)    (s z))
+
+  ;; --- Anti-charm: Q=-2, B=-1, L=0, S=0, C=-1, t2, mass=2 ---
+  (rewrite q-anticharm      (charge anti-charm)       (int z (s (s z))))
+  (rewrite b-anticharm      (baryon anti-charm)       (int z (s z)))
+  (rewrite l-anticharm      (lepton anti-charm)       (int z z))
+  (rewrite s-anticharm      (strangeness anti-charm)  (int z z))
+  (rewrite c-anticharm      (charm-num anti-charm)    (int z (s z)))
+  (rewrite tri-anticharm    (triality-of anti-charm)  t2)
+  (rewrite m-anticharm      (rest-mass anti-charm)    (s (s z)))
 
   ;; ═════════════════════════════════════════════════════════════
-  ;; TOTAL QUANTUM NUMBERS (recursive over resources)
+  ;; §7  RECURSIVE EXTRACTORS
   ;; ═════════════════════════════════════════════════════════════
 
   (constructor total-charge : (-> Resource Int))
   (constructor total-baryon : (-> Resource Int))
   (constructor total-lepton : (-> Resource Int))
-  (constructor total-confined : (-> Resource Int))
+  (constructor total-strange : (-> Resource Int))
+  (constructor total-charm : (-> Resource Int))
+  (constructor total-triality : (-> Resource Triality))
+  (constructor total-rest-mass : (-> Resource Nat))
 
-  ;; Charge
-  (rewrite tc-p (total-charge (particle ?p))
-                 (charge ?p))
+  (rewrite tc-p (total-charge (particle ?p)) (charge ?p))
   (rewrite tc-t (total-charge (tensor ?a ?b))
                  (i-add (total-charge ?a) (total-charge ?b)))
-
-  ;; Baryon number
-  (rewrite tb-p (total-baryon (particle ?p))
-                 (baryon ?p))
+  (rewrite tb-p (total-baryon (particle ?p)) (baryon ?p))
   (rewrite tb-t (total-baryon (tensor ?a ?b))
                  (i-add (total-baryon ?a) (total-baryon ?b)))
-
-  ;; Lepton number
-  (rewrite tl-p (total-lepton (particle ?p))
-                 (lepton ?p))
+  (rewrite tl-p (total-lepton (particle ?p)) (lepton ?p))
   (rewrite tl-t (total-lepton (tensor ?a ?b))
                  (i-add (total-lepton ?a) (total-lepton ?b)))
-
-  ;; Confinement charge
-  (rewrite tf-p (total-confined (particle ?p))
-                 (confined ?p))
-  (rewrite tf-t (total-confined (tensor ?a ?b))
-                 (i-add (total-confined ?a) (total-confined ?b)))
+  (rewrite ts-p (total-strange (particle ?p)) (strangeness ?p))
+  (rewrite ts-t (total-strange (tensor ?a ?b))
+                 (i-add (total-strange ?a) (total-strange ?b)))
+  (rewrite tch-p (total-charm (particle ?p)) (charm-num ?p))
+  (rewrite tch-t (total-charm (tensor ?a ?b))
+                  (i-add (total-charm ?a) (total-charm ?b)))
+  (rewrite ttri-p (total-triality (particle ?p)) (triality-of ?p))
+  (rewrite ttri-t (total-triality (tensor ?a ?b))
+                   (tri-add (total-triality ?a) (total-triality ?b)))
+  (rewrite tm-p (total-rest-mass (particle ?p)) (rest-mass ?p))
+  (rewrite tm-t (total-rest-mass (tensor ?a ?b))
+                 (add (total-rest-mass ?a) (total-rest-mass ?b)))
 
   ;; ═════════════════════════════════════════════════════════════
-  ;; JUDGMENTS
+  ;; §8  INTERACTION GUARD + TAGGED EXTRACTORS
+  ;; ═════════════════════════════════════════════════════════════
+
+  (constructor is-free : (-> Resource Bool))
+  (rewrite free-particle (is-free (particle ?p)) true)
+  (rewrite free-tensor   (is-free (tensor ?a ?b))
+                          (and-bool (is-free ?a) (is-free ?b)))
+
+  (sort Bit)
+  (constructor b0 : Bit)
+  (constructor b1 : Bit)
+  (constructor tagged : (-> Bit Particle Resource))
+
+  (rewrite tc-tagged    (total-charge (tagged ?b ?p))      (charge ?p))
+  (rewrite tb-tagged    (total-baryon (tagged ?b ?p))      (baryon ?p))
+  (rewrite tl-tagged    (total-lepton (tagged ?b ?p))      (lepton ?p))
+  (rewrite ts-tagged    (total-strange (tagged ?b ?p))     (strangeness ?p))
+  (rewrite tch-tagged   (total-charm (tagged ?b ?p))       (charm-num ?p))
+  (rewrite ttri-tagged  (total-triality (tagged ?b ?p))    (triality-of ?p))
+  (rewrite tm-tagged    (total-rest-mass (tagged ?b ?p))   (rest-mass ?p))
+  (rewrite free-tagged  (is-free (tagged ?b ?p)) false)
+
+  ;; ═════════════════════════════════════════════════════════════
+  ;; §9  JUDGMENTS AND RULES
   ;; ═════════════════════════════════════════════════════════════
 
   (judgment (has ?R) :where R : Resource)
   (judgment (eq ?a ?b) :where a : Int b : Int)
-  (judgment (conserved ?A ?B) :where A : Resource B : Resource)
+  (judgment (eq-tri ?a ?b) :where a : Triality b : Triality)
+  (judgment (eq-bool ?a ?b) :where a : Bool b : Bool)
+  (judgment (eq-mc ?a ?b) :where a : MassCheck b : MassCheck)
+  (judgment (conserved-strong ?A ?B) :where A : Resource B : Resource)
+  (judgment (conserved-weak ?A ?B) :where A : Resource B : Resource)
+  (judgment (cms-energy ?S) :where S : Nat)
 
-  ;; ═════════════════════════════════════════════════════════════
-  ;; RULES
-  ;; ═════════════════════════════════════════════════════════════
+  (rule eq-refl       :premises () :conclusion (eq ?a ?a))
+  (rule eq-tri-refl   :premises () :conclusion (eq-tri ?a ?a))
+  (rule eq-bool-refl  :premises () :conclusion (eq-bool ?a ?a))
+  (rule eq-mc-refl    :premises () :conclusion (eq-mc ?a ?a))
 
-  ;; Reflexivity: the only way to prove equality.
-  ;; Works because rewrite rules normalize both sides first.
-  (rule eq-refl
-    :premises ()
-    :conclusion (eq ?a ?a))
-
-  ;; Tensor introduction: combine resources
   (rule tensor-intro
     :premises ((has ?A) (has ?B))
     :conclusion (has (tensor ?A ?B)))
 
-  ;; Conservation: ALL quantum numbers must be preserved,
-  ;; AND both input and output must be color singlets (unconfined).
-  (rule conserve-all
+  ;; STRONG/EM CONSERVATION: Q, B, L, S, C + center-neutral + free.
+  (rule conserve-strong
     :premises (
       (eq (total-charge ?A) (total-charge ?B))
       (eq (total-baryon ?A) (total-baryon ?B))
       (eq (total-lepton ?A) (total-lepton ?B))
-      (eq (total-confined ?A) (int z z))
-      (eq (total-confined ?B) (int z z)))
-    :conclusion (conserved ?A ?B))
+      (eq (total-strange ?A) (total-strange ?B))
+      (eq (total-charm ?A) (total-charm ?B))
+      (eq-tri (total-triality ?A) t0)
+      (eq-tri (total-triality ?B) t0)
+      (eq-bool (is-free ?A) true)
+      (eq-bool (is-free ?B) true))
+    :conclusion (conserved-strong ?A ?B))
 
-  ;; THE UNIVERSAL INTERACTION RULE
-  ;;
-  ;; Any input can produce any output, provided:
-  ;;   1. You have the input particles       (has ?IN)
-  ;;   2. All conservation laws are satisfied (conserved ?IN ?OUT)
-  ;;
-  ;; This single rule encodes ALL of particle physics:
-  ;;   - Beta decay, pair production, annihilation, scattering...
-  ;;   - The conservation laws do ALL the work.
-  (rule interact
-    :premises ((has ?IN) (conserved ?IN ?OUT))
+  ;; WEAK CONSERVATION: Q, B, L + center-neutral + free.
+  ;; Does NOT check S or C (weak interaction violates these).
+  ;; No CKM constraint: allows arbitrary ΔS, ΔC.
+  (rule conserve-weak
+    :premises (
+      (eq (total-charge ?A) (total-charge ?B))
+      (eq (total-baryon ?A) (total-baryon ?B))
+      (eq (total-lepton ?A) (total-lepton ?B))
+      (eq-tri (total-triality ?A) t0)
+      (eq-tri (total-triality ?B) t0)
+      (eq-bool (is-free ?A) true)
+      (eq-bool (is-free ?B) true))
+    :conclusion (conserved-weak ?A ?B))
+
+  ;; SCATTER (strong/EM): 2+ in → 2+ out + energy threshold.
+  ;; Output must be tensor (prevents unphysical 2→1).
+  (rule interact-scatter-strong
+    :premises (
+      (has (tensor ?A ?B))
+      (conserved-strong (tensor ?A ?B) (tensor ?C ?D))
+      (cms-energy ?S)
+      (eq-mc (check-mass ?S (total-rest-mass (tensor ?C ?D))) mass-ok))
+    :conclusion (has (tensor ?C ?D)))
+
+  ;; SCATTER (weak): same structure, weak conservation.
+  (rule interact-scatter-weak
+    :premises (
+      (has (tensor ?A ?B))
+      (conserved-weak (tensor ?A ?B) (tensor ?C ?D))
+      (cms-energy ?S)
+      (eq-mc (check-mass ?S (total-rest-mass (tensor ?C ?D))) mass-ok))
+    :conclusion (has (tensor ?C ?D)))
+
+  ;; DECAY (strong/EM): 1 particle → products, mass threshold.
+  (rule interact-decay-strong
+    :premises (
+      (has (particle ?P))
+      (conserved-strong (particle ?P) ?OUT)
+      (eq-mc (check-mass (rest-mass ?P) (total-rest-mass ?OUT)) mass-ok))
     :conclusion (has ?OUT))
 
-  ;; Tensor elimination: decompose a composite resource
-  ;;   Γ ⊢ A⊗B    Δ,A,B ⊢ C
-  ;;   ────────────────────────
-  ;;         Γ,Δ ⊢ C
+  ;; DECAY (weak): 1 particle → products, weak conservation.
+  (rule interact-decay-weak
+    :premises (
+      (has (particle ?P))
+      (conserved-weak (particle ?P) ?OUT)
+      (eq-mc (check-mass (rest-mass ?P) (total-rest-mass ?OUT)) mass-ok))
+    :conclusion (has ?OUT))
+
   (rule tensor-elim
     :premises ((has (tensor ?A ?B)) (has ?C))
     :conclusion (has ?C)
     :context ((1 (has ?A)) (1 (has ?B))))
 
   ;; ═════════════════════════════════════════════════════════════
-  ;; INFORMATION PHYSICS: The Qubit Layer
-  ;; ═════════════════════════════════════════════════════════════
-  ;;
-  ;; "Thermodynamics is particle physics with the lights off."
-  ;;
-  ;; Every particle carries TWO kinds of state:
-  ;;   PHYSICS: charge, baryon, lepton  (conserved by interact)
-  ;;   INFORMATION: qubit state          (manipulated by gates)
-  ;;
-  ;; The `tagged` constructor wraps a particle with a qubit:
-  ;;   (tagged qz photon) = cold photon (known/ground state)
-  ;;   (tagged qu electron) = hot electron (carries data)
-  ;;
-  ;; CRITICAL: tagged resources have confined=1. This means
-  ;; the `interact` rule CANNOT operate on them (conserve-all
-  ;; requires confined=0). Only gate rules can flip qubits.
-  ;; This enforces: information changes ONLY via physical gates.
-
-  (sort Qubit)
-  (constructor qz : Qubit)   ;; |0⟩ — ground state / cold / known
-  (constructor qu : Qubit)   ;; |1⟩ — excited state / hot / unknown
-
-  ;; Tagged particle: wraps a particle with an information bit
-  (constructor tagged : (-> Qubit Particle Resource))
-
-  ;; Quantum numbers for tagged resources:
-  ;; Physics (Q, B, L) comes from the particle — qubit is invisible.
-  ;; Confined = 1 for ALL tagged resources (blocks interact).
-  (rewrite tc-tagged (total-charge (tagged ?q ?p)) (charge ?p))
-  (rewrite tb-tagged (total-baryon (tagged ?q ?p)) (baryon ?p))
-  (rewrite tl-tagged (total-lepton (tagged ?q ?p)) (lepton ?p))
-  (rewrite tf-tagged (total-confined (tagged ?q ?p)) (int (s z) z))
-
-  ;; ═════════════════════════════════════════════════════════════
-  ;; CNOT GATE: Controlled-NOT on qubit layer
-  ;;
-  ;; CNOT(control, target) = (control, target XOR control)
-  ;;
-  ;;   (qz, qz) → (qz, qz)   (qz, qu) → (qz, qu)
-  ;;   (qu, qz) → (qu, qu)    (qu, qu) → (qu, qz)
-  ;;
-  ;; Physically: a scattering event that correlates the target's
-  ;; information state with the control's. The particle types
-  ;; (?P1, ?P2) are structurally preserved — no conservation
-  ;; check needed.
+  ;; §10  CLASSICAL REVERSIBLE BIT GATES
   ;; ═════════════════════════════════════════════════════════════
 
   (rule gate-cnot-zz
-    :premises ((has (tensor (tagged qz ?P1) (tagged qz ?P2))))
-    :conclusion (has (tensor (tagged qz ?P1) (tagged qz ?P2))))
-
+    :premises ((has (tensor (tagged b0 ?P1) (tagged b0 ?P2))))
+    :conclusion (has (tensor (tagged b0 ?P1) (tagged b0 ?P2))))
   (rule gate-cnot-zu
-    :premises ((has (tensor (tagged qz ?P1) (tagged qu ?P2))))
-    :conclusion (has (tensor (tagged qz ?P1) (tagged qu ?P2))))
-
+    :premises ((has (tensor (tagged b0 ?P1) (tagged b1 ?P2))))
+    :conclusion (has (tensor (tagged b0 ?P1) (tagged b1 ?P2))))
   (rule gate-cnot-uz
-    :premises ((has (tensor (tagged qu ?P1) (tagged qz ?P2))))
-    :conclusion (has (tensor (tagged qu ?P1) (tagged qu ?P2))))
-
+    :premises ((has (tensor (tagged b1 ?P1) (tagged b0 ?P2))))
+    :conclusion (has (tensor (tagged b1 ?P1) (tagged b1 ?P2))))
   (rule gate-cnot-uu
-    :premises ((has (tensor (tagged qu ?P1) (tagged qu ?P2))))
-    :conclusion (has (tensor (tagged qu ?P1) (tagged qz ?P2))))
-
-  ;; ═════════════════════════════════════════════════════════════
-  ;; RCNOT GATE: Reverse Controlled-NOT
-  ;;
-  ;; RCNOT(target, control) = (target XOR control, control)
-  ;;
-  ;;   (qz, qz) → (qz, qz)   (qu, qz) → (qu, qz)
-  ;;   (qz, qu) → (qu, qu)    (qu, qu) → (qz, qu)
-  ;;
-  ;; Together with CNOT, enables SWAP:
-  ;;   SWAP(a,b) = CNOT(a,b); RCNOT(a,b)
-  ;; ═════════════════════════════════════════════════════════════
+    :premises ((has (tensor (tagged b1 ?P1) (tagged b1 ?P2))))
+    :conclusion (has (tensor (tagged b1 ?P1) (tagged b0 ?P2))))
 
   (rule gate-rcnot-zz
-    :premises ((has (tensor (tagged qz ?P1) (tagged qz ?P2))))
-    :conclusion (has (tensor (tagged qz ?P1) (tagged qz ?P2))))
-
+    :premises ((has (tensor (tagged b0 ?P1) (tagged b0 ?P2))))
+    :conclusion (has (tensor (tagged b0 ?P1) (tagged b0 ?P2))))
   (rule gate-rcnot-uz
-    :premises ((has (tensor (tagged qu ?P1) (tagged qz ?P2))))
-    :conclusion (has (tensor (tagged qu ?P1) (tagged qz ?P2))))
-
+    :premises ((has (tensor (tagged b1 ?P1) (tagged b0 ?P2))))
+    :conclusion (has (tensor (tagged b1 ?P1) (tagged b0 ?P2))))
   (rule gate-rcnot-zu
-    :premises ((has (tensor (tagged qz ?P1) (tagged qu ?P2))))
-    :conclusion (has (tensor (tagged qu ?P1) (tagged qu ?P2))))
-
+    :premises ((has (tensor (tagged b0 ?P1) (tagged b1 ?P2))))
+    :conclusion (has (tensor (tagged b1 ?P1) (tagged b1 ?P2))))
   (rule gate-rcnot-uu
-    :premises ((has (tensor (tagged qu ?P1) (tagged qu ?P2))))
-    :conclusion (has (tensor (tagged qz ?P1) (tagged qu ?P2))))
+    :premises ((has (tensor (tagged b1 ?P1) (tagged b1 ?P2))))
+    :conclusion (has (tensor (tagged b0 ?P1) (tagged b1 ?P2))))
 )
 
 (check-theory GUTPhys)
@@ -367,23 +525,203 @@
 
 ;;; ═══════════════════════════════════════════════════════════════════
 ;;;  ╔════════════════════════════════════════════════════════════╗
-;;;  ║  PART I: CONSTRUCTIVE PROOFS — Allowed Reactions          ║
+;;;  ║  PART I: STRONG / EM REACTIONS                            ║
 ;;;  ╚════════════════════════════════════════════════════════════╝
 ;;; ═══════════════════════════════════════════════════════════════════
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
-;;;  1. BETA DECAY:  n → p + e⁻ + ν̄ₑ
+;;;  1. PAIR PRODUCTION:  γ + γ → e⁻ + e⁺  (EM scatter)
 ;;; ═══════════════════════════════════════════════════════════════════
 ;;;
-;;;  The classic weak nuclear process. A neutron decays into a proton,
-;;;  an electron, and an electron antineutrino.
+;;;  Two photons annihilate into an electron-positron pair.
+;;;  REQUIRES two photons — a single photon cannot produce massive
+;;;  particles (blocked by interact-decay mass threshold).
+;;;  cms ≥ mass(e)+mass(e⁺) = 1+1 = 2.
 ;;;
-;;;  Conservation check (all computed by rewrite normalization):
-;;;    Q: 0 → (+1) + (-1) + 0 = 0     ✓
-;;;    B: +1 → (+1) + 0 + 0 = +1      ✓
-;;;    L: 0 → 0 + (+1) + (-1) = 0     ✓
-;;;    Confined: all 0                  ✓
+;;;    Q: 0+0 = 0 → (-3)+3 = 0       ✓
+;;;    B: 0 → 0                        ✓
+;;;    L: 0 → 3+(-3) = 0              ✓
+;;;    S: 0 → 0                        ✓
+;;;    C: 0 → 0                        ✓
+;;;    Tri: t0+t0=t0 → t0+t0=t0       ✓
+;;;    Mass: cms(2) ≥ 1+1 = 2         ✓
+
+(proof pair-production :theory GUTPhys
+  :assumptions (
+    (has (particle photon))
+    (has (particle photon))
+    (cms-energy (s (s z))))
+  :goal (has (tensor (particle electron) (particle positron)))
+  :derivation
+    (interact-scatter-strong
+      (tensor-intro (assumption 0) (assumption 1))
+      (conserve-strong (eq-refl) (eq-refl) (eq-refl) (eq-refl) (eq-refl)
+                       (eq-tri-refl) (eq-tri-refl)
+                       (eq-bool-refl) (eq-bool-refl))
+      (assumption 2)
+      (eq-mc-refl)))
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  2. ANNIHILATION:  e⁻ + e⁺ → γ + γ  (EM scatter)
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  Matter meets antimatter → two photons.
+;;;
+;;;    Q: (-3)+3 = 0 → 0+0 = 0       ✓
+;;;    B: 0 → 0                        ✓
+;;;    L: 3+(-3) = 0 → 0              ✓
+;;;    S: 0 → 0                        ✓
+;;;    C: 0 → 0                        ✓
+;;;    Tri: t0+t0=t0 → t0+t0=t0       ✓
+
+(proof annihilation :theory GUTPhys
+  :assumptions (
+    (has (particle electron))
+    (has (particle positron))
+    (cms-energy (s (s z))))
+  :goal (has (tensor (particle photon) (particle photon)))
+  :derivation
+    (interact-scatter-strong
+      (tensor-intro (assumption 0) (assumption 1))
+      (conserve-strong (eq-refl) (eq-refl) (eq-refl) (eq-refl) (eq-refl)
+                       (eq-tri-refl) (eq-tri-refl)
+                       (eq-bool-refl) (eq-bool-refl))
+      (assumption 2)
+      (eq-mc-refl)))
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  3. COMPTON SCATTERING:  e⁻ + γ → e⁻ + γ  (EM scatter)
+;;; ═══════════════════════════════════════════════════════════════════
+
+(proof compton-scattering :theory GUTPhys
+  :assumptions (
+    (has (tensor (particle electron) (particle photon)))
+    (cms-energy (s z)))
+  :goal (has (tensor (particle electron) (particle photon)))
+  :derivation
+    (interact-scatter-strong
+      (assumption 0)
+      (conserve-strong (eq-refl) (eq-refl) (eq-refl) (eq-refl) (eq-refl)
+                       (eq-tri-refl) (eq-tri-refl)
+                       (eq-bool-refl) (eq-bool-refl))
+      (assumption 1)
+      (eq-mc-refl)))
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  4. MESON FORMATION:  u + ū → π⁰ + γ  (strong, spectator photon)
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  A quark and antiquark combine into a pion. Spectator photon
+;;;  absorbs recoil momentum (scatter requires 2+ output).
+;;;
+;;;    Q: 2+(-2) = 0 → 0+0 = 0       ✓
+;;;    B: 1+(-1) = 0 → 0+0 = 0       ✓
+;;;    S: 0 → 0                        ✓
+;;;    C: 0 → 0                        ✓
+;;;    Tri: t1+t2=t0 → t0+t0=t0       ✓
+;;;    Mass: cms(2) ≥ 2+0 = 2         ✓
+
+(proof meson-formation :theory GUTPhys
+  :assumptions (
+    (has (particle up-quark))
+    (has (particle anti-up))
+    (cms-energy (s (s z))))
+  :goal (has (tensor (particle pion-zero) (particle photon)))
+  :derivation
+    (interact-scatter-strong
+      (tensor-intro (assumption 0) (assumption 1))
+      (conserve-strong (eq-refl) (eq-refl) (eq-refl) (eq-refl) (eq-refl)
+                       (eq-tri-refl) (eq-tri-refl)
+                       (eq-bool-refl) (eq-bool-refl))
+      (assumption 2)
+      (eq-mc-refl)))
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  5. BARYON FORMATION:  u + u + d → p + γ  (strong, spectator)
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  Three quarks combine into a proton.
+;;;
+;;;    Q: 2+2+(-1) = 3 → 3+0 = 3     ✓
+;;;    B: 1+1+1 = 3 → 3+0 = 3        ✓
+;;;    S: 0 → 0                        ✓
+;;;    C: 0 → 0                        ✓
+;;;    Tri: t1+t1+t1 = t2+t1 = t0
+;;;         → t0+t0 = t0              ✓
+;;;    Mass: cms(5) ≥ 5+0 = 5         ✓
+
+(proof baryon-formation :theory GUTPhys
+  :assumptions (
+    (has (particle up-quark))
+    (has (particle up-quark))
+    (has (particle down-quark))
+    (cms-energy (s (s (s (s (s z)))))))
+  :goal (has (tensor (particle proton) (particle photon)))
+  :derivation
+    (interact-scatter-strong
+      (tensor-intro (assumption 0)
+        (tensor-intro (assumption 1) (assumption 2)))
+      (conserve-strong (eq-refl) (eq-refl) (eq-refl) (eq-refl) (eq-refl)
+                       (eq-tri-refl) (eq-tri-refl)
+                       (eq-bool-refl) (eq-bool-refl))
+      (assumption 3)
+      (eq-mc-refl)))
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  6. STRANGE MESON:  u + s̄ → K⁺ + γ  (strong)
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  Demonstrates strangeness conservation in strong interaction:
+;;;
+;;;    Q: 2+1 = 3 → 3+0 = 3          ✓
+;;;    B: 1+(-1) = 0 → 0+0 = 0       ✓
+;;;    S: 0+1 = 1 → 1+0 = 1          ✓  (conserved!)
+;;;    C: 0 → 0                        ✓
+;;;    Tri: t1+t2=t0 → t0+t0=t0       ✓
+;;;    Mass: cms(3) ≥ 3+0 = 3         ✓
+
+(proof strange-meson-formation :theory GUTPhys
+  :assumptions (
+    (has (particle up-quark))
+    (has (particle anti-strange))
+    (cms-energy (s (s (s z)))))
+  :goal (has (tensor (particle kaon-plus) (particle photon)))
+  :derivation
+    (interact-scatter-strong
+      (tensor-intro (assumption 0) (assumption 1))
+      (conserve-strong (eq-refl) (eq-refl) (eq-refl) (eq-refl) (eq-refl)
+                       (eq-tri-refl) (eq-tri-refl)
+                       (eq-bool-refl) (eq-bool-refl))
+      (assumption 2)
+      (eq-mc-refl)))
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  ╔════════════════════════════════════════════════════════════╗
+;;;  ║  PART II: WEAK REACTIONS                                  ║
+;;;  ╚════════════════════════════════════════════════════════════╝
+;;; ═══════════════════════════════════════════════════════════════════
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  7. BETA DECAY:  n → p + e⁻ + ν̄ₑ  (weak decay)
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  The classic weak process. Uses interact-decay-weak because beta
+;;;  decay IS a weak process (W boson mediates d→u+e⁻+ν̄ₑ).
+;;;  S and C happen to be conserved here, but the rule doesn't check.
+;;;
+;;;    Q: 0 → 3+(-3)+0 = 0            ✓
+;;;    B: 3 → 3+0+0 = 3               ✓
+;;;    L: 0 → 0+3+(-3) = 0            ✓
+;;;    Tri: t0 → t0+t0+t0 = t0        ✓
+;;;    Mass: 6 ≥ 5+1+0 = 6            ✓  (exactly at threshold)
 
 (proof beta-decay :theory GUTPhys
   :assumptions ((has (particle neutron)))
@@ -391,120 +729,79 @@
                (tensor (particle electron)
                        (particle antineutrino))))
   :derivation
-    (interact
+    (interact-decay-weak
       (assumption)
-      (conserve-all (eq-refl) (eq-refl) (eq-refl)
-                    (eq-refl) (eq-refl))))
+      (conserve-weak (eq-refl) (eq-refl) (eq-refl)
+                     (eq-tri-refl) (eq-tri-refl)
+                     (eq-bool-refl) (eq-bool-refl))
+      (eq-mc-refl)))
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
-;;;  2. INVERSE BETA DECAY:  ν̄ₑ + p → n + e⁺
+;;;  8. INVERSE BETA:  ν̄ₑ + p → n + e⁺  (weak scatter)
 ;;; ═══════════════════════════════════════════════════════════════════
 ;;;
 ;;;  The reverse weak process. Used in neutrino detectors.
 ;;;
-;;;  Conservation check:
-;;;    Q: 0 + (+1) = +1,  0 + (+1) = +1    ✓
-;;;    B: 0 + (+1) = +1,  (+1) + 0 = +1    ✓
-;;;    L: (-1) + 0 = -1,  0 + (-1) = -1    ✓
+;;;    Q: 0+3 = 3 → 0+3 = 3           ✓
+;;;    B: 0+3 = 3 → 3+0 = 3           ✓
+;;;    L: (-3)+0 = -3 → 0+(-3) = -3   ✓
+;;;    Tri: t0+t0=t0 → t0+t0=t0       ✓
+;;;    Mass: cms(7) ≥ 6+1 = 7         ✓
 
 (proof inverse-beta :theory GUTPhys
-  :assumptions ((has (tensor (particle antineutrino) (particle proton))))
+  :assumptions (
+    (has (tensor (particle antineutrino) (particle proton)))
+    (cms-energy (s (s (s (s (s (s (s z)))))))))
   :goal (has (tensor (particle neutron) (particle positron)))
   :derivation
-    (interact
-      (assumption)
-      (conserve-all (eq-refl) (eq-refl) (eq-refl)
-                    (eq-refl) (eq-refl))))
+    (interact-scatter-weak
+      (assumption 0)
+      (conserve-weak (eq-refl) (eq-refl) (eq-refl)
+                     (eq-tri-refl) (eq-tri-refl)
+                     (eq-bool-refl) (eq-bool-refl))
+      (assumption 1)
+      (eq-mc-refl)))
 
 
-;;; ═══════════════════════════════════════════════════════════════════
-;;;  3. PAIR PRODUCTION:  γ → e⁻ + e⁺
-;;; ═══════════════════════════════════════════════════════════════════
+;;; 9. KAON WEAK DECAY:  K⁺ → π⁰ + e⁺ + ν  (weak decay, ΔS=1)
 ;;;
-;;;  A photon converts to an electron-positron pair.
-;;;  Matter created from pure energy — but all quantum numbers
-;;;  cancel: the particle-antiparticle pair has net zero everything.
-;;;
-;;;    Q: 0 → (-1) + (+1) = 0     ✓
-;;;    B: 0 → 0 + 0 = 0           ✓
-;;;    L: 0 → (+1) + (-1) = 0     ✓
+;;;    This was IMPOSSIBLE in v3 (strangeness conservation blocked it).
+;;;    Now derivable because the weak interaction does not conserve S:
+;;;      Q: +3 → 0+3+0 = 3    ✓
+;;;      B: 0 → 0              ✓
+;;;      L: 0 → 0+(-3)+3 = 0  ✓
+;;;      S: +1 → 0+0+0 = 0    (ΔS = -1, allowed by weak!)
+;;;      Mass: 3 ≥ 2+1+0 = 3  ✓
 
-(proof pair-production :theory GUTPhys
-  :assumptions ((has (particle photon)))
-  :goal (has (tensor (particle electron) (particle positron)))
+(proof kaon-weak-decay :theory GUTPhys
+  :assumptions ((has (particle kaon-plus)))
+  :goal (has (tensor (particle pion-zero)
+               (tensor (particle positron)
+                       (particle neutrino))))
   :derivation
-    (interact
+    (interact-decay-weak
       (assumption)
-      (conserve-all (eq-refl) (eq-refl) (eq-refl)
-                    (eq-refl) (eq-refl))))
-
-
-;;; ═══════════════════════════════════════════════════════════════════
-;;;  4. ANNIHILATION:  e⁻ + e⁺ → γ + γ
-;;; ═══════════════════════════════════════════════════════════════════
-;;;
-;;;  Matter meets antimatter: an electron and positron annihilate
-;;;  into two photons. The inverse of pair production.
-;;;
-;;;  Uses tensor-intro to combine the two input particles before
-;;;  feeding them to the interact rule.
-;;;
-;;;    Q: (-1) + (+1) = 0 → 0 + 0 = 0     ✓
-;;;    L: (+1) + (-1) = 0 → 0 + 0 = 0     ✓
-
-(proof annihilation :theory GUTPhys
-  :assumptions ((has (particle electron)) (has (particle positron)))
-  :goal (has (tensor (particle photon) (particle photon)))
-  :derivation
-    (interact
-      (tensor-intro (assumption 0) (assumption 1))
-      (conserve-all (eq-refl) (eq-refl) (eq-refl)
-                    (eq-refl) (eq-refl))))
-
-
-;;; ═══════════════════════════════════════════════════════════════════
-;;;  5. COMPTON SCATTERING:  e⁻ + γ → e⁻ + γ
-;;; ═══════════════════════════════════════════════════════════════════
-;;;
-;;;  A photon bounces off an electron. Both particles survive.
-;;;  Conservation is trivially satisfied (input = output types).
-
-(proof compton-scattering :theory GUTPhys
-  :assumptions ((has (tensor (particle electron) (particle photon))))
-  :goal (has (tensor (particle electron) (particle photon)))
-  :derivation
-    (interact
-      (assumption)
-      (conserve-all (eq-refl) (eq-refl) (eq-refl)
-                    (eq-refl) (eq-refl))))
+      (conserve-weak (eq-refl) (eq-refl) (eq-refl)
+                     (eq-tri-refl) (eq-tri-refl)
+                     (eq-bool-refl) (eq-bool-refl))
+      (eq-mc-refl)))
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
 ;;;  ╔════════════════════════════════════════════════════════════╗
-;;;  ║  PART II: IMPOSSIBILITY RESULTS — The Laws of Nature      ║
+;;;  ║  PART III: IMPOSSIBILITY — Conservation Checks            ║
 ;;;  ╚════════════════════════════════════════════════════════════╝
-;;;
-;;;  Each refutation exhaustively searches ALL possible derivation
-;;;  paths and proves that no proof exists. The conservation laws
-;;;  expressed as rewrite rules + eq-refl form an IMPENETRABLE wall:
-;;;  if the quantum numbers don't balance, no derivation can succeed.
 ;;; ═══════════════════════════════════════════════════════════════════
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
-;;;  6. NO PROTON DECAY:  p ⊬ e⁺ + π⁰
+;;;  10. NO PROTON DECAY:  p ⊬ e⁺ + π⁰
 ;;; ═══════════════════════════════════════════════════════════════════
 ;;;
-;;;  Proton decay is predicted by some Grand Unified Theories (GUT)
-;;;  but has NEVER been observed. In the Standard Model, baryon
-;;;  number conservation forbids it.
-;;;
-;;;  Why it fails:
-;;;    B: (+1) → 0 + 0 = 0    ✗  (baryon number violation)
-;;;
-;;;  The search engine tries interact with every possible output,
-;;;  but conserve-all always fails on the baryon check.
+;;;  Baryon number violation: B goes from 3 → 0.
+;;;  Blocked by both strong and weak conservation (both check B).
+;;;  Predicted by some GUTs, never observed experimentally.
 
 (refute no-proton-decay
   :theory GUTPhys
@@ -514,17 +811,13 @@
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
-;;;  7. COLOR CONFINEMENT:  p ⊬ up-quark
+;;;  11. NO QUARK ESCAPE:  p ⊬ u
 ;;; ═══════════════════════════════════════════════════════════════════
 ;;;
-;;;  An up quark can never appear as a free particle.
-;;;  This models color confinement: quarks are always bound
-;;;  inside hadrons.
-;;;
-;;;  Why it fails:
-;;;    Confined: 0 (input is free) but +1 (output is confined)
-;;;    The conserve-all rule requires total-confined = 0 for
-;;;    the output — quarks violate this.
+;;;  An isolated quark can never appear. The output has triality=t1,
+;;;  which fails the center-neutral check (t0) in both conservation
+;;;  rules. This is the Z₃ obstruction: colored states cannot
+;;;  escape to be observed.
 
 (refute no-quark-escape
   :theory GUTPhys
@@ -534,16 +827,10 @@
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
-;;;  8. NO CHARGE CREATION:  γ ⊬ e⁻
+;;;  12. NO CHARGE CREATION:  γ ⊬ e⁻
 ;;; ═══════════════════════════════════════════════════════════════════
 ;;;
-;;;  A photon cannot produce a lone electron. Electric charge
-;;;  is strictly conserved — you can only create charged particles
-;;;  in particle-antiparticle pairs.
-;;;
-;;;  Why it fails:
-;;;    Q: 0 → (-1)    ✗  (charge violation)
-;;;    L: 0 → (+1)    ✗  (lepton violation too!)
+;;;  Q: 0 → -3, L: 0 → +3. Both violated.
 
 (refute no-charge-creation
   :theory GUTPhys
@@ -553,18 +840,10 @@
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
-;;;  9. NO BARYON GENESIS:  γ ⊬ p
+;;;  13. NO BARYON GENESIS:  γ ⊬ p
 ;;; ═══════════════════════════════════════════════════════════════════
 ;;;
-;;;  A photon cannot create a proton from nothing. Both charge
-;;;  and baryon number would be violated.
-;;;
-;;;  (The actual baryon asymmetry of the universe — why there is
-;;;  more matter than antimatter — requires physics BEYOND the
-;;;  Standard Model. Our conservation laws provably forbid it.)
-;;;
-;;;    Q: 0 → (+1)    ✗
-;;;    B: 0 → (+1)    ✗
+;;;  Q: 0 → +3, B: 0 → +3. Both violated.
 
 (refute no-baryon-genesis
   :theory GUTPhys
@@ -574,14 +853,10 @@
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
-;;;  10. NO LEPTON ALCHEMY:  e⁻ ⊬ ν̄ₑ
+;;;  14. NO LEPTON ALCHEMY:  e⁻ ⊬ ν̄ₑ
 ;;; ═══════════════════════════════════════════════════════════════════
 ;;;
-;;;  An electron cannot transmute into an antineutrino.
-;;;  This violates BOTH charge conservation AND lepton number.
-;;;
-;;;    Q: (-1) → 0      ✗  (charge violation)
-;;;    L: (+1) → (-1)   ✗  (lepton number violation)
+;;;  Q: -3 → 0, L: +3 → -3. Both violated.
 
 (refute no-lepton-alchemy
   :theory GUTPhys
@@ -591,298 +866,213 @@
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
+;;;  15. NO VACUUM PAIR PRODUCTION:  γ ⊬ e⁻ + e⁺
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  A single photon cannot produce a massive pair. Conservation of
+;;;  Q/B/L all pass, but the mass threshold blocks it:
+;;;  mass(γ)=0 < mass(e)+mass(e⁺)=2.
+;;;
+;;;  In reality, this is blocked by 4-momentum conservation (a
+;;;  massless on-shell photon cannot produce massive pairs in any
+;;;  frame). Our mass threshold is an acceptable proxy.
+
+(refute no-vacuum-pair-production
+  :theory GUTPhys
+  :assumptions ((has (particle photon)))
+  :goal (has (tensor (particle electron) (particle positron)))
+  :depth 5)
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  16. NO DIQUARK:  u + u ⊬ p
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  Two quarks cannot form a center-neutral state.
+;;;  Triality: t1+t1 = t2 ≠ t0. Need three quarks (t1+t1+t1=t0).
+
+(refute no-diquark
+  :theory GUTPhys
+  :assumptions ((has (particle up-quark)) (has (particle up-quark)))
+  :goal (has (particle proton))
+  :depth 5)
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  17. NO CHARM FROM LIGHT QUARKS:  u + d ⊬ c + d
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  Cannot create charm quarks from non-charm quarks.
+;;;  Center-neutral blocks: both sides have triality t1+t1=t2≠t0.
+;;;  Additionally, charm conservation (in strong mode) would block
+;;;  even in a center-neutral configuration: C goes from 0 → 1.
+
+(refute no-charm-from-light
+  :theory GUTPhys
+  :assumptions (
+    (has (particle up-quark))
+    (has (particle down-quark)))
+  :goal (has (tensor (particle charm-quark) (particle down-quark)))
+  :depth 5)
+
+
+;;; ═══════════════════════════════════════════════════════════════════
 ;;;  ╔════════════════════════════════════════════════════════════╗
-;;;  ║  PART III: INFORMATION PHYSICS — Thermodynamics Derived   ║
+;;;  ║  PART IV: CLASSICAL INFORMATION — Reversible Bit Gates    ║
 ;;;  ╚════════════════════════════════════════════════════════════╝
-;;;
-;;;  "Thermodynamics is particle physics with the lights off."
-;;;
-;;;  In RevPhys, we proved thermodynamic laws using abstract bits.
-;;;  Here, we prove the SAME laws using real particles:
-;;;    - Cold bit (z)  →  cold photon:  (tagged qz photon)
-;;;    - Hot bit (u)   →  hot electron: (tagged qu electron)
-;;;    - Fuel          →  photon from the environment
-;;;    - Waste         →  photon carrying away entropy
-;;;
-;;;  The gate rules (CNOT/RCNOT) are the physical mechanism:
-;;;    - Measurement = CNOT (observer becomes correlated)
-;;;    - Erasure = SWAP = CNOT + RCNOT (entropy to environment)
-;;;    - Bennett = Compute + Copy + Uncompute (zero garbage)
-;;;
-;;;  The conservation laws enforce the constraints:
-;;;    - tagged resources have confined=1 → interact CANNOT flip qubits
-;;;    - Only gate rules manipulate information
-;;;    - Gates require TWO particles → can't cool in isolation
 ;;; ═══════════════════════════════════════════════════════════════════
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
-;;;  11. PHYSICAL MEASUREMENT (Von Neumann Pre-Measurement)
+;;;  18. PHYSICAL MEASUREMENT (Von Neumann Pre-Measurement)
 ;;; ═══════════════════════════════════════════════════════════════════
 ;;;
 ;;;  An electron (system) scatters off a photon (observer).
-;;;  The photon's qubit becomes correlated with the electron's.
-;;;  This IS the physical CNOT: a gauge boson exchange.
-;;;
-;;;    System:   e⁻(qu)  →  e⁻(qu)  (unchanged)
-;;;    Observer: γ(qz)   →  γ(qu)   (now carries record)
-;;;
-;;;  The observer "measured" the system — not by magical collapse,
-;;;  but by a physical scattering event (CNOT).
+;;;  The photon's bit becomes correlated with the electron's.
+;;;    System:   e⁻(b1)  →  e⁻(b1)  (unchanged)
+;;;    Observer: γ(b0)   →  γ(b1)   (now carries record)
 
 (proof physical-measurement :theory GUTPhys
   :assumptions (
-    (has (tagged qu electron))     ;; System: hot electron
-    (has (tagged qz photon)))      ;; Observer: cold photon (blank tape)
-  :goal (has (tensor (tagged qu electron) (tagged qu photon)))
+    (has (tagged b1 electron))
+    (has (tagged b0 photon)))
+  :goal (has (tensor (tagged b1 electron) (tagged b1 photon)))
   :derivation
     (gate-cnot-uz (tensor-intro (assumption 0) (assumption 1))))
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
-;;;  12. LANDAUER ERASURE (Entropy Transfer via Scattering)
+;;;  19. LANDAUER ERASURE (Entropy Transfer via Scattering)
 ;;; ═══════════════════════════════════════════════════════════════════
 ;;;
-;;;  To "erase" an electron's data, SWAP its qubit with a cold photon.
+;;;  To "erase" an electron's data, SWAP its bit with a cold photon.
 ;;;  SWAP = CNOT + RCNOT:
-;;;    CNOT(qu, qz) → (qu, qu)
-;;;    RCNOT(qu, qu) → (qz, qu)
-;;;
-;;;  The electron is reset (qz). The photon carries the entropy away.
-;;;
-;;;  This IS Landauer's principle derived from particle physics:
-;;;    "To erase 1 bit, emit 1 photon."  (kT ln 2 of energy)
+;;;    CNOT(b1, b0) → (b1, b1)
+;;;    RCNOT(b1, b1) → (b0, b1)
+;;;  The electron is reset (b0). The photon carries the entropy.
 
 (proof particle-erasure :theory GUTPhys
   :assumptions (
-    (has (tagged qu electron))     ;; System: hot electron (data to erase)
-    (has (tagged qz photon)))      ;; Environment: cold photon (fuel)
-  :goal (has (tensor (tagged qz electron) (tagged qu photon)))
-  ;;          electron reset!        photon carries waste heat
+    (has (tagged b1 electron))
+    (has (tagged b0 photon)))
+  :goal (has (tensor (tagged b0 electron) (tagged b1 photon)))
   :derivation
     (gate-rcnot-uu (gate-cnot-uz
       (tensor-intro (assumption 0) (assumption 1)))))
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
-;;;  13. CNOT INVOLUTION (Gate Self-Inverse)
+;;;  20. CNOT INVOLUTION (Gate Self-Inverse)
 ;;; ═══════════════════════════════════════════════════════════════════
 ;;;
-;;;  CNOT(CNOT(qu,qz)) = CNOT(qu,qu) = (qu,qz).
-;;;  Every reversible gate undoes itself. This is why uncomputing works.
+;;;  CNOT(CNOT(b1,b0)) = CNOT(b1,b1) = (b1,b0).
 
 (proof cnot-involution :theory GUTPhys
-  :assumptions ((has (tensor (tagged qu electron) (tagged qz photon))))
-  :goal (has (tensor (tagged qu electron) (tagged qz photon)))
+  :assumptions ((has (tensor (tagged b1 electron) (tagged b0 photon))))
+  :goal (has (tensor (tagged b1 electron) (tagged b0 photon)))
   :derivation
     (gate-cnot-uu (gate-cnot-uz (assumption))))
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
-;;;  14. MAXWELL'S DEMON (Measurement + Erasure Cycle)
+;;;  21. MAXWELL'S DEMON (Measurement + Erasure Cycle)
 ;;; ═══════════════════════════════════════════════════════════════════
 ;;;
 ;;;  The demon measures an electron, then erases its own memory.
-;;;
-;;;    Step 1: CNOT(electron, demon-photon) → (qu, qu)  [measure]
-;;;    Step 2: SWAP(demon-photon, env-photon) → (qz, qu)  [erase]
-;;;
-;;;  Input:  System(qu) + Demon(qz) + Environment(qz)
-;;;  Output: System(qu) + Demon(qz) + Environment(qu)
-;;;
-;;;  The electron is preserved. The demon's memory is clean.
-;;;  But the environment photon now carries the entropy.
-;;;
-;;;  This IS the exorcism of Maxwell's Demon:
-;;;    Measuring is free (CNOT costs nothing).
-;;;    Erasing the record costs exactly one cold photon.
-;;;    The demon is bound by Noether: momentum/energy conservation
-;;;    forces the photon exchange that carries away the entropy.
+;;;    Step 1: CNOT(electron, demon-photon) → (b1, b1)  [measure]
+;;;    Step 2: SWAP(demon-photon, env-photon) → (b0, b1) [erase]
 
 (proof maxwell-demon :theory GUTPhys
   :assumptions (
-    (has (tagged qu electron))     ;; System (particle to measure)
-    (has (tagged qz photon))       ;; Demon (memory, initially clean)
-    (has (tagged qz photon)))      ;; Environment (cold reservoir)
-  :goal (has (tensor (tagged qu electron)
-               (tensor (tagged qz photon)
-                       (tagged qu photon))))
+    (has (tagged b1 electron))
+    (has (tagged b0 photon))
+    (has (tagged b0 photon)))
+  :goal (has (tensor (tagged b1 electron)
+               (tensor (tagged b0 photon)
+                       (tagged b1 photon))))
   :derivation
-    ;; Step 1: CNOT(system, demon) → (qu, qu)
     (tensor-elim
       (gate-cnot-uz (tensor-intro (assumption 0) (assumption 1)))
-      ;; Context adds: e(qu) + demon(qu)
-      ;; Step 2: SWAP(demon, env) = CNOT + RCNOT
       (tensor-intro
-        (assumption)       ;; e(qu) from context extension
+        (assumption)
         (gate-rcnot-uu (gate-cnot-uz
           (tensor-intro (assumption) (assumption 2)))))))
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
-;;;  15. BENNETT'S TRICK (Compute + Copy + Uncompute = Zero Garbage)
+;;;  22. BENNETT'S TRICK (Compute + Copy + Uncompute = Zero Garbage)
 ;;; ═══════════════════════════════════════════════════════════════════
 ;;;
 ;;;  The reversible computation protocol:
-;;;    1. Compute:   CNOT(input, ancilla)  → (qu, qu)
-;;;    2. Copy out:  CNOT(ancilla, output) → (qu, qu)
-;;;    3. Uncompute: CNOT(input, ancilla)  → (qu, qz)  [ancilla cleaned!]
-;;;
-;;;  Input:  e⁻(qu) + γ₁(qz) + γ₂(qz)
-;;;  Output: e⁻(qu) ⊗ γ₁(qz) ⊗ γ₂(qu)
-;;;          ↑ preserved  ↑ cleaned   ↑ has copy
-;;;
+;;;    1. Compute:   CNOT(input, ancilla)  → (b1, b1)
+;;;    2. Copy out:  CNOT(ancilla, output) → (b1, b1)
+;;;    3. Uncompute: CNOT(input, ancilla)  → (b1, b0)
 ;;;  The ancilla is borrowed and returned clean — a catalyst.
-;;;  No information erased. No entropy produced. No energy wasted.
-;;;  This is how reversible computers avoid Landauer's heat.
 
 (proof particle-bennett :theory GUTPhys
   :assumptions (
-    (has (tagged qu electron))     ;; x: input
-    (has (tagged qz photon))       ;; a: ancilla
-    (has (tagged qz photon)))      ;; o: output register
-  :goal (has (tensor (tagged qu electron)
-               (tensor (tagged qz photon)
-                       (tagged qu photon))))
+    (has (tagged b1 electron))
+    (has (tagged b0 photon))
+    (has (tagged b0 photon)))
+  :goal (has (tensor (tagged b1 electron)
+               (tensor (tagged b0 photon)
+                       (tagged b1 photon))))
   :derivation
-    ;; Step 1: CNOT(x, a) → (qu, qu) [compute]
     (tensor-elim
       (gate-cnot-uz (tensor-intro (assumption 0) (assumption 1)))
-
-      ;; Step 2: CNOT(a, o) → (qu, qu) [copy result to output]
       (tensor-elim
         (gate-cnot-uz (tensor-intro (assumption) (assumption 2)))
-
-        ;; Step 3: CNOT(x, a) → (qu, qz) [uncompute! ancilla cleaned]
         (tensor-elim
           (gate-cnot-uu (tensor-intro (assumption) (assumption)))
-
-          ;; Assemble: x(qu) ⊗ (a(qz) ⊗ o(qu))
           (tensor-intro (assumption)
             (tensor-intro (assumption) (assumption)))))))
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
 ;;;  ╔════════════════════════════════════════════════════════════╗
-;;;  ║  PART IV: INFORMATION IMPOSSIBILITY — The Laws of Heat    ║
+;;;  ║  PART V: INFORMATION IMPOSSIBILITY                        ║
 ;;;  ╚════════════════════════════════════════════════════════════╝
-;;;
-;;;  These refutations prove that thermodynamic laws emerge from
-;;;  the structure of reversible gates. No conservation law is
-;;;  needed — the gate rules themselves enforce information theory.
 ;;; ═══════════════════════════════════════════════════════════════════
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
-;;;  16. NO MAGICAL COOLING (Landauer is Mandatory)
+;;;  23. NO MAGICAL COOLING (Landauer is Mandatory)
 ;;; ═══════════════════════════════════════════════════════════════════
 ;;;
-;;;  An electron cannot be cooled (qu → qz) without emitting a
-;;;  particle to carry away the entropy.
-;;;
-;;;  Why it fails:
-;;;    - interact: blocked (tagged has confined=1)
-;;;    - Gate rules: require tensor(P1, P2) — need TWO particles
-;;;    - Only one particle available — no gate can fire
-;;;
-;;;  This is Landauer's principle as a theorem of particle physics:
-;;;  you MUST exchange a gauge boson (emit a photon) to erase data.
+;;;  An electron cannot be cooled (b1→b0) without emitting a particle
+;;;  to carry away the entropy. Gate rules require two particles.
 
 (refute no-magical-cooling
   :theory GUTPhys
-  :assumptions ((has (tagged qu electron)))
-  :goal (has (tagged qz electron))
+  :assumptions ((has (tagged b1 electron)))
+  :goal (has (tagged b0 electron))
   :depth 5)
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
-;;;  17. SECOND LAW (No Total Information Destruction)
+;;;  24. SECOND LAW (No Total Information Destruction)
 ;;; ═══════════════════════════════════════════════════════════════════
 ;;;
-;;;  An electron-photon pair cannot both become cold.
-;;;  CNOT can rearrange the qubits but cannot destroy information:
-;;;    CNOT(qu, qz) → (qu, qu)     — can't cool the first
-;;;    RCNOT(qu, qz) → (qu, qz)   — identity
-;;;    Any sequence: always one hot bit survives
-;;;
-;;;  This IS the Second Law of Thermodynamics:
-;;;  total entropy of system + environment never decreases.
+;;;  A (b1, b0) pair cannot both become b0. Gates rearrange bits
+;;;  but cannot destroy information: one hot bit always survives.
 
 (refute no-info-destruction
   :theory GUTPhys
-  :assumptions ((has (tensor (tagged qu electron) (tagged qz photon))))
-  :goal (has (tensor (tagged qz electron) (tagged qz photon)))
+  :assumptions ((has (tensor (tagged b1 electron) (tagged b0 photon))))
+  :goal (has (tensor (tagged b0 electron) (tagged b0 photon)))
   :depth 5)
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
-;;;  18. NO QUBIT CLONING (No-Cloning Theorem)
+;;;  25. NO BIT COPYING (Classical No-Cloning Without Ancilla)
 ;;; ═══════════════════════════════════════════════════════════════════
 ;;;
 ;;;  A single hot electron cannot become two hot electrons.
-;;;  Cloning requires an ancilla (a cold photon to CNOT onto).
-;;;  This is the No-Cloning Theorem of quantum mechanics.
+;;;  Copying requires an ancilla (a cold photon to CNOT onto).
+;;;  This is the classical reversible analogue of no-cloning.
 
-(refute no-qubit-cloning
+(refute no-bit-copying
   :theory GUTPhys
-  :assumptions ((has (tagged qu electron)))
-  :goal (has (tensor (tagged qu electron) (tagged qu electron)))
+  :assumptions ((has (tagged b1 electron)))
+  :goal (has (tensor (tagged b1 electron) (tagged b1 electron)))
   :depth 5)
-
-
-;;; ═══════════════════════════════════════════════════════════════════
-;;;  ╔════════════════════════════════════════════════════════════╗
-;;;  ║  MASTER TABLE                                             ║
-;;;  ╚════════════════════════════════════════════════════════════╝
-;;;
-;;;  LAYER 1: PARTICLE PHYSICS (conservation laws)
-;;;
-;;;    Particle      Q    B    L    Confined
-;;;    ─────────    ───  ───  ───  ─────────
-;;;    proton       +1   +1    0      0
-;;;    neutron       0   +1    0      0
-;;;    electron     -1    0   +1      0
-;;;    positron     +1    0   -1      0
-;;;    neutrino      0    0   +1      0
-;;;    antineutrino  0    0   -1      0
-;;;    photon        0    0    0      0
-;;;    pion-zero     0    0    0      0
-;;;    up-quark     +1    0    0     +1  (CONFINED)
-;;;    down-quark   -1    0    0     +1  (CONFINED)
-;;;    tagged(q,p)   =p   =p   =p   +1  (INFO LAYER)
-;;;
-;;;  LAYER 2: INFORMATION PHYSICS (gate rules)
-;;;
-;;;    Gate     Input        Output       Physical Process
-;;;    ────     ─────        ──────       ────────────────
-;;;    CNOT     (qu, qz)  →  (qu, qu)    Measurement
-;;;    RCNOT    (qu, qu)  →  (qz, qu)    Completing SWAP
-;;;    SWAP     (qu, qz)  →  (qz, qu)    Landauer erasure
-;;;
-;;;  VERIFIED REACTIONS (10):
-;;;    Beta decay:      n → p + e⁻ + ν̄ₑ           interact
-;;;    Inverse beta:    ν̄ₑ + p → n + e⁺            interact
-;;;    Pair production: γ → e⁻ + e⁺                interact
-;;;    Annihilation:    e⁻ + e⁺ → γ + γ            interact
-;;;    Compton:         e⁻ + γ → e⁻ + γ            interact
-;;;    Measurement:     e(qu)+γ(qz) → e(qu)⊗γ(qu)  CNOT
-;;;    Erasure:         e(qu)+γ(qz) → e(qz)⊗γ(qu)  SWAP
-;;;    Involution:      CNOT(CNOT(qu,qz)) = (qu,qz)
-;;;    Maxwell demon:   e(qu)+γ(qz)+γ(qz) → ...    CNOT+SWAP
-;;;    Bennett trick:   compute+copy+uncompute       3×CNOT
-;;;
-;;;  REFUTED REACTIONS (8):
-;;;    Proton decay:    p ⊬ e⁺ + π⁰              B violated
-;;;    Quark escape:    p ⊬ up-quark              confinement
-;;;    Charge creation: γ ⊬ e⁻                   Q + L violated
-;;;    Baryon genesis:  γ ⊬ p                     Q + B violated
-;;;    Lepton alchemy:  e⁻ ⊬ ν̄ₑ                  Q + L violated
-;;;    Magical cooling: e(qu) ⊬ e(qz)            no environment
-;;;    Info destruction: (qu,qz) ⊬ (qz,qz)       second law
-;;;    Qubit cloning:   e(qu) ⊬ e(qu)⊗e(qu)      no ancilla
-;;;
-;;;  HIERARCHY:
-;;;    PhysRes (affine)  →  RevPhys (linear)  →  GUTPhys
-;;;    fuel/waste axioms    CNOT + unitarity      particles + gates
-;;;    phenomenological     fundamental           the FULL picture
-;;; ═══════════════════════════════════════════════════════════════════
