@@ -57,7 +57,7 @@
 ;;;    Quarks classified as timelike (physical causal class, not Nat mass).
 ;;;    Bethe-Heitler: γ+target → e⁻+e⁺+target (recoil pair production).
 ;;;
-;;;  RESULTS: 21 proofs (VALID) + 20 refutations (VERIFIED) = 41
+;;;  RESULTS: 21 proofs (VALID) + 23 refutations (VERIFIED) = 44
 ;;;
 ;;;  Remaining simplifications: no bottom/top quarks, single L
 ;;;  (no Lₑ/Lμ/Lτ), no spin, no CKM matrix, discrete mass scale.
@@ -1931,3 +1931,73 @@
 ;;; definitive SR-only refutation is 38R (collinear pair production),
 ;;; where the output (e⁻+e⁺) DIFFERS from the input (γ+γ) and thus
 ;;; requires an actual scatter reaction that SR can gate.
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  ╔════════════════════════════════════════════════════════════╗
+;;;  ║  PART X: FUNDAMENTAL IMPOSSIBILITIES                      ║
+;;;  ╚════════════════════════════════════════════════════════════╝
+;;; ═══════════════════════════════════════════════════════════════════
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  40R. VACUUM STABILITY:  ∅ ⊬ γ  (nothing from nothing)
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  The most fundamental impossibility: with zero assumptions, no
+;;;  particle can be derived — not even a massless photon. Every rule
+;;;  that produces `has` requires at least one `has` premise (interact-
+;;;  scatter, interact-decay, tensor-intro, tensor-elim, gates).
+;;;  The vacuum is stable.
+
+(refute vacuum-stability
+  :theory GUTPhys
+  :assumptions ()
+  :goal (has (particle photon))
+  :depth 3)
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  41R. PHOTON CANNOT SPLIT:  γ ⊬ γ+γ  (affine + no vertex)
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  A single photon cannot become two photons. Two obstructions:
+;;;    1. Affine context: the one `has(γ)` assumption is consumed once.
+;;;       tensor-intro needs two `has` premises — blocked.
+;;;    2. No decay vertex: `allowed ch (particle photon) ...` has no
+;;;       rewrite for any channel. interact-decay can't fire.
+;;;  In real physics: energy-momentum conservation forbids 1→2 for
+;;;  massless on-shell particles (the vertex vanishes kinematically).
+
+(refute no-photon-splitting
+  :theory GUTPhys
+  :assumptions ((has (particle photon)))
+  :goal (has (tensor (particle photon) (particle photon)))
+  :depth 5)
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  42R. INSUFFICIENT ENERGY:  γ+γ ⊬ e⁻+e⁺ at cms=1  (mass-only block)
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  A pure energy-threshold refutation. Every other check PASSES:
+;;;    Conservation: Q=B=L=S=C=0 → 0                                ✓
+;;;    Vertex: allow-em-pair exists                                  ✓
+;;;    SR: noncollinear witness provided                             ✓
+;;;    Free: true                                                    ✓
+;;;    Triality: t0 → t0                                             ✓
+;;;  The ONLY obstruction is energy:
+;;;    check-mass(1, 1+1=2) = check-mass(s(z), s(s(z)))
+;;;                         = check-mass(z, s(z)) = mass-fail  ✗
+;;;
+;;;  Compare with proof 1 (pair-production) which succeeds at cms=2.
+
+(refute insufficient-energy-pair
+  :theory GUTPhys
+  :assumptions (
+    (has (particle photon))
+    (has (particle photon))
+    (noncollinear-beams (tensor (particle photon) (particle photon)))
+    (cms-energy (s z)))
+  :goal (has (tensor (particle electron) (particle positron)))
+  :depth 5)
