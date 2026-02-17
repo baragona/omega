@@ -1,23 +1,38 @@
 ;;; ═══════════════════════════════════════════════════════════════════
-;;;  GUTPhys: Grand Unified Logic — The Standard Model in Omega
+;;;  GUTPhys v6: Typed Reaction Calculus — Standard Model in Omega
 ;;; ═══════════════════════════════════════════════════════════════════
 ;;;
-;;;  A resource theory encoding Standard Model conservation laws.
+;;;  A resource theory encoding Standard Model conservation laws
+;;;  as a typed reaction calculus with channel admissibility.
 ;;;
 ;;;  MODEL CONSTRAINTS (not fundamental laws):
 ;;;    - Q: electric charge (exact U(1)_EM gauge symmetry)
 ;;;    - B: baryon number (modelled global charge; sphalerons violate)
 ;;;    - L: lepton number (modelled global charge; sphalerons violate)
-;;;    - S: strangeness (conserved by strong/EM; violated by weak)
-;;;    - C: charm (conserved by strong/EM; violated by weak)
+;;;    - S: strangeness (conserved by strong/EM; |ΔS|≤1 for weak)
+;;;    - C: charm (conserved by strong/EM; |ΔC|≤1 for weak)
 ;;;    - Center-neutral: triality(Z₃) = t0 (NECESSARY but NOT
 ;;;      SUFFICIENT for color singlet — see §3)
 ;;;    - Mass/energy thresholds (proxy for 4-momentum conservation)
 ;;;
-;;;  TWO INTERACTION FAMILIES:
-;;;    strong/EM: conserves Q, B, L, S, C + center-neutral + energy
-;;;    weak:      conserves Q, B, L       + center-neutral + energy
-;;;              (allows ΔS, ΔC — no CKM constraint modelled)
+;;;  FOUR INTERACTION CHANNELS:
+;;;    strong: conserves Q,B,L,S,C + triality + vertex library  (penalty 0)
+;;;    em:     conserves Q,B,L,S,C + triality + vertex library  (penalty 1)
+;;;    weak:   conserves Q,B,L + single-W flavor + triality     (penalty 3)
+;;;    loop:   conserves Q,B,L,S,C + triality + vertex library  (penalty 5)
+;;;
+;;;  VERTEX LIBRARY: Each reaction must appear in the `allowed`
+;;;  table (10 vertices: 3 strong, 3 EM, 3 weak, 1 loop).
+;;;  Reactions not in the library are blocked even if conservation
+;;;  holds.
+;;;
+;;;  SUPPRESSION PENALTIES: strong=0, em=1, weak=3, loop=5.
+;;;  Budget-bounded `has-under` judgment gates reactions by cost.
+;;;
+;;;  SINGLE-W FLAVOR: |ΔS|+|ΔC|≤1 (Manhattan distance) enforced
+;;;  via `abs-delta-leq1` + `int-eq`. A single W boson changes at
+;;;  most one flavor quantum number. Blocks simultaneous ΔS=±1,
+;;;  ΔC=∓1 (e.g., s+ū→c̄+d).
 ;;;
 ;;;  SCATTER OUTPUT: 2+ particles (tensor). Prevents unphysical
 ;;;  2→1 processes like e⁻+e⁺→γ (forbidden by 4-momentum
@@ -30,6 +45,8 @@
 ;;;
 ;;;  INFORMATION LAYER: Classical reversible bits, NOT quantum.
 ;;;  CNOT/RCNOT implement truth tables on {0,1}.
+;;;
+;;;  RESULTS: 19 proofs (VALID) + 18 refutations (VERIFIED) = 37
 ;;;
 ;;;  Remaining simplifications: no bottom/top quarks, single L
 ;;;  (no Lₑ/Lμ/Lτ), no spin, no CKM matrix, discrete mass scale.
@@ -400,7 +417,135 @@
   (rewrite free-tagged  (is-free (tagged ?b ?p)) false)
 
   ;; ═════════════════════════════════════════════════════════════
-  ;; §9  JUDGMENTS AND RULES
+  ;; §9  CHANNELS, VERTEX LIBRARY, PENALTIES, WEAK FLAVOR
+  ;; ═════════════════════════════════════════════════════════════
+  ;;
+  ;; Four interaction channels: strong, em, weak, loop.
+  ;; Each reaction must be in the vertex library (allowed ch IN OUT → true).
+  ;; Channels carry suppression penalties: strong=0, em=1, weak=3, loop=5.
+  ;; Weak channel additionally requires |ΔS|+|ΔC|≤1 (single-W constraint).
+
+  (sort Channel)
+  (constructor strong : Channel)
+  (constructor em : Channel)
+  (constructor weak : Channel)
+  (constructor loop : Channel)
+
+  ;; --- Vertex library: allowed reactions per channel ---
+  (constructor allowed : (-> Channel Resource Resource Bool))
+
+  ;; Strong vertices
+  (rewrite allow-strong-meson
+    (allowed strong (tensor (particle up-quark) (particle anti-up))
+                    (tensor (particle pion-zero) (particle photon)))
+    true)
+  (rewrite allow-strong-baryon
+    (allowed strong (tensor (particle up-quark) (tensor (particle up-quark) (particle down-quark)))
+                    (tensor (particle proton) (particle photon)))
+    true)
+  (rewrite allow-strong-strange
+    (allowed strong (tensor (particle up-quark) (particle anti-strange))
+                    (tensor (particle kaon-plus) (particle photon)))
+    true)
+
+  ;; EM vertices
+  (rewrite allow-em-pair
+    (allowed em (tensor (particle photon) (particle photon))
+               (tensor (particle electron) (particle positron)))
+    true)
+  (rewrite allow-em-annihilate
+    (allowed em (tensor (particle electron) (particle positron))
+               (tensor (particle photon) (particle photon)))
+    true)
+  (rewrite allow-em-compton
+    (allowed em (tensor (particle electron) (particle photon))
+               (tensor (particle electron) (particle photon)))
+    true)
+
+  ;; Weak vertices (scatter)
+  (rewrite allow-weak-inverse-beta
+    (allowed weak (tensor (particle antineutrino) (particle proton))
+                  (tensor (particle neutron) (particle positron)))
+    true)
+
+  ;; Weak vertices (decay)
+  (rewrite allow-weak-beta
+    (allowed weak (particle neutron)
+                  (tensor (particle proton) (tensor (particle electron) (particle antineutrino))))
+    true)
+  (rewrite allow-weak-kaon
+    (allowed weak (particle kaon-plus)
+                  (tensor (particle pion-zero) (tensor (particle positron) (particle neutrino))))
+    true)
+
+  ;; Loop vertex (light-by-light scattering via virtual e± box)
+  (rewrite allow-loop-photon-scatter
+    (allowed loop (tensor (particle photon) (particle photon))
+                  (tensor (particle photon) (particle photon)))
+    true)
+
+  ;; --- Suppression penalties ---
+  (constructor penalty : (-> Channel Nat))
+  (rewrite pen-strong (penalty strong) z)
+  (rewrite pen-em     (penalty em)     (s z))
+  (rewrite pen-weak   (penalty weak)   (s (s (s z))))
+  (rewrite pen-loop   (penalty loop)   (s (s (s (s (s z))))))
+
+  ;; --- Nat proximity: |a-b| ≤ 1 ---
+  (constructor nat-close : (-> Nat Nat Bool))
+  (rewrite nc-zz  (nat-close z z)             true)
+  (rewrite nc-zs  (nat-close z (s z))         true)
+  (rewrite nc-sz  (nat-close (s z) z)         true)
+  (rewrite nc-zss (nat-close z (s (s ?n)))    false)
+  (rewrite nc-ssz (nat-close (s (s ?n)) z)    false)
+  (rewrite nc-ss  (nat-close (s ?a) (s ?b))   (nat-close ?a ?b))
+
+  ;; --- Absolute delta ≤ 1 on integers ---
+  (constructor abs-delta-leq1 : (-> Int Int Bool))
+  (rewrite adl-def (abs-delta-leq1 (int ?p1 ?n1) (int ?p2 ?n2))
+                    (nat-close (add ?p1 ?n2) (add ?n1 ?p2)))
+
+  ;; --- Boolean OR ---
+  (constructor or-bool : (-> Bool Bool Bool))
+  (rewrite or-tt (or-bool true true) true)
+  (rewrite or-tf (or-bool true false) true)
+  (rewrite or-ft (or-bool false true) true)
+  (rewrite or-ff (or-bool false false) false)
+
+  ;; --- Nat equality ---
+  (constructor nat-eq : (-> Nat Nat Bool))
+  (rewrite ne-zz (nat-eq z z) true)
+  (rewrite ne-zs (nat-eq z (s ?n)) false)
+  (rewrite ne-sz (nat-eq (s ?n) z) false)
+  (rewrite ne-ss (nat-eq (s ?n) (s ?m)) (nat-eq ?n ?m))
+
+  ;; --- Int equality ---
+  (constructor int-eq : (-> Int Int Bool))
+  (rewrite ie-def (int-eq (int ?p1 ?n1) (int ?p2 ?n2))
+    (nat-eq (add ?p1 ?n2) (add ?n1 ?p2)))
+
+  ;; --- Weak flavor check: single-W constraint ---
+  ;; Physics: a single W boson changes exactly one flavor quantum number.
+  ;; Manhattan distance: |ΔS| + |ΔC| ≤ 1.
+  ;; Encoded as: (|ΔS|≤1 AND |ΔC|≤1) AND (ΔS=0 OR ΔC=0).
+  ;; The first conjunct bounds each individually; the second ensures
+  ;; at most one changes (blocking simultaneous ΔS=±1,ΔC=∓1).
+  (constructor weak-flavor-ok : (-> Resource Resource Bool))
+  (rewrite wfo-def (weak-flavor-ok ?IN ?OUT)
+    (and-bool (and-bool (abs-delta-leq1 (total-strange ?IN) (total-strange ?OUT))
+                        (abs-delta-leq1 (total-charm ?IN) (total-charm ?OUT)))
+              (or-bool (int-eq (total-strange ?IN) (total-strange ?OUT))
+                       (int-eq (total-charm ?IN) (total-charm ?OUT)))))
+
+  ;; --- Budget comparison: Nat ≥ Nat ---
+  (constructor nat-geq : (-> Nat Nat Bool))
+  (rewrite geq-zz (nat-geq z z)           true)
+  (rewrite geq-sz (nat-geq (s ?n) z)      true)
+  (rewrite geq-zs (nat-geq z (s ?n))      false)
+  (rewrite geq-ss (nat-geq (s ?n) (s ?m)) (nat-geq ?n ?m))
+
+  ;; ═════════════════════════════════════════════════════════════
+  ;; §10  JUDGMENTS AND RULES
   ;; ═════════════════════════════════════════════════════════════
 
   (judgment (has ?R) :where R : Resource)
@@ -408,9 +553,9 @@
   (judgment (eq-tri ?a ?b) :where a : Triality b : Triality)
   (judgment (eq-bool ?a ?b) :where a : Bool b : Bool)
   (judgment (eq-mc ?a ?b) :where a : MassCheck b : MassCheck)
-  (judgment (conserved-strong ?A ?B) :where A : Resource B : Resource)
-  (judgment (conserved-weak ?A ?B) :where A : Resource B : Resource)
+  (judgment (conserved ?Ch ?A ?B) :where Ch : Channel A : Resource B : Resource)
   (judgment (cms-energy ?S) :where S : Nat)
+  (judgment (has-under ?R ?Budget) :where R : Resource Budget : Nat)
 
   (rule eq-refl       :premises () :conclusion (eq ?a ?a))
   (rule eq-tri-refl   :premises () :conclusion (eq-tri ?a ?a))
@@ -421,7 +566,7 @@
     :premises ((has ?A) (has ?B))
     :conclusion (has (tensor ?A ?B)))
 
-  ;; STRONG/EM CONSERVATION: Q, B, L, S, C + center-neutral + free.
+  ;; STRONG CONSERVATION: Q, B, L, S, C + center-neutral + free.
   (rule conserve-strong
     :premises (
       (eq (total-charge ?A) (total-charge ?B))
@@ -433,11 +578,24 @@
       (eq-tri (total-triality ?B) t0)
       (eq-bool (is-free ?A) true)
       (eq-bool (is-free ?B) true))
-    :conclusion (conserved-strong ?A ?B))
+    :conclusion (conserved strong ?A ?B))
 
-  ;; WEAK CONSERVATION: Q, B, L + center-neutral + free.
-  ;; Does NOT check S or C (weak interaction violates these).
-  ;; No CKM constraint: allows arbitrary ΔS, ΔC.
+  ;; EM CONSERVATION: same as strong (Q, B, L, S, C + triality + free).
+  (rule conserve-em
+    :premises (
+      (eq (total-charge ?A) (total-charge ?B))
+      (eq (total-baryon ?A) (total-baryon ?B))
+      (eq (total-lepton ?A) (total-lepton ?B))
+      (eq (total-strange ?A) (total-strange ?B))
+      (eq (total-charm ?A) (total-charm ?B))
+      (eq-tri (total-triality ?A) t0)
+      (eq-tri (total-triality ?B) t0)
+      (eq-bool (is-free ?A) true)
+      (eq-bool (is-free ?B) true))
+    :conclusion (conserved em ?A ?B))
+
+  ;; WEAK CONSERVATION: Q, B, L + center-neutral + free + weak flavor ok.
+  ;; Does NOT check S or C individually, but enforces |ΔS|+|ΔC|≤1 (single-W).
   (rule conserve-weak
     :premises (
       (eq (total-charge ?A) (total-charge ?B))
@@ -446,41 +604,42 @@
       (eq-tri (total-triality ?A) t0)
       (eq-tri (total-triality ?B) t0)
       (eq-bool (is-free ?A) true)
+      (eq-bool (is-free ?B) true)
+      (eq-bool (weak-flavor-ok ?A ?B) true))
+    :conclusion (conserved weak ?A ?B))
+
+  ;; LOOP CONSERVATION: same as strong/EM (all quantum numbers conserved).
+  ;; Loop processes are higher-order (virtual particle mediation) but
+  ;; still obey all conservation laws.
+  (rule conserve-loop
+    :premises (
+      (eq (total-charge ?A) (total-charge ?B))
+      (eq (total-baryon ?A) (total-baryon ?B))
+      (eq (total-lepton ?A) (total-lepton ?B))
+      (eq (total-strange ?A) (total-strange ?B))
+      (eq (total-charm ?A) (total-charm ?B))
+      (eq-tri (total-triality ?A) t0)
+      (eq-tri (total-triality ?B) t0)
+      (eq-bool (is-free ?A) true)
       (eq-bool (is-free ?B) true))
-    :conclusion (conserved-weak ?A ?B))
+    :conclusion (conserved loop ?A ?B))
 
-  ;; SCATTER (strong/EM): 2+ in → 2+ out + energy threshold.
-  ;; Output must be tensor (prevents unphysical 2→1).
-  (rule interact-scatter-strong
+  ;; SCATTER: 2+ in → 2+ out, channel-parameterized.
+  (rule interact-scatter
     :premises (
       (has (tensor ?A ?B))
-      (conserved-strong (tensor ?A ?B) (tensor ?C ?D))
+      (conserved ?Ch (tensor ?A ?B) (tensor ?C ?D))
+      (eq-bool (allowed ?Ch (tensor ?A ?B) (tensor ?C ?D)) true)
       (cms-energy ?S)
       (eq-mc (check-mass ?S (total-rest-mass (tensor ?C ?D))) mass-ok))
     :conclusion (has (tensor ?C ?D)))
 
-  ;; SCATTER (weak): same structure, weak conservation.
-  (rule interact-scatter-weak
-    :premises (
-      (has (tensor ?A ?B))
-      (conserved-weak (tensor ?A ?B) (tensor ?C ?D))
-      (cms-energy ?S)
-      (eq-mc (check-mass ?S (total-rest-mass (tensor ?C ?D))) mass-ok))
-    :conclusion (has (tensor ?C ?D)))
-
-  ;; DECAY (strong/EM): 1 particle → products, mass threshold.
-  (rule interact-decay-strong
+  ;; DECAY: 1 particle → products, channel-parameterized.
+  (rule interact-decay
     :premises (
       (has (particle ?P))
-      (conserved-strong (particle ?P) ?OUT)
-      (eq-mc (check-mass (rest-mass ?P) (total-rest-mass ?OUT)) mass-ok))
-    :conclusion (has ?OUT))
-
-  ;; DECAY (weak): 1 particle → products, weak conservation.
-  (rule interact-decay-weak
-    :premises (
-      (has (particle ?P))
-      (conserved-weak (particle ?P) ?OUT)
+      (conserved ?Ch (particle ?P) ?OUT)
+      (eq-bool (allowed ?Ch (particle ?P) ?OUT) true)
       (eq-mc (check-mass (rest-mass ?P) (total-rest-mass ?OUT)) mass-ok))
     :conclusion (has ?OUT))
 
@@ -489,8 +648,32 @@
     :conclusion (has ?C)
     :context ((1 (has ?A)) (1 (has ?B))))
 
+  ;; --- Budget-bounded rules ---
+  (rule tensor-intro-under
+    :premises ((has-under ?A ?B) (has-under ?C ?B))
+    :conclusion (has-under (tensor ?A ?C) ?B))
+
+  (rule interact-scatter-under
+    :premises (
+      (has-under (tensor ?A ?B) ?Budget)
+      (conserved ?Ch (tensor ?A ?B) (tensor ?C ?D))
+      (eq-bool (allowed ?Ch (tensor ?A ?B) (tensor ?C ?D)) true)
+      (cms-energy ?S)
+      (eq-mc (check-mass ?S (total-rest-mass (tensor ?C ?D))) mass-ok)
+      (eq-bool (nat-geq ?Budget (penalty ?Ch)) true))
+    :conclusion (has-under (tensor ?C ?D) ?Budget))
+
+  (rule interact-decay-under
+    :premises (
+      (has-under (particle ?P) ?Budget)
+      (conserved ?Ch (particle ?P) ?OUT)
+      (eq-bool (allowed ?Ch (particle ?P) ?OUT) true)
+      (eq-mc (check-mass (rest-mass ?P) (total-rest-mass ?OUT)) mass-ok)
+      (eq-bool (nat-geq ?Budget (penalty ?Ch)) true))
+    :conclusion (has-under ?OUT ?Budget))
+
   ;; ═════════════════════════════════════════════════════════════
-  ;; §10  CLASSICAL REVERSIBLE BIT GATES
+  ;; §11  CLASSICAL REVERSIBLE BIT GATES
   ;; ═════════════════════════════════════════════════════════════
 
   (rule gate-cnot-zz
@@ -554,11 +737,12 @@
     (cms-energy (s (s z))))
   :goal (has (tensor (particle electron) (particle positron)))
   :derivation
-    (interact-scatter-strong
+    (interact-scatter
       (tensor-intro (assumption 0) (assumption 1))
-      (conserve-strong (eq-refl) (eq-refl) (eq-refl) (eq-refl) (eq-refl)
-                       (eq-tri-refl) (eq-tri-refl)
-                       (eq-bool-refl) (eq-bool-refl))
+      (conserve-em (eq-refl) (eq-refl) (eq-refl) (eq-refl) (eq-refl)
+                   (eq-tri-refl) (eq-tri-refl)
+                   (eq-bool-refl) (eq-bool-refl))
+      (eq-bool-refl)
       (assumption 2)
       (eq-mc-refl)))
 
@@ -583,11 +767,12 @@
     (cms-energy (s (s z))))
   :goal (has (tensor (particle photon) (particle photon)))
   :derivation
-    (interact-scatter-strong
+    (interact-scatter
       (tensor-intro (assumption 0) (assumption 1))
-      (conserve-strong (eq-refl) (eq-refl) (eq-refl) (eq-refl) (eq-refl)
-                       (eq-tri-refl) (eq-tri-refl)
-                       (eq-bool-refl) (eq-bool-refl))
+      (conserve-em (eq-refl) (eq-refl) (eq-refl) (eq-refl) (eq-refl)
+                   (eq-tri-refl) (eq-tri-refl)
+                   (eq-bool-refl) (eq-bool-refl))
+      (eq-bool-refl)
       (assumption 2)
       (eq-mc-refl)))
 
@@ -602,11 +787,12 @@
     (cms-energy (s z)))
   :goal (has (tensor (particle electron) (particle photon)))
   :derivation
-    (interact-scatter-strong
+    (interact-scatter
       (assumption 0)
-      (conserve-strong (eq-refl) (eq-refl) (eq-refl) (eq-refl) (eq-refl)
-                       (eq-tri-refl) (eq-tri-refl)
-                       (eq-bool-refl) (eq-bool-refl))
+      (conserve-em (eq-refl) (eq-refl) (eq-refl) (eq-refl) (eq-refl)
+                   (eq-tri-refl) (eq-tri-refl)
+                   (eq-bool-refl) (eq-bool-refl))
+      (eq-bool-refl)
       (assumption 1)
       (eq-mc-refl)))
 
@@ -632,11 +818,12 @@
     (cms-energy (s (s z))))
   :goal (has (tensor (particle pion-zero) (particle photon)))
   :derivation
-    (interact-scatter-strong
+    (interact-scatter
       (tensor-intro (assumption 0) (assumption 1))
       (conserve-strong (eq-refl) (eq-refl) (eq-refl) (eq-refl) (eq-refl)
                        (eq-tri-refl) (eq-tri-refl)
                        (eq-bool-refl) (eq-bool-refl))
+      (eq-bool-refl)
       (assumption 2)
       (eq-mc-refl)))
 
@@ -663,12 +850,13 @@
     (cms-energy (s (s (s (s (s z)))))))
   :goal (has (tensor (particle proton) (particle photon)))
   :derivation
-    (interact-scatter-strong
+    (interact-scatter
       (tensor-intro (assumption 0)
         (tensor-intro (assumption 1) (assumption 2)))
       (conserve-strong (eq-refl) (eq-refl) (eq-refl) (eq-refl) (eq-refl)
                        (eq-tri-refl) (eq-tri-refl)
                        (eq-bool-refl) (eq-bool-refl))
+      (eq-bool-refl)
       (assumption 3)
       (eq-mc-refl)))
 
@@ -693,11 +881,12 @@
     (cms-energy (s (s (s z)))))
   :goal (has (tensor (particle kaon-plus) (particle photon)))
   :derivation
-    (interact-scatter-strong
+    (interact-scatter
       (tensor-intro (assumption 0) (assumption 1))
       (conserve-strong (eq-refl) (eq-refl) (eq-refl) (eq-refl) (eq-refl)
                        (eq-tri-refl) (eq-tri-refl)
                        (eq-bool-refl) (eq-bool-refl))
+      (eq-bool-refl)
       (assumption 2)
       (eq-mc-refl)))
 
@@ -729,11 +918,13 @@
                (tensor (particle electron)
                        (particle antineutrino))))
   :derivation
-    (interact-decay-weak
+    (interact-decay
       (assumption)
       (conserve-weak (eq-refl) (eq-refl) (eq-refl)
                      (eq-tri-refl) (eq-tri-refl)
-                     (eq-bool-refl) (eq-bool-refl))
+                     (eq-bool-refl) (eq-bool-refl)
+                     (eq-bool-refl))
+      (eq-bool-refl)
       (eq-mc-refl)))
 
 
@@ -755,11 +946,13 @@
     (cms-energy (s (s (s (s (s (s (s z)))))))))
   :goal (has (tensor (particle neutron) (particle positron)))
   :derivation
-    (interact-scatter-weak
+    (interact-scatter
       (assumption 0)
       (conserve-weak (eq-refl) (eq-refl) (eq-refl)
                      (eq-tri-refl) (eq-tri-refl)
-                     (eq-bool-refl) (eq-bool-refl))
+                     (eq-bool-refl) (eq-bool-refl)
+                     (eq-bool-refl))
+      (eq-bool-refl)
       (assumption 1)
       (eq-mc-refl)))
 
@@ -780,11 +973,13 @@
                (tensor (particle positron)
                        (particle neutrino))))
   :derivation
-    (interact-decay-weak
+    (interact-decay
       (assumption)
       (conserve-weak (eq-refl) (eq-refl) (eq-refl)
                      (eq-tri-refl) (eq-tri-refl)
-                     (eq-bool-refl) (eq-bool-refl))
+                     (eq-bool-refl) (eq-bool-refl)
+                     (eq-bool-refl))
+      (eq-bool-refl)
       (eq-mc-refl)))
 
 
@@ -1075,4 +1270,281 @@
   :theory GUTPhys
   :assumptions ((has (tagged b1 electron)))
   :goal (has (tensor (tagged b1 electron) (tagged b1 electron)))
+  :depth 5)
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  ╔════════════════════════════════════════════════════════════╗
+;;;  ║  PART VI: BUDGET-BOUNDED DYNAMICS                         ║
+;;;  ╚════════════════════════════════════════════════════════════╝
+;;; ═══════════════════════════════════════════════════════════════════
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  26. PAIR PRODUCTION (BUDGET):  γ+γ → e⁻+e⁺  under budget 1
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  EM channel has penalty 1. Budget 1 ≥ 1, so reaction proceeds.
+
+(proof pair-production-budget :theory GUTPhys
+  :assumptions (
+    (has-under (particle photon) (s z))
+    (has-under (particle photon) (s z))
+    (cms-energy (s (s z))))
+  :goal (has-under (tensor (particle electron) (particle positron)) (s z))
+  :derivation
+    (interact-scatter-under
+      (tensor-intro-under (assumption 0) (assumption 1))
+      (conserve-em (eq-refl) (eq-refl) (eq-refl) (eq-refl) (eq-refl)
+                   (eq-tri-refl) (eq-tri-refl)
+                   (eq-bool-refl) (eq-bool-refl))
+      (eq-bool-refl)
+      (assumption 2)
+      (eq-mc-refl)
+      (eq-bool-refl)))
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  27. BETA DECAY (BUDGET):  n → p+e⁻+ν̄  under budget 3
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  Weak channel has penalty 3. Budget 3 ≥ 3, so reaction proceeds.
+
+(proof beta-decay-budget :theory GUTPhys
+  :assumptions ((has-under (particle neutron) (s (s (s z)))))
+  :goal (has-under (tensor (particle proton)
+                     (tensor (particle electron)
+                             (particle antineutrino)))
+                   (s (s (s z))))
+  :derivation
+    (interact-decay-under
+      (assumption)
+      (conserve-weak (eq-refl) (eq-refl) (eq-refl)
+                     (eq-tri-refl) (eq-tri-refl)
+                     (eq-bool-refl) (eq-bool-refl)
+                     (eq-bool-refl))
+      (eq-bool-refl)
+      (eq-mc-refl)
+      (eq-bool-refl)))
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  28. KAON DECAY (BUDGET):  K⁺ → π⁰+e⁺+ν  under budget 3
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  Weak channel, penalty 3. Budget 3 ≥ 3. ✓
+
+(proof kaon-decay-budget :theory GUTPhys
+  :assumptions ((has-under (particle kaon-plus) (s (s (s z)))))
+  :goal (has-under (tensor (particle pion-zero)
+                     (tensor (particle positron)
+                             (particle neutrino)))
+                   (s (s (s z))))
+  :derivation
+    (interact-decay-under
+      (assumption)
+      (conserve-weak (eq-refl) (eq-refl) (eq-refl)
+                     (eq-tri-refl) (eq-tri-refl)
+                     (eq-bool-refl) (eq-bool-refl)
+                     (eq-bool-refl))
+      (eq-bool-refl)
+      (eq-mc-refl)
+      (eq-bool-refl)))
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  29. NO FREE PAIR PRODUCTION:  budget 0 blocks EM
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  EM penalty = 1 > budget = 0. nat-geq(0,1) = false.
+
+(refute no-free-pair-production
+  :theory GUTPhys
+  :assumptions (
+    (has-under (particle photon) z)
+    (has-under (particle photon) z)
+    (cms-energy (s (s z))))
+  :goal (has-under (tensor (particle electron) (particle positron)) z)
+  :depth 5)
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  30. NO CHEAP BETA DECAY:  budget 1 blocks weak
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  Weak penalty = 3 > budget = 1. nat-geq(1,3) = false.
+
+(refute no-cheap-beta-decay
+  :theory GUTPhys
+  :assumptions ((has-under (particle neutron) (s z)))
+  :goal (has-under (tensor (particle proton)
+                     (tensor (particle electron)
+                             (particle antineutrino)))
+                   (s z))
+  :depth 5)
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  31. NO FREE KAON DECAY:  budget 0 blocks all channels
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  Budget 0 < penalty for any channel (strong=0 has no kaon vertex,
+;;;  em=1>0, weak=3>0).
+
+(refute no-free-kaon-decay
+  :theory GUTPhys
+  :assumptions ((has-under (particle kaon-plus) z))
+  :goal (has-under (tensor (particle pion-zero)
+                     (tensor (particle positron)
+                             (particle neutrino)))
+                   z)
+  :depth 5)
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  ╔════════════════════════════════════════════════════════════╗
+;;;  ║  PART VII: LOOP CHANNEL                                    ║
+;;;  ╚════════════════════════════════════════════════════════════╝
+;;; ═══════════════════════════════════════════════════════════════════
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  32. LIGHT-BY-LIGHT SCATTERING:  γ+γ → γ+γ  (loop, unbounded)
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  Delbrück scattering: photon-photon scattering via virtual e±
+;;;  box diagram. All quantum numbers trivially conserved (0→0).
+;;;
+;;;    Q: 0 → 0  ✓    B: 0 → 0  ✓    L: 0 → 0  ✓
+;;;    S: 0 → 0  ✓    C: 0 → 0  ✓    Tri: t0 → t0  ✓
+;;;    Mass: cms(1) ≥ 0+0 = 0  ✓
+
+(proof light-by-light :theory GUTPhys
+  :assumptions (
+    (has (particle photon))
+    (has (particle photon))
+    (cms-energy (s z)))
+  :goal (has (tensor (particle photon) (particle photon)))
+  :derivation
+    (interact-scatter
+      (tensor-intro (assumption 0) (assumption 1))
+      (conserve-loop (eq-refl) (eq-refl) (eq-refl) (eq-refl) (eq-refl)
+                     (eq-tri-refl) (eq-tri-refl)
+                     (eq-bool-refl) (eq-bool-refl))
+      (eq-bool-refl)
+      (assumption 2)
+      (eq-mc-refl)))
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  33. LIGHT-BY-LIGHT (BUDGET):  γ+γ → γ+γ  under budget 5
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  Loop channel has penalty 5. Budget 5 ≥ 5. ✓
+
+(proof light-by-light-budget :theory GUTPhys
+  :assumptions (
+    (has-under (particle photon) (s (s (s (s (s z))))))
+    (has-under (particle photon) (s (s (s (s (s z))))))
+    (cms-energy (s z)))
+  :goal (has-under (tensor (particle photon) (particle photon))
+                   (s (s (s (s (s z))))))
+  :derivation
+    (interact-scatter-under
+      (tensor-intro-under (assumption 0) (assumption 1))
+      (conserve-loop (eq-refl) (eq-refl) (eq-refl) (eq-refl) (eq-refl)
+                     (eq-tri-refl) (eq-tri-refl)
+                     (eq-bool-refl) (eq-bool-refl))
+      (eq-bool-refl)
+      (assumption 2)
+      (eq-mc-refl)
+      (eq-bool-refl)))
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  ╔════════════════════════════════════════════════════════════╗
+;;;  ║  PART VIII: ADVERSARIAL REFUTATIONS                        ║
+;;;  ╚════════════════════════════════════════════════════════════╝
+;;; ═══════════════════════════════════════════════════════════════════
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  34. NO TAGGED SCATTER:  tagged e⁻ + tagged e⁺ ⊬ γ+γ
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  Information-carrying (tagged) particles cannot undergo physics
+;;;  reactions. Conservation rules require is-free=true on both sides;
+;;;  tagged particles have is-free=false. This tests that the
+;;;  information layer and physics layer are properly isolated.
+;;;
+;;;    Q: (-3)+3=0 → 0  ✓   B: 0  ✓   L: 0  ✓   S: 0  ✓   C: 0  ✓
+;;;    But is-free(tagged b0 electron) = false. BLOCKED.
+
+(refute no-tagged-scatter
+  :theory GUTPhys
+  :assumptions (
+    (has (tagged b0 electron))
+    (has (tagged b0 positron))
+    (cms-energy (s (s z))))
+  :goal (has (tensor (particle photon) (particle photon)))
+  :depth 5)
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  35. NO GHOST NEUTRINO PAIR:  γ+γ ⊬ ν+ν̄  (vertex specificity)
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  All conservation passes (Q=B=L=S=C=0, triality=t0, mass OK).
+;;;  Blocked by vertex library: no `allowed` rewrite exists for ANY
+;;;  channel with this reaction. In real physics this would require
+;;;  a Z boson or box diagram not in our vertex library.
+
+(refute no-ghost-neutrino-pair
+  :theory GUTPhys
+  :assumptions (
+    (has (particle photon))
+    (has (particle photon))
+    (cms-energy (s z)))
+  :goal (has (tensor (particle neutrino) (particle antineutrino)))
+  :depth 5)
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  36. NO PHANTOM PION DECAY:  π⁰ ⊬ e⁻+e⁺  (vertex specificity)
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  Conservation passes: Q: 0→0, B: 0→0, L: 0→0, S: 0→0, C: 0→0.
+;;;  Mass: 2 ≥ 1+1 = 2. ✓
+;;;  Blocked by vertex library: no `allowed` rewrite for pion decay
+;;;  in any channel. In real physics, the Dalitz pair π⁰→e⁻+e⁺+γ
+;;;  exists but is not in our toy Lagrangian.
+
+(refute no-phantom-pion-decay
+  :theory GUTPhys
+  :assumptions ((has (particle pion-zero)))
+  :goal (has (tensor (particle electron) (particle positron)))
+  :depth 5)
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  37. NO DOUBLE FLAVOR CHANGE:  s+ū ⊬ c̄+d  (single-W constraint)
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  This reaction conserves Q, B, L, and triality:
+;;;    Q: (-1)+(-2)=-3 → (-2)+(-1)=-3  ✓
+;;;    B: (+1)+(-1)=0 → (-1)+(+1)=0    ✓
+;;;    L: 0 → 0                          ✓
+;;;    Tri: t1+t2=t0 → t2+t1=t0         ✓
+;;;    Mass: cms(2) ≥ 2+0 = 2           ✓
+;;;  But ΔS=+1 AND ΔC=-1 simultaneously — both flavors change.
+;;;  Single-W constraint: |ΔS|+|ΔC| = 2 > 1. Blocked.
+;;;  Defense-in-depth: vertex library also has no such vertex.
+
+(refute no-double-flavor-change
+  :theory GUTPhys
+  :assumptions (
+    (has (particle strange-quark))
+    (has (particle anti-up))
+    (cms-energy (s (s z))))
+  :goal (has (tensor (particle anti-charm) (particle down-quark)))
   :depth 5)
