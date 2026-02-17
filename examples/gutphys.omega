@@ -63,6 +63,63 @@
 ;;;  (no Lₑ/Lμ/Lτ), no spin, no CKM matrix, discrete mass scale.
 ;;;
 ;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  SOUNDNESS OF PROOFS AND REFUTATIONS
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  PROOFS (VALID):
+;;;    Each proof is a complete derivation tree checked by Omega's
+;;;    kernel.  The kernel verifies that every rule application has
+;;;    its premises satisfied, every rewrite normalizes correctly,
+;;;    and every meta-variable is resolved.  If the kernel says VALID,
+;;;    the derivation is correct relative to the theory's axioms.
+;;;    There is no search or heuristic involved — it is a full check.
+;;;
+;;;  REFUTATIONS (VERIFIED):
+;;;    The refutation engine performs exhaustive backward-chaining
+;;;    proof search up to the given `:depth`.  "VERIFIED" means:
+;;;    every possible rule-application path of depth <= N was tried,
+;;;    and none produced the goal from the given assumptions.
+;;;
+;;;    This is depth-bounded, not absolute.  A refutation at depth 5
+;;;    proves "no derivation of depth <= 5 exists."  In principle, a
+;;;    longer derivation could exist at depth 6+.
+;;;
+;;;    For GUTPhys, depth 5 is effectively exhaustive because:
+;;;
+;;;    1. AFFINE CONTEXT: Each assumption can be consumed at most
+;;;       once (tracked via 64-bit bitmask).  This makes the search
+;;;       space finite — there is no way to reuse an assumption to
+;;;       build an arbitrarily deep chain.
+;;;
+;;;    2. ONE-SHOT REACTIONS: Scatter and decay consume their inputs
+;;;       and produce outputs.  There is no productive cycle where a
+;;;       reaction's output feeds back to enable a longer chain that
+;;;       gets closer to the goal.  Each reaction step requires fresh
+;;;       input resources, which are bounded by the assumptions.
+;;;
+;;;    3. FINITE PARTICLE TYPES: 18 particles, 11 vertices, 4
+;;;       channels.  The combinatorial space, while large, is bounded.
+;;;       At depth 5 with 5-9 premise rules, the engine explores
+;;;       millions of paths (budget: 1M steps).
+;;;
+;;;    4. NO RESOURCE CREATION: Every rule that produces `has`
+;;;       requires at least one `has` premise.  No rule conjures
+;;;       particles from nothing (vacuum-stability refutation
+;;;       confirms this at depth 3).
+;;;
+;;;    Where depth 5 would NOT be exhaustive: theories with
+;;;    structural (unrestricted) context where assumptions can be
+;;;    reused, or theories with rules that create resources without
+;;;    consuming them (e.g., an axiom `has(photon)` with no premises).
+;;;    GUTPhys has neither.
+;;;
+;;;    If the budget (1M steps) were exhausted before completing the
+;;;    search, the engine would report INCONCLUSIVE, not VERIFIED.
+;;;    None of our refutations hit this limit.
+;;;
+;;; ═══════════════════════════════════════════════════════════════════
 
 (theory GUTPhys
   (context-mode affine)
