@@ -1,5 +1,5 @@
 ;;; ═══════════════════════════════════════════════════════════════════
-;;;  GUTPhys v6: Typed Reaction Calculus — Standard Model in Omega
+;;;  GUTPhys v7: Typed Reaction Calculus — Standard Model in Omega
 ;;; ═══════════════════════════════════════════════════════════════════
 ;;;
 ;;;  A resource theory encoding Standard Model conservation laws
@@ -22,7 +22,7 @@
 ;;;    loop:   conserves Q,B,L,S,C + triality + vertex library  (penalty 5)
 ;;;
 ;;;  VERTEX LIBRARY: Each reaction must appear in the `allowed`
-;;;  table (10 vertices: 3 strong, 3 EM, 3 weak, 1 loop).
+;;;  table (11 vertices: 3 strong, 4 EM, 3 weak, 1 loop).
 ;;;  Reactions not in the library are blocked even if conservation
 ;;;  holds.
 ;;;
@@ -46,7 +46,18 @@
 ;;;  INFORMATION LAYER: Classical reversible bits, NOT quantum.
 ;;;  CNOT/RCNOT implement truth tables on {0,1}.
 ;;;
-;;;  RESULTS: 19 proofs (VALID) + 18 refutations (VERIFIED) = 37
+;;;  RELATIVISTIC KINEMATICS (SR module):
+;;;    VKind lattice classifies 4-momentum as lightlike/timelike/unknown.
+;;;    Spacelike is INFECTIOUS (propagates through kind-add, blocks all).
+;;;    scatter-4mom-ok gates scatter rules: timelike input OK, or
+;;;    unknown input + noncollinear-beams(resource) witness OK.
+;;;    Noncollinear witness is SCOPED to a specific beam resource
+;;;    (prevents ambient authority).  collinear-beams(resource)
+;;;    explicitly models collinear geometry (blocks scatter).
+;;;    Quarks classified as timelike (physical causal class, not Nat mass).
+;;;    Bethe-Heitler: γ+target → e⁻+e⁺+target (recoil pair production).
+;;;
+;;;  RESULTS: 20 proofs (VALID) + 20 refutations (VERIFIED) = 40
 ;;;
 ;;;  Remaining simplifications: no bottom/top quarks, single L
 ;;;  (no Lₑ/Lμ/Lτ), no spin, no CKM matrix, discrete mass scale.
@@ -625,13 +636,20 @@
     :conclusion (conserved loop ?A ?B))
 
   ;; SCATTER: 2+ in → 2+ out, channel-parameterized.
+  ;; Output (tensor ?C ?D) is a binary tensor; for 3+ output particles,
+  ;; nest: (tensor (tensor A B) C).  Conservation extractors recurse
+  ;; on tensor, so nested shapes are handled correctly.
+  ;; Premise 5 (scatter-4mom-ok) ensures the input 4-momentum is
+  ;; kinematically valid: timelike (massive beam), or noncollinear
+  ;; (massless beams at an angle).
   (rule interact-scatter
     :premises (
       (has (tensor ?A ?B))
       (conserved ?Ch (tensor ?A ?B) (tensor ?C ?D))
       (eq-bool (allowed ?Ch (tensor ?A ?B) (tensor ?C ?D)) true)
       (cms-energy ?S)
-      (eq-mc (check-mass ?S (total-rest-mass (tensor ?C ?D))) mass-ok))
+      (eq-mc (check-mass ?S (total-rest-mass (tensor ?C ?D))) mass-ok)
+      (scatter-4mom-ok (tensor ?A ?B)))
     :conclusion (has (tensor ?C ?D)))
 
   ;; DECAY: 1 particle → products, channel-parameterized.
@@ -660,7 +678,8 @@
       (eq-bool (allowed ?Ch (tensor ?A ?B) (tensor ?C ?D)) true)
       (cms-energy ?S)
       (eq-mc (check-mass ?S (total-rest-mass (tensor ?C ?D))) mass-ok)
-      (eq-bool (nat-geq ?Budget (penalty ?Ch)) true))
+      (eq-bool (nat-geq ?Budget (penalty ?Ch)) true)
+      (scatter-4mom-ok (tensor ?A ?B)))
     :conclusion (has-under (tensor ?C ?D) ?Budget))
 
   (rule interact-decay-under
@@ -701,6 +720,171 @@
   (rule gate-rcnot-uu
     :premises ((has (tensor (tagged b1 ?P1) (tagged b1 ?P2))))
     :conclusion (has (tensor (tagged b0 ?P1) (tagged b1 ?P2))))
+
+  ;; ═════════════════════════════════════════════════════════════
+  ;; §12a  VKIND LATTICE — Causal Classification of 4-Momentum
+  ;; ═════════════════════════════════════════════════════════════
+  ;;
+  ;; VKind classifies a resource's total 4-momentum by causal type:
+  ;;   lightlike  — on the light cone (massless particles)
+  ;;   timelike   — inside the future light cone (massive particles)
+  ;;   spacelike  — outside the light cone (tachyonic, unphysical)
+  ;;   vk-unknown — cannot determine without beam geometry info
+  ;;
+  ;; kind-add is CONSERVATIVE: only timelike+timelike, timelike+lightlike,
+  ;; and lightlike+timelike are guaranteed timelike.  lightlike+lightlike
+  ;; returns vk-unknown (collinear vs non-collinear ambiguity).
+  ;; Spacelike is INFECTIOUS: any spacelike operand propagates spacelike,
+  ;; blocking the reaction entirely (no rule derives scatter-4mom-ok
+  ;; from spacelike).  vk-unknown + anything non-spacelike stays unknown.
+
+  (sort VKind)
+  (constructor lightlike : VKind)
+  (constructor timelike : VKind)
+  (constructor spacelike : VKind)
+  (constructor vk-unknown : VKind)
+
+  (constructor kind-add : (-> VKind VKind VKind))
+
+  ;; Timelike + anything known → timelike (massive + anything is massive)
+  (rewrite ka-tt (kind-add timelike timelike) timelike)
+  (rewrite ka-tl (kind-add timelike lightlike) timelike)
+  (rewrite ka-lt (kind-add lightlike timelike) timelike)
+
+  ;; Lightlike + lightlike → unknown (could be collinear → still lightlike)
+  (rewrite ka-ll (kind-add lightlike lightlike) vk-unknown)
+
+  ;; Spacelike is INFECTIOUS — propagates through all combinations.
+  ;; No scatter-4mom-ok rule accepts spacelike, so this blocks reactions.
+  (rewrite ka-ts (kind-add timelike spacelike) spacelike)
+  (rewrite ka-st (kind-add spacelike timelike) spacelike)
+  (rewrite ka-ls (kind-add lightlike spacelike) spacelike)
+  (rewrite ka-sl (kind-add spacelike lightlike) spacelike)
+  (rewrite ka-ss (kind-add spacelike spacelike) spacelike)
+  (rewrite ka-su (kind-add spacelike vk-unknown) spacelike)
+  (rewrite ka-us (kind-add vk-unknown spacelike) spacelike)
+
+  ;; Unknown + non-spacelike → unknown
+  (rewrite ka-tu (kind-add timelike vk-unknown) vk-unknown)
+  (rewrite ka-ut (kind-add vk-unknown timelike) vk-unknown)
+  (rewrite ka-lu (kind-add lightlike vk-unknown) vk-unknown)
+  (rewrite ka-ul (kind-add vk-unknown lightlike) vk-unknown)
+  (rewrite ka-uu (kind-add vk-unknown vk-unknown) vk-unknown)
+
+  ;; ═════════════════════════════════════════════════════════════
+  ;; §12b  4-MOMENTUM CLASSIFICATION — Per-Particle and Recursive
+  ;; ═════════════════════════════════════════════════════════════
+
+  (constructor particle-kind : (-> Particle VKind))
+
+  ;; Lightlike: photon, neutrino, antineutrino (truly massless or ~massless)
+  (rewrite pk-photon       (particle-kind photon)         lightlike)
+  (rewrite pk-neutrino     (particle-kind neutrino)       lightlike)
+  (rewrite pk-antineutrino (particle-kind antineutrino)   lightlike)
+
+  ;; Timelike: all massive particles.  Quarks are physically massive
+  ;; (current mass ~ few MeV); rest-mass=0 in our Nat scale is a
+  ;; modelling convenience, but particle-kind reflects their true
+  ;; causal class, not the discretized mass proxy.
+  (rewrite pk-up           (particle-kind up-quark)        timelike)
+  (rewrite pk-down         (particle-kind down-quark)      timelike)
+  (rewrite pk-antiup       (particle-kind anti-up)         timelike)
+  (rewrite pk-antidown     (particle-kind anti-down)       timelike)
+  (rewrite pk-proton       (particle-kind proton)          timelike)
+  (rewrite pk-neutron      (particle-kind neutron)         timelike)
+  (rewrite pk-electron     (particle-kind electron)        timelike)
+  (rewrite pk-positron     (particle-kind positron)        timelike)
+  (rewrite pk-pion         (particle-kind pion-zero)       timelike)
+  (rewrite pk-kaon         (particle-kind kaon-plus)       timelike)
+  (rewrite pk-strange      (particle-kind strange-quark)   timelike)
+  (rewrite pk-charm        (particle-kind charm-quark)     timelike)
+  (rewrite pk-antistrange  (particle-kind anti-strange)    timelike)
+  (rewrite pk-anticharm    (particle-kind anti-charm)      timelike)
+  (rewrite pk-target       (particle-kind target)          timelike)
+
+  ;; Recursive momentum kind over resources
+  (constructor mom-kind : (-> Resource VKind))
+  (rewrite mk-particle (mom-kind (particle ?p))    (particle-kind ?p))
+  (rewrite mk-tensor   (mom-kind (tensor ?a ?b))   (kind-add (mom-kind ?a) (mom-kind ?b)))
+  (rewrite mk-tagged   (mom-kind (tagged ?b ?p))   (particle-kind ?p))
+
+  ;; ═════════════════════════════════════════════════════════════
+  ;; §12c  NONCOLLINEAR WITNESS
+  ;; ═════════════════════════════════════════════════════════════
+  ;;
+  ;; Two massless beams (lightlike+lightlike) have timelike total
+  ;; 4-momentum ONLY if they are not collinear. This is a geometric
+  ;; fact about the experiment, not derivable from particle properties.
+  ;; Parameterized by the specific input resource to scope the witness
+  ;; and prevent ambient authority (an unscoped witness would justify
+  ;; any vk-unknown input, not just the intended beam pair).
+
+  (sort Witness)
+  (constructor noncollinear : Witness)
+
+  (judgment (noncollinear-beams ?IN) :where IN : Resource)
+  (judgment (collinear-beams ?IN) :where IN : Resource)
+
+  ;; ═════════════════════════════════════════════════════════════
+  ;; §12d  SR JUDGMENTS — 4-Momentum Admissibility
+  ;; ═════════════════════════════════════════════════════════════
+
+  ;; eq-vk is DEFINITIONAL EQUALITY only (reflexivity, no subtyping).
+  ;; (eq-vk (mom-kind ?IN) timelike) holds iff mom-kind rewrites to
+  ;; timelike.  Do NOT add non-trivial eq-vk axioms (e.g., subtyping
+  ;; vk-unknown ≤ timelike) — that would blow the SR gate open.
+  (judgment (eq-vk ?a ?b) :where a : VKind b : VKind)
+  (rule eq-vk-refl :premises () :conclusion (eq-vk ?a ?a))
+
+  ;; scatter-4mom-ok: input resource has valid (timelike) 4-momentum.
+  ;; This is a CAUSAL-TYPE SANITY FILTER, not full 4-vector conservation.
+  ;; We rule out transitions requiring a COM frame when none exists
+  ;; (collinear massless beams).  The mass threshold (check-mass) is
+  ;; the real energy gate; scatter-4mom-ok is a necessary precondition.
+  (judgment (scatter-4mom-ok ?R) :where R : Resource)
+
+  ;; If the input kind computes to timelike, we're done.
+  (rule mom-ok-timelike
+    :premises ((eq-vk (mom-kind ?IN) timelike))
+    :conclusion (scatter-4mom-ok ?IN))
+
+  ;; If the input kind is unknown but we have a noncollinear witness
+  ;; for this specific resource, the beams produce timelike total 4-momentum.
+  (rule mom-ok-nc
+    :premises ((eq-vk (mom-kind ?IN) vk-unknown)
+               (noncollinear-beams ?IN))
+    :conclusion (scatter-4mom-ok ?IN))
+
+  ;; ═════════════════════════════════════════════════════════════
+  ;; §12e  RECOIL TARGET + BETHE-HEITLER VERTEX
+  ;; ═════════════════════════════════════════════════════════════
+  ;;
+  ;; An effective recoil partner for pair production from a single
+  ;; photon. In real physics, this role is played by a heavy nucleus
+  ;; (Bethe-Heitler process: γ + Z → e⁻ + e⁺ + Z).
+  ;;
+  ;; The target is modelled as a neutral, colorless, massive particle
+  ;; with no quantum numbers — a momentum sink, not a faithful
+  ;; nuclear representation.  Mass=3 on our Nat scale (comparable
+  ;; to kaon) is an effective value, not a claim about nuclear mass.
+  ;;
+  ;; Target: Q=0, B=0, L=0, S=0, C=0, t0, mass=3 (effective).
+
+  (constructor target : Particle)
+  (rewrite q-target      (charge target)       (int z z))
+  (rewrite b-target      (baryon target)       (int z z))
+  (rewrite l-target      (lepton target)       (int z z))
+  (rewrite s-target      (strangeness target)  (int z z))
+  (rewrite c-target      (charm-num target)    (int z z))
+  (rewrite tri-target    (triality-of target)  t0)
+  (rewrite m-target      (rest-mass target)    (s (s (s z))))
+
+  ;; Bethe-Heitler vertex: γ + target → (e⁻ + e⁺) + target
+  (rewrite allow-em-bethe-heitler
+    (allowed em (tensor (particle photon) (particle target))
+               (tensor (tensor (particle electron) (particle positron))
+                       (particle target)))
+    true)
 )
 
 (check-theory GUTPhys)
@@ -734,7 +918,8 @@
   :assumptions (
     (has (particle photon))
     (has (particle photon))
-    (cms-energy (s (s z))))
+    (cms-energy (s (s z)))
+    (noncollinear-beams (tensor (particle photon) (particle photon))))
   :goal (has (tensor (particle electron) (particle positron)))
   :derivation
     (interact-scatter
@@ -744,7 +929,8 @@
                    (eq-bool-refl) (eq-bool-refl))
       (eq-bool-refl)
       (assumption 2)
-      (eq-mc-refl)))
+      (eq-mc-refl)
+      (mom-ok-nc (eq-vk-refl) (assumption 3))))
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
@@ -774,7 +960,8 @@
                    (eq-bool-refl) (eq-bool-refl))
       (eq-bool-refl)
       (assumption 2)
-      (eq-mc-refl)))
+      (eq-mc-refl)
+      (mom-ok-timelike (eq-vk-refl))))
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
@@ -794,7 +981,8 @@
                    (eq-bool-refl) (eq-bool-refl))
       (eq-bool-refl)
       (assumption 1)
-      (eq-mc-refl)))
+      (eq-mc-refl)
+      (mom-ok-timelike (eq-vk-refl))))
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
@@ -825,7 +1013,8 @@
                        (eq-bool-refl) (eq-bool-refl))
       (eq-bool-refl)
       (assumption 2)
-      (eq-mc-refl)))
+      (eq-mc-refl)
+      (mom-ok-timelike (eq-vk-refl))))
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
@@ -858,7 +1047,8 @@
                        (eq-bool-refl) (eq-bool-refl))
       (eq-bool-refl)
       (assumption 3)
-      (eq-mc-refl)))
+      (eq-mc-refl)
+      (mom-ok-timelike (eq-vk-refl))))
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
@@ -888,7 +1078,8 @@
                        (eq-bool-refl) (eq-bool-refl))
       (eq-bool-refl)
       (assumption 2)
-      (eq-mc-refl)))
+      (eq-mc-refl)
+      (mom-ok-timelike (eq-vk-refl))))
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
@@ -954,7 +1145,8 @@
                      (eq-bool-refl))
       (eq-bool-refl)
       (assumption 1)
-      (eq-mc-refl)))
+      (eq-mc-refl)
+      (mom-ok-timelike (eq-vk-refl))))
 
 
 ;;; 9. KAON WEAK DECAY:  K⁺ → π⁰ + e⁺ + ν  (weak decay, ΔS=1)
@@ -1290,7 +1482,8 @@
   :assumptions (
     (has-under (particle photon) (s z))
     (has-under (particle photon) (s z))
-    (cms-energy (s (s z))))
+    (cms-energy (s (s z)))
+    (noncollinear-beams (tensor (particle photon) (particle photon))))
   :goal (has-under (tensor (particle electron) (particle positron)) (s z))
   :derivation
     (interact-scatter-under
@@ -1301,7 +1494,8 @@
       (eq-bool-refl)
       (assumption 2)
       (eq-mc-refl)
-      (eq-bool-refl)))
+      (eq-bool-refl)
+      (mom-ok-nc (eq-vk-refl) (assumption 3))))
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
@@ -1423,7 +1617,8 @@
   :assumptions (
     (has (particle photon))
     (has (particle photon))
-    (cms-energy (s z)))
+    (cms-energy (s z))
+    (noncollinear-beams (tensor (particle photon) (particle photon))))
   :goal (has (tensor (particle photon) (particle photon)))
   :derivation
     (interact-scatter
@@ -1433,7 +1628,8 @@
                      (eq-bool-refl) (eq-bool-refl))
       (eq-bool-refl)
       (assumption 2)
-      (eq-mc-refl)))
+      (eq-mc-refl)
+      (mom-ok-nc (eq-vk-refl) (assumption 3))))
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
@@ -1446,7 +1642,8 @@
   :assumptions (
     (has-under (particle photon) (s (s (s (s (s z))))))
     (has-under (particle photon) (s (s (s (s (s z))))))
-    (cms-energy (s z)))
+    (cms-energy (s z))
+    (noncollinear-beams (tensor (particle photon) (particle photon))))
   :goal (has-under (tensor (particle photon) (particle photon))
                    (s (s (s (s (s z))))))
   :derivation
@@ -1458,7 +1655,8 @@
       (eq-bool-refl)
       (assumption 2)
       (eq-mc-refl)
-      (eq-bool-refl)))
+      (eq-bool-refl)
+      (mom-ok-nc (eq-vk-refl) (assumption 3))))
 
 
 ;;; ═══════════════════════════════════════════════════════════════════
@@ -1547,4 +1745,96 @@
     (has (particle anti-up))
     (cms-energy (s (s z))))
   :goal (has (tensor (particle anti-charm) (particle down-quark)))
+  :depth 5)
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  ╔════════════════════════════════════════════════════════════╗
+;;;  ║  PART IX: RELATIVISTIC KINEMATICS                         ║
+;;;  ╚════════════════════════════════════════════════════════════╝
+;;; ═══════════════════════════════════════════════════════════════════
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  38. BETHE-HEITLER:  γ + target → e⁻ + e⁺ + target  (EM)
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  Nuclear pair production: a photon converts to an e⁻e⁺ pair in
+;;;  the field of a heavy nucleus (the "target"). The target absorbs
+;;;  recoil momentum and is unchanged.
+;;;
+;;;    Q: 0+0=0 → (-3)+3+0=0       ✓
+;;;    B: 0+0=0 → 0+0+0=0          ✓
+;;;    L: 0+0=0 → 3+(-3)+0=0       ✓
+;;;    S: 0 → 0                      ✓
+;;;    C: 0 → 0                      ✓
+;;;    Tri: t0+t0=t0 → t0+t0+t0=t0  ✓
+;;;    Mass: cms(5) ≥ 1+1+3 = 5     ✓
+;;;    4-mom: kind-add(lightlike,timelike) = timelike → OK (no noncollinear needed!)
+
+(proof bethe-heitler :theory GUTPhys
+  :assumptions (
+    (has (particle photon))
+    (has (particle target))
+    (cms-energy (s (s (s (s (s z)))))))
+  :goal (has (tensor (tensor (particle electron) (particle positron))
+                     (particle target)))
+  :derivation
+    (interact-scatter
+      (tensor-intro (assumption 0) (assumption 1))
+      (conserve-em (eq-refl) (eq-refl) (eq-refl) (eq-refl) (eq-refl)
+                   (eq-tri-refl) (eq-tri-refl)
+                   (eq-bool-refl) (eq-bool-refl))
+      (eq-bool-refl)
+      (assumption 2)
+      (eq-mc-refl)
+      (mom-ok-timelike (eq-vk-refl))))
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  38R. NO COLLINEAR PAIR PRODUCTION:  γ+γ ⊬ e⁻+e⁺  (explicit collinear)
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  Two collinear photons cannot produce a pair, even with sufficient
+;;;  energy.  We provide an EXPLICIT collinear-beams assertion (not just
+;;;  a missing witness).  mom-kind(tensor(γ,γ)) = vk-unknown.
+;;;  No rule derives scatter-4mom-ok from vk-unknown + collinear-beams
+;;;  (only noncollinear-beams would help).
+;;;
+;;;  This is the SR obstruction: collinear lightlike beams have zero
+;;;  invariant mass in every frame.  Compare with proof 1 (pair-production)
+;;;  which succeeds WITH noncollinear-beams for the same beam pair.
+
+(refute no-collinear-pair-production
+  :theory GUTPhys
+  :assumptions (
+    (has (particle photon))
+    (has (particle photon))
+    (collinear-beams (tensor (particle photon) (particle photon)))
+    (cms-energy (s (s z))))
+  :goal (has (tensor (particle electron) (particle positron)))
+  :depth 5)
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  39R. NO BETHE-HEITLER WITHOUT TARGET:  γ+γ ⊬ (e⁻+e⁺)+target
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  Two photons with a noncollinear witness still cannot produce
+;;;  (e⁻+e⁺)+target. Even though 4-momentum would be OK, the
+;;;  target particle cannot be created from photon assumptions —
+;;;  there is no vertex γ+γ→(e⁻+e⁺)+target in the library.
+;;;  The Bethe-Heitler vertex requires γ+target as INPUT.
+;;;  This demonstrates that the vertex library correctly gates
+;;;  reactions even when conservation and kinematics pass.
+
+(refute no-bethe-heitler-without-target
+  :theory GUTPhys
+  :assumptions (
+    (has (particle photon))
+    (has (particle photon))
+    (noncollinear-beams (tensor (particle photon) (particle photon)))
+    (cms-energy (s (s (s (s (s z)))))))
+  :goal (has (tensor (tensor (particle electron) (particle positron))
+                     (particle target)))
   :depth 5)
