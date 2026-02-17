@@ -76,6 +76,14 @@ pub enum Command {
         conclusion: Expr,
         tactics: Vec<TacticCmd>,
     },
+    /// Exhaustive refutation: prove a goal is NOT derivable from assumptions.
+    Refute {
+        name: String,
+        theory: String,
+        assumptions: Vec<Expr>,
+        goal: Expr,
+        depth: usize,
+    },
 }
 
 /// A tactic command (parsed from S-expressions).
@@ -138,6 +146,7 @@ fn desugar_command(sexp: &Sexp) -> Result<Command> {
         "meta-theorem" => desugar_metatheorem(items, sexp.span()),
         "reflect" => desugar_reflect(items, sexp.span()),
         "emit" => desugar_emit(items, sexp.span()),
+        "refute" => desugar_refute(items, sexp.span()),
         _ => Err(DesugarError {
             message: format!("unknown top-level form: {}", head),
             span: items[0].span(),
@@ -1043,6 +1052,67 @@ fn desugar_emit(items: &[Sexp], span: Span) -> Result<Command> {
         span,
     })?;
     Ok(Command::Emit { theory, expr })
+}
+
+fn desugar_refute(items: &[Sexp], span: Span) -> Result<Command> {
+    // (refute name :theory T :assumptions (...) :goal G :depth N)
+    let name = expect_atom(&items[1])?;
+    let mut theory = None;
+    let mut goal = None;
+    let mut assumptions = Vec::new();
+    let mut depth = None;
+
+    let mut i = 2;
+    while i < items.len() {
+        if items[i].is_keyword(":theory") {
+            i += 1;
+            theory = Some(expect_atom(&items[i])?.to_string());
+            i += 1;
+        } else if items[i].is_keyword(":goal") {
+            i += 1;
+            goal = Some(desugar_expr(&items[i])?);
+            i += 1;
+        } else if items[i].is_keyword(":assumptions") {
+            i += 1;
+            if let Some(alist) = items[i].as_list() {
+                for a in alist {
+                    assumptions.push(desugar_expr(a)?);
+                }
+            }
+            i += 1;
+        } else if items[i].is_keyword(":depth") {
+            i += 1;
+            let d_str = expect_atom(&items[i])?;
+            depth = Some(d_str.parse::<usize>().map_err(|_| DesugarError {
+                message: format!(":depth must be a non-negative integer, got {}", d_str),
+                span: items[i].span(),
+            })?);
+            i += 1;
+        } else {
+            i += 1;
+        }
+    }
+
+    let theory = theory.ok_or_else(|| DesugarError {
+        message: "refute requires :theory".to_string(),
+        span,
+    })?;
+    let goal = goal.ok_or_else(|| DesugarError {
+        message: "refute requires :goal".to_string(),
+        span,
+    })?;
+    let depth = depth.ok_or_else(|| DesugarError {
+        message: "refute requires :depth".to_string(),
+        span,
+    })?;
+
+    Ok(Command::Refute {
+        name: name.to_string(),
+        theory,
+        assumptions,
+        goal,
+        depth,
+    })
 }
 
 /// Desugar an S-expression into an Expr, with level parameter names in scope.

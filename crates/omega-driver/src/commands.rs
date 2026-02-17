@@ -201,6 +201,32 @@ pub fn process_command(session: &mut Session, cmd: Command) -> Result<String, St
             flatten_rope(&normalized, &mut buf);
             Ok(format!("Emit:\n{}", buf))
         }
+
+        Command::Refute {
+            name,
+            theory,
+            assumptions,
+            goal,
+            depth,
+        } => {
+            let th = session
+                .kernel
+                .get_theory(&theory)
+                .ok_or_else(|| format!("refute: unknown theory '{}'", theory))?;
+            match crate::refute::exhaustive_refute(th, &assumptions, &goal, depth) {
+                crate::refute::RefuteResult::Refuted => {
+                    Ok(format!("Refutation {}: VERIFIED", name))
+                }
+                crate::refute::RefuteResult::Derivable => Err(format!(
+                    "Refutation {} FAILED: goal is derivable from assumptions",
+                    name
+                )),
+                crate::refute::RefuteResult::BudgetExhausted => Err(format!(
+                    "Refutation {} INCONCLUSIVE: search budget exhausted before completing",
+                    name
+                )),
+            }
+        }
     }
 }
 
