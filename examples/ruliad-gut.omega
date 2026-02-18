@@ -1,0 +1,800 @@
+;;; RuliadGUT — Unifying Particle Physics and General Relativity
+;;;
+;;; Two theories collide:
+;;;   - GUTPhys: Particles as resources, reactions conserve mass
+;;;   - RuliadRelativity: Causal invariance → Einstein equations
+;;;
+;;; The bridge: MASS DETERMINES CURVATURE.
+;;;   total-rest-mass(Resource) >= 1 → positive curvature → matter GR
+;;;   total-rest-mass(Resource)  = 0 → flat curvature    → vacuum GR
+;;;
+;;; This is computed by rewrite rules. The kernel normalizes
+;;; total-rest-mass, checks it against 1 via check-mass, and
+;;; routes through ricci-from-mass to determine curvature.
+;;;
+;;; The punchline: a Proton (Standard Model object) FORCES the
+;;; geometry to obey Matter Einstein Equations (General Relativity).
+;;; And beta decay products do too — particle physics → gravity.
+;;;
+;;; Proved here:
+;;;
+;;;   ACT I — Particle Physics:
+;;;    1. Beta decay: n → p + e + ν̄              (mass conservation)
+;;;
+;;;   ACT II — Curvature Computation (the bridge):
+;;;    2. Proton curves spacetime                  (mass 5 → positive)
+;;;    3. Photon doesn't curve spacetime           (mass 0 → flat)
+;;;    4. Decay products curve spacetime           (mass 6 → positive)
+;;;
+;;;   ACT III — Pure Geometry:
+;;;    5. Vacuum → flat → vacuum Einstein          (empty universe)
+;;;    6. Photon → flat → vacuum Einstein          (massless = vacuum)
+;;;
+;;;   ACT IV — The Bridge:
+;;;    7. Proton generates stress-energy            (mass → T_μν)
+;;;    8. Proton → matter Einstein                  (THE unified result)
+;;;
+;;;   ACT V — The Full Pipeline:
+;;;    9. n decay → p+e+ν̄ → matter Einstein       (particle physics → GR)
+;;;   10. Proton: matter GR ∧ Lorentz covariance   (the full picture)
+;;;
+;;;   ACT VI — Fundamental Impossibilities:
+;;;   11. ∅ ⊬ γ                                    (vacuum stability)
+;;;   12. p+e+ν̄ ⊬ n                               (no reverse decay)
+;;;   13. γ ⊬ has-T(γ)                             (massless can't gravitate)
+;;;   14. CI+DP ⊬ has(p)                           (geometry can't create matter)
+;;;   15. CI+DP ⊬ vac(p)                           (mass blocks vacuum Einstein)
+;;;
+;;;   ACT VII — Black Hole Physics:
+;;;   16. Proton below Schwarzschild                (mass 5 < 10, bh-no)
+;;;   17. Two protons above Schwarzschild           (mass 10 >= 10, bh-yes)
+;;;   18. Single proton can escape                  (not trapped → free)
+;;;   19. Two protons → gravitational collapse      (mass → trapped)
+;;;   20. Hawking information escape                 (trapped + CI → escape!)
+;;;   21. Information paradox resolved              (trapped ∧ can-escape)
+;;;
+;;;   ACT VIII — Black Hole Impossibilities:
+;;;   22. Proton ⊬ trapped                          (mass too low)
+;;;   23. Trapped ⊬ can-escape                      (classical: no escape)
+;;;   24. Trapped ⊬ hawking                          (need CI for quantum)
+
+(theory RuliadGUT
+  ;; Structural mode: linearity enforced by rule structure
+  ;; (beta-decay consumes neutron, produces products)
+
+  ;; ═════════════════════════════════════════════════════════════
+  ;; §1  ARITHMETIC
+  ;; ═════════════════════════════════════════════════════════════
+
+  (sort Nat)
+  (constructor z : Nat)
+  (constructor s : (-> Nat Nat))
+  (constructor add : (-> Nat Nat Nat))
+  (rewrite add-z (add z ?n) ?n)
+  (rewrite add-s (add (s ?n) ?m) (s (add ?n ?m)))
+
+  ;; ═════════════════════════════════════════════════════════════
+  ;; §2  MASS COMPARISON
+  ;; ═════════════════════════════════════════════════════════════
+  ;; check-mass(a, b) = mass-ok iff a >= b
+  ;; Used for: mass conservation AND curvature bridge.
+
+  (sort MassCheck)
+  (constructor mass-ok   : MassCheck)
+  (constructor mass-fail : MassCheck)
+  (constructor check-mass : (-> Nat Nat MassCheck))
+
+  (rewrite cm-z  (check-mass ?n z)           mass-ok)
+  (rewrite cm-sz (check-mass z (s ?n))       mass-fail)
+  (rewrite cm-ss (check-mass (s ?n) (s ?m))  (check-mass ?n ?m))
+
+  ;; ═════════════════════════════════════════════════════════════
+  ;; §3  PARTICLES
+  ;; ═════════════════════════════════════════════════════════════
+
+  (sort Particle)
+  (constructor proton       : Particle)
+  (constructor neutron      : Particle)
+  (constructor electron     : Particle)
+  (constructor positron     : Particle)
+  (constructor neutrino     : Particle)
+  (constructor antineutrino : Particle)
+  (constructor photon       : Particle)
+
+  ;; ═════════════════════════════════════════════════════════════
+  ;; §4  RESOURCES — Particle Bundles
+  ;; ═════════════════════════════════════════════════════════════
+
+  (sort Resource)
+  (constructor vacuum  : Resource)
+  (constructor particle : (-> Particle Resource))
+  (constructor tensor  : (-> Resource Resource Resource))
+
+  ;; ═════════════════════════════════════════════════════════════
+  ;; §5  PARTICLE MASSES (in natural units, ~MeV/100)
+  ;; ═════════════════════════════════════════════════════════════
+
+  (constructor rest-mass : (-> Particle Nat))
+
+  (rewrite m-proton       (rest-mass proton)       (s (s (s (s (s z))))))         ;; 5
+  (rewrite m-neutron      (rest-mass neutron)      (s (s (s (s (s (s z)))))))     ;; 6
+  (rewrite m-electron     (rest-mass electron)     (s z))                          ;; 1
+  (rewrite m-positron     (rest-mass positron)     (s z))                          ;; 1
+  (rewrite m-neutrino     (rest-mass neutrino)     z)                              ;; 0
+  (rewrite m-antineutrino (rest-mass antineutrino) z)                              ;; 0
+  (rewrite m-photon       (rest-mass photon)       z)                              ;; 0
+
+  ;; ═════════════════════════════════════════════════════════════
+  ;; §6  TOTAL REST MASS — Recursive Extraction
+  ;; ═════════════════════════════════════════════════════════════
+
+  (constructor total-rest-mass : (-> Resource Nat))
+
+  (rewrite trm-vacuum (total-rest-mass vacuum)       z)
+  (rewrite trm-p      (total-rest-mass (particle ?p)) (rest-mass ?p))
+  (rewrite trm-t      (total-rest-mass (tensor ?a ?b))
+    (add (total-rest-mass ?a) (total-rest-mass ?b)))
+
+  ;; ═════════════════════════════════════════════════════════════
+  ;; §7  DIMENSIONS & CURVATURE
+  ;; ═════════════════════════════════════════════════════════════
+
+  (sort Dim)
+  (constructor dim-3 : Dim)
+
+  (sort Curvature)
+  (constructor flat     : Curvature)    ;; R = 0  (vacuum)
+  (constructor positive : Curvature)    ;; R > 0  (matter)
+
+  ;; ═════════════════════════════════════════════════════════════
+  ;; §8  THE UNIVERSE = GEOMETRY + MATTER
+  ;; ═════════════════════════════════════════════════════════════
+
+  (sort HGraph)
+  (constructor phys-universe : (-> Dim Resource HGraph))
+
+  ;; ═════════════════════════════════════════════════════════════
+  ;; §9  CURVATURE BRIDGE — Mass Determines Geometry
+  ;; ═════════════════════════════════════════════════════════════
+  ;; compute-ricci extracts curvature from the universe:
+  ;;   1. Extract total-rest-mass of the resource bundle
+  ;;   2. check-mass(mass, 1): is mass >= 1?
+  ;;   3. Route through ricci-from-mass:
+  ;;        mass-ok   → positive (matter curves space)
+  ;;        mass-fail → flat     (vacuum/radiation)
+  ;;
+  ;; This is the key insight: gravity emerges from particle content.
+
+  (constructor compute-ricci   : (-> HGraph Curvature))
+  (constructor ricci-from-mass : (-> MassCheck Curvature))
+
+  (rewrite compute-ricci-phys
+    (compute-ricci (phys-universe ?D ?R))
+    (ricci-from-mass (check-mass (total-rest-mass ?R) (s z))))
+
+  (rewrite ricci-mass-ok   (ricci-from-mass mass-ok)   positive)
+  (rewrite ricci-mass-fail (ricci-from-mass mass-fail) flat)
+
+  ;; ═════════════════════════════════════════════════════════════
+  ;; §10  PROPOSITIONS
+  ;; ═════════════════════════════════════════════════════════════
+
+  (sort Prop)
+
+  ;; Gorard's derivation chain
+  (constructor ci      : (-> Resource Prop))   ;; causal invariant
+  (constructor lc      : (-> Resource Prop))   ;; Lorentz covariant
+  (constructor dp      : (-> Resource Prop))   ;; dimension preserving
+  (constructor ml      : (-> Resource Prop))   ;; manifold limit
+  (constructor vac     : (-> Resource Prop))   ;; vacuum Einstein
+  (constructor matt    : (-> Resource Prop))   ;; matter Einstein
+  (constructor has-T   : (-> Resource Prop))   ;; stress-energy tensor
+  (constructor is-flat : (-> Resource Prop))   ;; verified R = 0
+  (constructor is-pos  : (-> Resource Prop))   ;; verified R > 0
+  (constructor and-p   : (-> Prop Prop Prop))  ;; conjunction
+
+  ;; ═════════════════════════════════════════════════════════════
+  ;; §11  JUDGMENTS
+  ;; ═════════════════════════════════════════════════════════════
+
+  (judgment (holds ?P) :where P : Prop)
+  (judgment (has ?R) :where R : Resource)
+  (judgment (curv-eq ?A ?B) :where A : Curvature B : Curvature)
+  (judgment (mass-eq ?A ?B) :where A : MassCheck B : MassCheck)
+
+  (rule curv-refl :premises () :conclusion (curv-eq ?a ?a))
+  (rule mass-refl :premises () :conclusion (mass-eq ?a ?a))
+
+  ;; ═════════════════════════════════════════════════════════════
+  ;; §12  PARTICLE PHYSICS RULES (from GUTPhys)
+  ;; ═════════════════════════════════════════════════════════════
+
+  (rule tensor-intro
+    :premises ((has ?A) (has ?B))
+    :conclusion (has (tensor ?A ?B)))
+
+  ;; Beta decay: n → p + e + ν̄
+  ;; Mass check: neutron(6) >= proton(5) + electron(1) + ν̄(0) = 6. ✓
+  (rule beta-decay
+    :premises (
+      (has (particle neutron))
+      (mass-eq
+        (check-mass (rest-mass neutron)
+          (total-rest-mass (tensor (particle proton)
+            (tensor (particle electron) (particle antineutrino)))))
+        mass-ok))
+    :conclusion (has (tensor (particle proton)
+      (tensor (particle electron) (particle antineutrino)))))
+
+  ;; ═════════════════════════════════════════════════════════════
+  ;; §13  GORARD'S DERIVATION CHAIN (from RuliadRelativity)
+  ;; ═════════════════════════════════════════════════════════════
+
+  ;; CI → Lorentz Covariance
+  (rule ci-to-lc
+    :premises ((holds (ci ?R)))
+    :conclusion (holds (lc ?R)))
+
+  ;; CI + DP → Manifold Limit
+  (rule ci-dp-to-ml
+    :premises ((holds (ci ?R)) (holds (dp ?R)))
+    :conclusion (holds (ml ?R)))
+
+  ;; Curvature verification (computation + check)
+  (rule check-flat
+    :premises ((curv-eq (compute-ricci (phys-universe dim-3 ?R)) flat))
+    :conclusion (holds (is-flat ?R)))
+
+  (rule check-pos
+    :premises ((curv-eq (compute-ricci (phys-universe dim-3 ?R)) positive))
+    :conclusion (holds (is-pos ?R)))
+
+  ;; Vacuum Einstein (R_μν = 0)
+  (rule derive-vacuum-einstein
+    :premises ((holds (ml ?R)) (holds (lc ?R)) (holds (is-flat ?R)))
+    :conclusion (holds (vac ?R)))
+
+  ;; Matter Einstein (R_μν = 8πG T_μν)
+  (rule derive-matter-einstein
+    :premises ((holds (ml ?R)) (holds (lc ?R)) (holds (is-pos ?R)) (holds (has-T ?R)))
+    :conclusion (holds (matt ?R)))
+
+  ;; ═════════════════════════════════════════════════════════════
+  ;; §14  THE BRIDGE RULE — Matter Generates Gravity
+  ;; ═════════════════════════════════════════════════════════════
+  ;; If a resource exists (has) and has mass >= 1,
+  ;; it generates a stress-energy tensor (holds has-T).
+  ;; This links particle physics (has) to geometry (holds).
+
+  (rule matter-generates-T
+    :premises (
+      (has ?R)
+      (mass-eq (check-mass (total-rest-mass ?R) (s z)) mass-ok))
+    :conclusion (holds (has-T ?R)))
+
+  ;; ═════════════════════════════════════════════════════════════
+  ;; §15  LOGIC
+  ;; ═════════════════════════════════════════════════════════════
+
+  (rule and-intro
+    :premises ((holds ?A) (holds ?B))
+    :conclusion (holds (and-p ?A ?B)))
+
+  ;; ═════════════════════════════════════════════════════════════
+  ;; §16  BLACK HOLE PHYSICS — Gravitational Collapse & Horizons
+  ;; ═════════════════════════════════════════════════════════════
+  ;; In the Wolfram/Gorard model, a black hole is a region where
+  ;; the causal graph becomes disconnected — update events inside
+  ;; cannot influence events outside. This occurs when mass density
+  ;; exceeds the Schwarzschild limit.
+  ;;
+  ;; The mechanism:
+  ;;   total-rest-mass >= schwarzschild-mass (10)
+  ;;   → gravitational collapse → trapped surface (event horizon)
+  ;;   → classical: no escape
+  ;;   → quantum (CI/multiway): Hawking radiation → information leaks
+
+  ;; Schwarzschild mass threshold (= 10 in our units)
+  (constructor schwarzschild-mass : Nat)
+  (rewrite sch-mass-def schwarzschild-mass
+    (s (s (s (s (s (s (s (s (s (s z)))))))))))
+
+  ;; Black hole check: does mass exceed Schwarzschild limit?
+  (sort BHCheck)
+  (constructor bh-yes : BHCheck)
+  (constructor bh-no  : BHCheck)
+  (constructor bh-from-mass : (-> MassCheck BHCheck))
+  (constructor check-schwarzschild : (-> Resource BHCheck))
+
+  (rewrite bh-mass-ok   (bh-from-mass mass-ok)   bh-yes)
+  (rewrite bh-mass-fail (bh-from-mass mass-fail) bh-no)
+  (rewrite check-sch-def (check-schwarzschild ?R)
+    (bh-from-mass (check-mass (total-rest-mass ?R) schwarzschild-mass)))
+
+  ;; Black hole propositions
+  (constructor trapped    : (-> Resource Prop))  ;; event horizon formed
+  (constructor hawking    : (-> Resource Prop))  ;; Hawking radiation present
+  (constructor can-escape : (-> Resource Prop))  ;; information can escape
+
+  ;; Judgment for BH check equality
+  (judgment (bh-eq ?A ?B) :where A : BHCheck B : BHCheck)
+  (rule bh-refl :premises () :conclusion (bh-eq ?a ?a))
+
+  ;; GRAVITATIONAL COLLAPSE: mass >= Schwarzschild → trapped surface
+  ;; The manifold must exist (manifold limit) and the mass must
+  ;; exceed the critical density for the causal graph to disconnect.
+  (rule schwarzschild-collapse
+    :premises ((holds (ml ?R)) (bh-eq (check-schwarzschild ?R) bh-yes))
+    :conclusion (holds (trapped ?R)))
+
+  ;; HAWKING RADIATION: trapped + causal invariance → quantum leakage
+  ;; In the multiway system, quantum branching (CI) creates paths
+  ;; that tunnel across the horizon. This is Gorard's interpretation
+  ;; of the Hawking process: "causal leakage via multiway branching."
+  (rule hawking-radiation
+    :premises ((holds (trapped ?R)) (holds (ci ?R)))
+    :conclusion (holds (hawking ?R)))
+
+  ;; QUANTUM ESCAPE: Hawking radiation carries information out
+  (rule quantum-escape
+    :premises ((holds (hawking ?R)))
+    :conclusion (holds (can-escape ?R)))
+
+  ;; CLASSICAL ESCAPE: below Schwarzschild → information propagates freely
+  (rule not-trapped-escape
+    :premises ((holds (ml ?R)) (bh-eq (check-schwarzschild ?R) bh-no))
+    :conclusion (holds (can-escape ?R))))
+
+(check-theory RuliadGUT)
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;;               ACT I — PARTICLE PHYSICS
+;;; ═══════════════════════════════════════════════════════════
+
+
+;;; Proof 1: Beta decay — n → p + e + ν̄
+;;; Mass conservation: neutron(6) >= proton(5) + electron(1) + ν̄(0) = 6.
+;;; check-mass(6, 6) → ... → check-mass(0, 0) → mass-ok.
+
+(proof beta-decay-works
+  :theory RuliadGUT
+  :assumptions ((has (particle neutron)))
+  :goal (has (tensor (particle proton)
+    (tensor (particle electron) (particle antineutrino))))
+  :derivation (beta-decay (assumption) (mass-refl)))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;;         ACT II — CURVATURE COMPUTATION (The Bridge)
+;;; ═══════════════════════════════════════════════════════════
+;;; The rewrite engine computes: resource → mass → curvature.
+;;; These are pure computation proofs (curv-refl after normalization).
+
+
+;;; Proof 2: Proton curves spacetime
+;;; total-rest-mass(proton) = 5
+;;; check-mass(5, 1) → check-mass(4, 0) → mass-ok → positive
+
+(proof proton-curves-space
+  :theory RuliadGUT
+  :goal (curv-eq (compute-ricci (phys-universe dim-3 (particle proton))) positive)
+  :derivation (curv-refl))
+
+
+;;; Proof 3: Photon doesn't curve spacetime
+;;; total-rest-mass(photon) = 0
+;;; check-mass(0, 1) → mass-fail → flat
+
+(proof photon-flat
+  :theory RuliadGUT
+  :goal (curv-eq (compute-ricci (phys-universe dim-3 (particle photon))) flat)
+  :derivation (curv-refl))
+
+
+;;; Proof 4: Beta decay products curve spacetime
+;;; total-rest-mass(p ⊗ e ⊗ ν̄) = 5 + 1 + 0 = 6
+;;; check-mass(6, 1) → check-mass(5, 0) → mass-ok → positive
+
+(proof decay-products-curve-space
+  :theory RuliadGUT
+  :goal (curv-eq
+    (compute-ricci (phys-universe dim-3
+      (tensor (particle proton)
+        (tensor (particle electron) (particle antineutrino)))))
+    positive)
+  :derivation (curv-refl))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;;              ACT III — PURE GEOMETRY
+;;; ═══════════════════════════════════════════════════════════
+
+
+;;; Proof 5: Vacuum universe → vacuum Einstein
+;;; Empty space: mass = 0 → flat → vacuum GR.
+
+(proof vacuum-einstein
+  :theory RuliadGUT
+  :assumptions (
+    (holds (ci vacuum))
+    (holds (dp vacuum)))
+  :goal (holds (vac vacuum))
+  :derivation
+    (derive-vacuum-einstein
+      (ci-dp-to-ml (assumption 0) (assumption 1))
+      (ci-to-lc (assumption 0))
+      (check-flat (curv-refl))))
+
+
+;;; Proof 6: Photon universe → vacuum Einstein
+;;; Massless particles don't curve space — pure radiation
+;;; obeys the VACUUM Einstein equations.
+
+(proof photon-vacuum-einstein
+  :theory RuliadGUT
+  :assumptions (
+    (holds (ci (particle photon)))
+    (holds (dp (particle photon))))
+  :goal (holds (vac (particle photon)))
+  :derivation
+    (derive-vacuum-einstein
+      (ci-dp-to-ml (assumption 0) (assumption 1))
+      (ci-to-lc (assumption 0))
+      (check-flat (curv-refl))))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;;         ACT IV — THE BRIDGE (Matter → Gravity)
+;;; ═══════════════════════════════════════════════════════════
+
+
+;;; Proof 7: Proton generates stress-energy tensor
+;;; The bridge rule: mass >= 1 → has-T.
+;;; check-mass(5, 1) → mass-ok → stress-energy exists.
+
+(proof proton-generates-stress-energy
+  :theory RuliadGUT
+  :assumptions ((has (particle proton)))
+  :goal (holds (has-T (particle proton)))
+  :derivation (matter-generates-T (assumption) (mass-refl)))
+
+
+;;; Proof 8: THE UNIFIED RESULT — Proton implies matter Einstein
+;;; A Standard Model particle (proton) forces the geometry to obey
+;;; the Matter Einstein Equations (General Relativity).
+;;;
+;;; The derivation:
+;;;   has(proton) → mass >= 1 → has-T           (bridge)
+;;;   ci + dp → manifold limit                   (Gorard Step 2)
+;;;   ci → Lorentz covariance                    (Gorard Step 1)
+;;;   mass → positive curvature                  (curvature bridge)
+;;;   ml + lc + is-pos + has-T → matter Einstein (Gorard Step 5)
+
+(proof proton-implies-matter-einstein
+  :theory RuliadGUT
+  :assumptions (
+    (has (particle proton))
+    (holds (ci (particle proton)))
+    (holds (dp (particle proton))))
+  :goal (holds (matt (particle proton)))
+  :derivation
+    (derive-matter-einstein
+      (ci-dp-to-ml (assumption 1) (assumption 2))
+      (ci-to-lc (assumption 1))
+      (check-pos (curv-refl))
+      (matter-generates-T (assumption 0) (mass-refl))))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;;             ACT V — THE FULL PIPELINE
+;;; ═══════════════════════════════════════════════════════════
+
+
+;;; Proof 9: Neutron decay → matter Einstein
+;;; The crown jewel. Start with a NEUTRON. Beta decay produces
+;;; p + e + ν̄. Those products have mass 6. Mass curves space.
+;;; Curved space + causal invariance = matter Einstein equations.
+;;;
+;;; One proof chains: particle physics → mass computation →
+;;;   curvature determination → general relativity.
+
+(proof neutron-decay-to-einstein
+  :theory RuliadGUT
+  :assumptions (
+    (has (particle neutron))
+    (holds (ci (tensor (particle proton)
+      (tensor (particle electron) (particle antineutrino)))))
+    (holds (dp (tensor (particle proton)
+      (tensor (particle electron) (particle antineutrino))))))
+  :goal (holds (matt (tensor (particle proton)
+    (tensor (particle electron) (particle antineutrino)))))
+  :derivation
+    (derive-matter-einstein
+      (ci-dp-to-ml (assumption 1) (assumption 2))
+      (ci-to-lc (assumption 1))
+      (check-pos (curv-refl))
+      (matter-generates-T
+        (beta-decay (assumption 0) (mass-refl))
+        (mass-refl))))
+
+
+;;; Proof 10: The full picture — matter GR AND Lorentz covariance
+;;; A proton's existence implies BOTH that spacetime curves according
+;;; to Einstein's equations AND that reference frames are equivalent.
+
+(proof proton-full-picture
+  :theory RuliadGUT
+  :assumptions (
+    (has (particle proton))
+    (holds (ci (particle proton)))
+    (holds (dp (particle proton))))
+  :goal (holds (and-p (matt (particle proton)) (lc (particle proton))))
+  :derivation
+    (and-intro
+      (derive-matter-einstein
+        (ci-dp-to-ml (assumption 1) (assumption 2))
+        (ci-to-lc (assumption 1))
+        (check-pos (curv-refl))
+        (matter-generates-T (assumption 0) (mass-refl)))
+      (ci-to-lc (assumption 1))))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;;          ACT VI — FUNDAMENTAL IMPOSSIBILITIES
+;;; ═══════════════════════════════════════════════════════════
+;;; These are REFUTATIONS — exhaustive proof search confirms
+;;; that no derivation exists. The kernel tries every rule
+;;; combination up to the given depth and certifies failure.
+
+
+;;; Refutation 11: VACUUM STABILITY — nothing from nothing
+;;; With zero assumptions, no particle can be derived.
+;;; tensor-intro needs two `has` premises, beta-decay needs
+;;; has(neutron). With nothing, nothing can fire.
+
+(refute vacuum-stability
+  :theory RuliadGUT
+  :assumptions ()
+  :goal (has (particle photon))
+  :depth 3)
+
+
+;;; Refutation 12: NO REVERSE BETA DECAY
+;;; Beta decay products (p + e + ν̄) cannot reassemble into a neutron.
+;;; beta-decay requires has(particle neutron) specifically — a single
+;;; particle, not a tensor containing one. tensor-intro only builds
+;;; bigger tensors, never decomposes them.
+;;; In physics: entropy / phase space / CP violation.
+
+(refute no-reverse-decay
+  :theory RuliadGUT
+  :assumptions (
+    (has (tensor (particle proton)
+      (tensor (particle electron) (particle antineutrino)))))
+  :goal (has (particle neutron))
+  :depth 4)
+
+
+;;; Refutation 13: MASSLESS CAN'T GENERATE GRAVITY
+;;; A photon (mass 0) cannot produce a stress-energy tensor.
+;;; matter-generates-T checks: total-rest-mass >= 1.
+;;; check-mass(0, 1) → mass-fail ≠ mass-ok.
+;;; In physics: photons DO carry energy-momentum (they gravitate),
+;;; but in our rest-mass model, massless = no curvature.
+
+(refute massless-no-gravity
+  :theory RuliadGUT
+  :assumptions ((has (particle photon)))
+  :goal (holds (has-T (particle photon)))
+  :depth 4)
+
+
+;;; Refutation 14: GEOMETRY CAN'T CREATE PARTICLES
+;;; The bridge is ONE-WAY: matter → geometry, not geometry → matter.
+;;; Causal invariance and dimension preservation (geometry axioms)
+;;; cannot produce particle-level `has` judgments. The holds/has
+;;; judgment boundary is impermeable from the geometry side.
+
+(refute geometry-cant-create-matter
+  :theory RuliadGUT
+  :assumptions (
+    (holds (ci (particle proton)))
+    (holds (dp (particle proton))))
+  :goal (has (particle proton))
+  :depth 3)
+
+
+;;; Refutation 15: MASSIVE MATTER BLOCKS VACUUM EINSTEIN
+;;; A proton curves spacetime (mass 5 → positive curvature).
+;;; The vacuum Einstein equations require R = 0 (flat).
+;;; compute-ricci normalizes to positive, not flat, so
+;;; check-flat can't fire, blocking derive-vacuum-einstein.
+;;;
+;;; This is the bridge working in REVERSE as a constraint:
+;;; mass > 0 → positive curvature → vacuum equations BLOCKED.
+;;; The proton can only satisfy MATTER Einstein (proof 8).
+
+(refute massive-blocks-vacuum-einstein
+  :theory RuliadGUT
+  :assumptions (
+    (holds (ci (particle proton)))
+    (holds (dp (particle proton))))
+  :goal (holds (vac (particle proton)))
+  :depth 4)
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;;          ACT VII — BLACK HOLE PHYSICS
+;;; ═══════════════════════════════════════════════════════════
+;;; Mass determines not just curvature (matter GR) but also
+;;; causal structure. Above the Schwarzschild mass (10 in our
+;;; units), the causal graph disconnects — a black hole forms.
+;;;
+;;; Two protons (mass 10) exactly hit the threshold.
+;;; A single proton (mass 5) does not.
+;;;
+;;; Classically, information cannot escape a black hole.
+;;; But with Causal Invariance (multiway/quantum branching),
+;;; Hawking radiation carries information out.
+
+
+;;; Proof 16: Proton below Schwarzschild limit
+;;; check-schwarzschild(proton): mass 5 < 10 → bh-no.
+;;; The rewrite chain: total-rest-mass → 5, check-mass(5, 10) →
+;;; check-mass(4, 9) → ... → check-mass(0, 5) → mass-fail → bh-no.
+
+(proof proton-below-schwarzschild
+  :theory RuliadGUT
+  :goal (bh-eq (check-schwarzschild (particle proton)) bh-no)
+  :derivation (bh-refl))
+
+
+;;; Proof 17: Two protons above Schwarzschild limit
+;;; total-rest-mass(p ⊗ p) = 5 + 5 = 10.
+;;; check-mass(10, 10) → ... → check-mass(0, 0) → mass-ok → bh-yes.
+;;; Two protons form a black hole!
+
+(proof two-protons-above-schwarzschild
+  :theory RuliadGUT
+  :goal (bh-eq
+    (check-schwarzschild (tensor (particle proton) (particle proton)))
+    bh-yes)
+  :derivation (bh-refl))
+
+
+;;; Proof 18: Single proton can escape
+;;; Mass below Schwarzschild → not-trapped-escape fires.
+;;; check-schwarzschild normalizes to bh-no → bh-refl certifies.
+
+(proof proton-can-escape
+  :theory RuliadGUT
+  :assumptions (
+    (holds (ci (particle proton)))
+    (holds (dp (particle proton))))
+  :goal (holds (can-escape (particle proton)))
+  :derivation
+    (not-trapped-escape
+      (ci-dp-to-ml (assumption 0) (assumption 1))
+      (bh-refl)))
+
+
+;;; Proof 19: Two protons → gravitational collapse
+;;; Mass 10 >= Schwarzschild mass 10 → trapped surface forms.
+;;; The causal graph disconnects: no future events inside can
+;;; influence events outside. An event horizon materializes.
+
+(proof two-protons-gravitational-collapse
+  :theory RuliadGUT
+  :assumptions (
+    (holds (ci (tensor (particle proton) (particle proton))))
+    (holds (dp (tensor (particle proton) (particle proton)))))
+  :goal (holds (trapped (tensor (particle proton) (particle proton))))
+  :derivation
+    (schwarzschild-collapse
+      (ci-dp-to-ml (assumption 0) (assumption 1))
+      (bh-refl)))
+
+
+;;; Proof 20: Hawking information escape — THE quantum chain
+;;; The most important proof in the black hole section.
+;;; Four physical steps, each a major concept:
+;;;   1. ci + dp → manifold limit (geometric convergence)
+;;;   2. mass >= 10 → trapped (gravitational collapse)
+;;;   3. trapped + CI → hawking (quantum branching tunnels horizon)
+;;;   4. hawking → can-escape (information carried out)
+;;;
+;;; Without CI (step 3), information is classically trapped forever.
+;;; This is Gorard's resolution of the Information Paradox:
+;;; multiway branching (quantum mechanics) enables Hawking radiation.
+
+(proof hawking-information-escape
+  :theory RuliadGUT
+  :assumptions (
+    (holds (ci (tensor (particle proton) (particle proton))))
+    (holds (dp (tensor (particle proton) (particle proton)))))
+  :goal (holds (can-escape (tensor (particle proton) (particle proton))))
+  :derivation
+    (quantum-escape
+      (hawking-radiation
+        (schwarzschild-collapse
+          (ci-dp-to-ml (assumption 0) (assumption 1))
+          (bh-refl))
+        (assumption 0))))
+
+
+;;; Proof 21: The Information Paradox RESOLVED
+;;; The region is BOTH trapped AND information can escape.
+;;; Classically contradictory — but quantum mechanics (CI)
+;;; provides the resolution. Both facts are simultaneously true:
+;;;   - The causal graph IS disconnected (trapped)
+;;;   - Information DOES escape (via Hawking/multiway)
+
+(proof information-paradox-resolved
+  :theory RuliadGUT
+  :assumptions (
+    (holds (ci (tensor (particle proton) (particle proton))))
+    (holds (dp (tensor (particle proton) (particle proton)))))
+  :goal (holds (and-p
+    (trapped (tensor (particle proton) (particle proton)))
+    (can-escape (tensor (particle proton) (particle proton)))))
+  :derivation
+    (and-intro
+      (schwarzschild-collapse
+        (ci-dp-to-ml (assumption 0) (assumption 1))
+        (bh-refl))
+      (quantum-escape
+        (hawking-radiation
+          (schwarzschild-collapse
+            (ci-dp-to-ml (assumption 0) (assumption 1))
+            (bh-refl))
+          (assumption 0)))))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;;        ACT VIII — BLACK HOLE IMPOSSIBILITIES
+;;; ═══════════════════════════════════════════════════════════
+
+
+;;; Refutation 22: PROTON NOT TRAPPED — insufficient mass
+;;; Mass 5 < Schwarzschild mass 10. check-schwarzschild
+;;; normalizes to bh-no. schwarzschild-collapse needs bh-yes.
+;;; bh-eq(bh-no, bh-yes) doesn't match bh-refl. Blocked.
+
+(refute proton-not-trapped
+  :theory RuliadGUT
+  :assumptions (
+    (holds (ci (particle proton)))
+    (holds (dp (particle proton))))
+  :goal (holds (trapped (particle proton)))
+  :depth 3)
+
+
+;;; Refutation 23: CLASSICAL NO ESCAPE — trapped without quantum
+;;; A trapped surface with NO causal invariance (no CI) cannot
+;;; derive can-escape. The only paths to can-escape are:
+;;;   - quantum-escape: needs hawking, which needs CI. BLOCKED.
+;;;   - not-trapped-escape: needs bh-no, but we don't have ml
+;;;     or a mass check. BLOCKED.
+;;; This IS the classical black hole: information goes in, never out.
+
+(refute classical-no-escape
+  :theory RuliadGUT
+  :assumptions (
+    (holds (trapped (tensor (particle proton) (particle proton)))))
+  :goal (holds (can-escape (tensor (particle proton) (particle proton))))
+  :depth 3)
+
+
+;;; Refutation 24: NO HAWKING WITHOUT QUANTUM
+;;; Hawking radiation requires causal invariance (multiway branching).
+;;; Without CI, the trapped surface is perfectly sealed.
+;;; This proves that Hawking radiation is fundamentally quantum:
+;;; you need the multiway system (quantum mechanics) for it to exist.
+
+(refute no-hawking-without-quantum
+  :theory RuliadGUT
+  :assumptions (
+    (holds (trapped (tensor (particle proton) (particle proton)))))
+  :goal (holds (hawking (tensor (particle proton) (particle proton))))
+  :depth 3)

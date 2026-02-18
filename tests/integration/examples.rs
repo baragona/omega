@@ -1769,3 +1769,41 @@ fn ruliad_example() {
     assert!(results.iter().any(|r| r.contains("Proof ci-implies-lorentz: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof grand-chain: VALID")));
 }
+
+#[test]
+fn ruliad_gut_example() {
+    let results = check_example("examples/ruliad-gut.omega");
+    assert!(results.iter().any(|r| r.contains("Theory RuliadGUT: registered OK")));
+    // ACT I: Particle physics
+    assert!(results.iter().any(|r| r.contains("Proof beta-decay-works: VALID")));
+    // ACT II: Curvature computation
+    assert!(results.iter().any(|r| r.contains("Proof proton-curves-space: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof photon-flat: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof decay-products-curve-space: VALID")));
+    // ACT III: Pure geometry
+    assert!(results.iter().any(|r| r.contains("Proof vacuum-einstein: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof photon-vacuum-einstein: VALID")));
+    // ACT IV: The bridge
+    assert!(results.iter().any(|r| r.contains("Proof proton-generates-stress-energy: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof proton-implies-matter-einstein: VALID")));
+    // ACT V: Full pipeline
+    assert!(results.iter().any(|r| r.contains("Proof neutron-decay-to-einstein: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof proton-full-picture: VALID")));
+    // ACT VI: Fundamental impossibilities
+    assert!(results.iter().any(|r| r.contains("Refutation vacuum-stability: VERIFIED")));
+    assert!(results.iter().any(|r| r.contains("Refutation no-reverse-decay: VERIFIED")));
+    assert!(results.iter().any(|r| r.contains("Refutation massless-no-gravity: VERIFIED")));
+    assert!(results.iter().any(|r| r.contains("Refutation geometry-cant-create-matter: VERIFIED")));
+    assert!(results.iter().any(|r| r.contains("Refutation massive-blocks-vacuum-einstein: VERIFIED")));
+    // ACT VII: Black hole physics
+    assert!(results.iter().any(|r| r.contains("Proof proton-below-schwarzschild: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof two-protons-above-schwarzschild: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof proton-can-escape: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof two-protons-gravitational-collapse: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof hawking-information-escape: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof information-paradox-resolved: VALID")));
+    // ACT VIII: Black hole impossibilities
+    assert!(results.iter().any(|r| r.contains("Refutation proton-not-trapped: VERIFIED")));
+    assert!(results.iter().any(|r| r.contains("Refutation classical-no-escape: VERIFIED")));
+    assert!(results.iter().any(|r| r.contains("Refutation no-hawking-without-quantum: VERIFIED")));
+}
