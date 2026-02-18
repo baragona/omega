@@ -1751,3 +1751,21 @@ fn full_demo_example() {
     assert!(results.iter().any(|r| r.contains("Proof p6-distribute-comm: VALID")));
     assert!(results.iter().any(|r| r.contains("Proof p6-compose-reflected: VALID")));
 }
+
+#[test]
+fn ruliad_example() {
+    let results = check_example("examples/ruliad.omega");
+    assert!(results.iter().any(|r| r.contains("Theory RuliadRelativity: registered OK")));
+    // Curvature computation (normalization)
+    assert!(results.iter().any(|r| r.contains("Proof ricci-flat-computes: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof ricci-positive-computes: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof ricci-empty-flat: VALID")));
+    // Gorard's derivation chain
+    assert!(results.iter().any(|r| r.contains("Proof step1-ci-to-lorentz: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof flat-3d-verified: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof vacuum-gr-emergence: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof matter-gr-emergence: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof flatland-gr: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof ci-implies-lorentz: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof grand-chain: VALID")));
+}
