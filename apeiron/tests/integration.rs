@@ -341,6 +341,26 @@ fn run_example(path: &str) {
     for line in &refute_lines {
         assert!(line.contains("VERIFIED"), "refutation failed in {}: {}", path, line);
     }
+
+    // Verify all auto computations succeeded
+    let auto_lines: Vec<_> = session
+        .output
+        .iter()
+        .filter(|l| l.starts_with("[AUTO]"))
+        .collect();
+    for line in &auto_lines {
+        assert!(line.contains("computed"), "auto failed in {}: {}", path, line);
+    }
+
+    // Verify all lemmas verified
+    let lemma_lines: Vec<_> = session
+        .output
+        .iter()
+        .filter(|l| l.starts_with("[LEMMA]"))
+        .collect();
+    for line in &lemma_lines {
+        assert!(line.contains("verified"), "lemma failed in {}: {}", path, line);
+    }
 }
 
 #[test]
@@ -515,6 +535,216 @@ fn example_judgment_derive() {
 #[test]
 fn example_judgment_refute() {
     run_example("examples/judgment-refute.ap");
+}
+
+#[test]
+fn example_judgment_import() {
+    run_example("examples/judgment-import.ap");
+}
+
+#[test]
+fn auto_computes_type() {
+    let source = r#"
+    [System ATest
+      [@syntax
+        [sort Ty] [sort Tm] [sort Ctx]
+        [op Base] [op arrow]
+        [op vz] [op lam-t]
+        [op nil] [op ext]
+        [judgment typeof :inputs [Ctx Tm] :output Ty]
+      ]
+      [@binding implicit]
+      [@check rewriting]
+    ]
+    [Theory ARules :in ATest
+      [@derive typeof-vz
+        :conclusion [typeof [ext ?A ?G] vz ?A]]
+      [@derive typeof-lam
+        :premises [[typeof [ext ?A ?G] ?e ?B]]
+        :conclusion [typeof ?G [lam-t ?A ?e] [arrow ?A ?B]]]
+    ]
+    [Proofs ACheck :in ARules
+      [auto identity [typeof nil [lam-t Base vz]]]
+    ]
+    "#;
+
+    let sexps = parser::parse(source).unwrap();
+    let mut session = Session::new();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+    assert!(session.output.iter().any(|s| s.contains("[AUTO] identity computed [arrow Base Base]")));
+}
+
+#[test]
+fn auto_fails_on_stuck() {
+    let source = r#"
+    [System ATest
+      [@syntax
+        [sort Ty] [sort Tm]
+        [op Base] [op unknown]
+        [op nil]
+        [judgment typeof :inputs [Tm] :output Ty]
+      ]
+      [@binding implicit]
+      [@check rewriting]
+    ]
+    [Theory ARules :in ATest]
+    [Proofs ACheck :in ARules
+      [auto stuck [typeof unknown]]
+    ]
+    "#;
+
+    let sexps = parser::parse(source).unwrap();
+    let mut session = Session::new();
+    session.process(&sexps[0]).unwrap();
+    session.process(&sexps[1]).unwrap();
+    let result = session.process(&sexps[2]);
+    assert!(result.is_err());
+}
+
+#[test]
+fn lemma_adds_derived_rule() {
+    let source = r#"
+    [System LTest
+      [@syntax
+        [sort Ty] [sort Tm] [sort Ctx]
+        [op Base] [op arrow]
+        [op vz] [op lam-t]
+        [op nil] [op ext]
+        [judgment typeof :inputs [Ctx Tm] :output Ty]
+      ]
+      [@binding implicit]
+      [@check rewriting]
+    ]
+    [Theory LRules :in LTest
+      [@derive typeof-vz
+        :conclusion [typeof [ext ?A ?G] vz ?A]]
+      [@derive typeof-lam
+        :premises [[typeof [ext ?A ?G] ?e ?B]]
+        :conclusion [typeof ?G [lam-t ?A ?e] [arrow ?A ?B]]]
+    ]
+    [Proofs LCheck :in LRules
+      [lemma id-type [typeof nil [lam-t Base vz]] [arrow Base Base]]
+      [auto verify [typeof nil [lam-t Base vz]]]
+    ]
+    "#;
+
+    let sexps = parser::parse(source).unwrap();
+    let mut session = Session::new();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+    assert!(session.output.iter().any(|s| s.contains("[LEMMA] id-type verified")));
+    assert!(session.output.iter().any(|s| s.contains("[AUTO] verify computed")));
+}
+
+#[test]
+fn check_wildcard_acts_as_auto() {
+    let source = r#"
+    [System WTest
+      [@syntax
+        [sort Ty] [sort Tm] [sort Ctx]
+        [op Base] [op arrow]
+        [op vz] [op lam-t]
+        [op nil] [op ext]
+        [judgment typeof :inputs [Ctx Tm] :output Ty]
+      ]
+      [@binding implicit]
+      [@check rewriting]
+    ]
+    [Theory WRules :in WTest
+      [@derive typeof-vz
+        :conclusion [typeof [ext ?A ?G] vz ?A]]
+      [@derive typeof-lam
+        :premises [[typeof [ext ?A ?G] ?e ?B]]
+        :conclusion [typeof ?G [lam-t ?A ?e] [arrow ?A ?B]]]
+    ]
+    [Proofs WCheck :in WRules
+      [check wild [typeof nil [lam-t Base vz]] _]
+    ]
+    "#;
+
+    let sexps = parser::parse(source).unwrap();
+    let mut session = Session::new();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+    // Wildcard check delegates to auto, so output says [AUTO] not [CHECK]
+    assert!(session.output.iter().any(|s| s.contains("[AUTO] wild computed [arrow Base Base]")));
+}
+
+#[test]
+fn import_copies_rules() {
+    let source = r#"
+    [System ITest
+      [@syntax
+        [sort Nat] [sort Result]
+        [op z] [op s] [op add]
+        [judgment eval :inputs [Nat] :output Nat]
+      ]
+      [@binding implicit]
+      [@check rewriting]
+    ]
+    [Theory IBase :in ITest
+      [op ok] [op fail]
+      [@derive eval-z :conclusion [eval [add z ?n] ?n]]
+      [@derive eval-s
+        :premises [[eval [add ?m ?n] ?r]]
+        :conclusion [eval [add [s ?m] ?n] [s ?r]]]
+    ]
+    [Theory IExt :in ITest
+      [import IBase]
+    ]
+    [Proofs ICheck :in IExt
+      [check imported [eval [add [s z] [s z]]] [s [s z]]]
+    ]
+    "#;
+
+    let sexps = parser::parse(source).unwrap();
+    let mut session = Session::new();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+    assert!(session.output.iter().any(|s| s.contains("[CHECK] imported passed")));
+}
+
+#[test]
+fn sequential_staging_handles_dependencies() {
+    let source = r#"
+    [System STest
+      [@syntax
+        [sort Nat] [sort Result]
+        [op z] [op s] [op add] [op mul]
+        [judgment eval :inputs [Nat] :output Nat]
+      ]
+      [@binding implicit]
+      [@check rewriting]
+    ]
+    [Theory SRules :in STest
+      [op ok] [op fail]
+      [@derive eval-add-z :conclusion [eval [add z ?n] ?n]]
+      [@derive eval-add-s
+        :premises [[eval [add ?m ?n] ?r]]
+        :conclusion [eval [add [s ?m] ?n] [s ?r]]]
+      [@derive eval-mul-z :conclusion [eval [mul z ?n] z]]
+      [@derive eval-mul-s
+        :premises [[eval [mul ?m ?n] ?r]
+                   [eval [add ?n ?r] ?total]]
+        :conclusion [eval [mul [s ?m] ?n] ?total]]
+    ]
+    [Proofs SCheck :in SRules
+      [check mul-2-3 [eval [mul [s [s z]] [s [s [s z]]]]]
+        [s [s [s [s [s [s z]]]]]]]
+    ]
+    "#;
+
+    let sexps = parser::parse(source).unwrap();
+    let mut session = Session::new();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+    assert!(session.output.iter().any(|s| s.contains("[CHECK] mul-2-3 passed")));
 }
 
 #[test]

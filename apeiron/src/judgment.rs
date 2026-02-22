@@ -205,120 +205,215 @@ pub fn compile_derive_rules(
                 rhs,
             });
         } else {
-            // N-premise rule: staging combinator with context threading
-            let stg_name = format!("__stg_{}", rule.name);
-            staging_ops.push(stg_name.clone());
+            // N-premise rule: sequential staging with dependency-aware chaining.
+            //
+            // Premises are evaluated one at a time via numbered staging combinators.
+            // Each stage waits for the previous premise to resolve to [ok ...],
+            // then uses the extracted metas to construct the next premise's call.
+            // This correctly handles inter-premise dependencies (e.g., one premise's
+            // output feeding into another's input).
+            let stg_prefix = format!("__stg_{}", rule.name);
 
-            // Determine context variables: metas in output that aren't in premise outputs
-            let mut output_metas = HashSet::new();
-            collect_metas(&conclusion_output, &mut output_metas);
-
-            let mut premise_output_metas = HashSet::new();
-            for premise in &rule.premises {
-                if let Some((_, _, poutput)) = decompose_judgment(premise) {
-                    collect_metas(&poutput, &mut premise_output_metas);
-                }
-            }
-
-            // Context vars = metas in output but not in any premise output
-            let mut ctx_vars: Vec<String> = output_metas
-                .difference(&premise_output_metas)
-                .cloned()
-                .collect();
-            ctx_vars.sort(); // deterministic order
-
-            // Build premise calls: [J premise_inputs...]
-            let premise_calls: Vec<Sexp> = rule
+            // Decompose all premises into (judgment_name, inputs, output)
+            let premise_parts: Vec<(String, Vec<Sexp>, Sexp)> = rule
                 .premises
                 .iter()
-                .filter_map(|p| {
-                    let (pj, pinputs, _poutput) = decompose_judgment(p)?;
-                    let mut items = vec![Sexp::Atom(pj, s)];
-                    items.extend(pinputs);
-                    Some(Sexp::List(items, s))
+                .filter_map(|p| decompose_judgment(p))
+                .collect();
+
+            if premise_parts.len() != rule.premises.len() {
+                continue; // malformed premises
+            }
+
+            let n = premise_parts.len();
+
+            // Collect metas from each component
+            let premise_output_metas: Vec<HashSet<String>> = premise_parts
+                .iter()
+                .map(|(_, _, output)| {
+                    let mut m = HashSet::new();
+                    collect_metas(output, &mut m);
+                    m
                 })
                 .collect();
 
-            // Main rule: [J inputs...] ==> [__stg ctx_var1 ctx_var2 ... premise_call1 ...]
-            let mut rhs_items = vec![Sexp::Atom(stg_name.clone(), s)];
-            for cv in &ctx_vars {
-                rhs_items.push(Sexp::Atom(cv.clone(), s));
-            }
-            rhs_items.extend(premise_calls);
-            let rhs = Sexp::List(rhs_items, s);
-            rewrites.push(RewriteRule {
-                name: rule.name.clone(),
-                lhs,
-                rhs,
-            });
+            let premise_call_metas: Vec<HashSet<String>> = premise_parts
+                .iter()
+                .map(|(_, inputs, _)| {
+                    let mut m = HashSet::new();
+                    for inp in inputs {
+                        collect_metas(inp, &mut m);
+                    }
+                    m
+                })
+                .collect();
 
-            let n_ctx = ctx_vars.len();
-            let n_premises = rule.premises.len();
+            let mut concl_output_metas = HashSet::new();
+            collect_metas(&conclusion_output, &mut concl_output_metas);
 
-            // Success rule: [__stg ctx_vars... [ok pat1] [ok pat2] ...] ==> [ok output]
-            let mut ok_lhs_items = vec![Sexp::Atom(stg_name.clone(), s)];
-            for cv in &ctx_vars {
-                ok_lhs_items.push(Sexp::Atom(cv.clone(), s));
+            let mut lhs_metas = HashSet::new();
+            for inp in &conclusion_inputs {
+                collect_metas(inp, &mut lhs_metas);
             }
-            for premise in &rule.premises {
-                let (_pj, _pinputs, poutput) = match decompose_judgment(premise) {
-                    Some(d) => d,
-                    None => continue,
-                };
-                ok_lhs_items.push(Sexp::List(
-                    vec![Sexp::Atom("ok".into(), s), poutput],
-                    s,
-                ));
-            }
-            let ok_rhs = Sexp::List(
-                vec![Sexp::Atom("ok".into(), s), conclusion_output.clone()],
-                s,
-            );
-            rewrites.push(RewriteRule {
-                name: format!("{}_ok", stg_name),
-                lhs: Sexp::List(ok_lhs_items, s),
-                rhs: ok_rhs,
-            });
 
-            // Failure rules: one per premise position
-            for fail_idx in 0..n_premises {
-                let mut fail_lhs_items = vec![Sexp::Atom(stg_name.clone(), s)];
-                // Context vars as wildcards
-                for k in 0..n_ctx {
-                    fail_lhs_items.push(Sexp::Atom(format!("?__ctx{}", k), s));
+            // Compute needed_after(i): metas needed after premise i resolves
+            let mut needed_after: Vec<HashSet<String>> = vec![HashSet::new(); n];
+            for i in (0..n).rev() {
+                let mut needed = HashSet::new();
+
+                // Conclusion output needed at last stage
+                needed.extend(concl_output_metas.iter().cloned());
+
+                // Later premise call inputs
+                for j in (i + 1)..n {
+                    needed.extend(premise_call_metas[j].iter().cloned());
                 }
-                for k in 0..n_premises {
-                    if k == fail_idx {
-                        fail_lhs_items.push(Sexp::Atom("fail".into(), s));
-                    } else {
-                        let var = format!("?__p{}", k);
-                        fail_lhs_items.push(Sexp::Atom(var, s));
+
+                // Non-linear matching: metas from later outputs that also appear
+                // in earlier outputs (including the current one)
+                let earlier_output_metas: HashSet<String> = (0..=i)
+                    .flat_map(|k| premise_output_metas[k].iter().cloned())
+                    .collect();
+                for j in (i + 1)..n {
+                    for m in &premise_output_metas[j] {
+                        if earlier_output_metas.contains(m) {
+                            needed.insert(m.clone());
+                        }
                     }
                 }
+
+                needed_after[i] = needed;
+            }
+
+            // Compute ctx_vars for each stage (available ∩ needed_after)
+            let mut ctx_for_stage: Vec<Vec<String>> = vec![vec![]; n];
+            let mut available = lhs_metas.clone();
+            for i in 0..n {
+                let ctx: HashSet<String> = needed_after[i]
+                    .intersection(&available)
+                    .cloned()
+                    .collect();
+                let mut sorted: Vec<String> = ctx.into_iter().collect();
+                sorted.sort();
+                ctx_for_stage[i] = sorted;
+
+                // After this stage resolves, add its output metas
+                available.extend(premise_output_metas[i].iter().cloned());
+            }
+
+            // Register all staging combinator names
+            for i in 0..n {
+                staging_ops.push(format!("{}_{}", stg_prefix, i));
+            }
+
+            // MAIN RULE: [J inputs] ==> [__stg_RULE_0 ctx0... [P0_call]]
+            {
+                let stg_0 = format!("{}_{}", stg_prefix, 0);
+                let mut rhs_items = vec![Sexp::Atom(stg_0, s)];
+                for cv in &ctx_for_stage[0] {
+                    rhs_items.push(Sexp::Atom(cv.clone(), s));
+                }
+                let (ref p0_name, ref p0_inputs, _) = premise_parts[0];
+                let mut p0_call = vec![Sexp::Atom(p0_name.clone(), s)];
+                p0_call.extend(p0_inputs.iter().cloned());
+                rhs_items.push(Sexp::List(p0_call, s));
+
                 rewrites.push(RewriteRule {
-                    name: format!("{}_fail{}", stg_name, fail_idx),
-                    lhs: Sexp::List(fail_lhs_items, s),
-                    rhs: Sexp::Atom("fail".into(), s),
+                    name: rule.name.clone(),
+                    lhs,
+                    rhs: Sexp::List(rhs_items, s),
                 });
             }
 
-            // Catch-all: all premises resolved to [ok ...] but didn't match success pattern
-            let mut catch_lhs_items = vec![Sexp::Atom(stg_name.clone(), s)];
-            for k in 0..n_ctx {
-                catch_lhs_items.push(Sexp::Atom(format!("?__cx{}", k), s));
-            }
-            for k in 0..n_premises {
-                let var = format!("?__c{}", k);
-                catch_lhs_items.push(Sexp::List(
-                    vec![Sexp::Atom("ok".into(), s), Sexp::Atom(var, s)],
+            // STAGE TRANSITIONS
+            for i in 0..n {
+                let stg_name = format!("{}_{}", stg_prefix, i);
+                let n_ctx = ctx_for_stage[i].len();
+
+                if i < n - 1 {
+                    // Intermediate stage: success fires next premise
+                    let stg_next = format!("{}_{}", stg_prefix, i + 1);
+
+                    // Success rule
+                    let mut ok_lhs = vec![Sexp::Atom(stg_name.clone(), s)];
+                    for cv in &ctx_for_stage[i] {
+                        ok_lhs.push(Sexp::Atom(cv.clone(), s));
+                    }
+                    ok_lhs.push(Sexp::List(
+                        vec![Sexp::Atom("ok".into(), s), premise_parts[i].2.clone()],
+                        s,
+                    ));
+
+                    let mut ok_rhs = vec![Sexp::Atom(stg_next, s)];
+                    for cv in &ctx_for_stage[i + 1] {
+                        ok_rhs.push(Sexp::Atom(cv.clone(), s));
+                    }
+                    let (ref pi1_name, ref pi1_inputs, _) = premise_parts[i + 1];
+                    let mut pi1_call = vec![Sexp::Atom(pi1_name.clone(), s)];
+                    pi1_call.extend(pi1_inputs.iter().cloned());
+                    ok_rhs.push(Sexp::List(pi1_call, s));
+
+                    rewrites.push(RewriteRule {
+                        name: format!("{}_ok", stg_name),
+                        lhs: Sexp::List(ok_lhs, s),
+                        rhs: Sexp::List(ok_rhs, s),
+                    });
+                } else {
+                    // Last stage: success produces final result
+                    let mut ok_lhs = vec![Sexp::Atom(stg_name.clone(), s)];
+                    for cv in &ctx_for_stage[i] {
+                        ok_lhs.push(Sexp::Atom(cv.clone(), s));
+                    }
+                    ok_lhs.push(Sexp::List(
+                        vec![Sexp::Atom("ok".into(), s), premise_parts[i].2.clone()],
+                        s,
+                    ));
+
+                    rewrites.push(RewriteRule {
+                        name: format!("{}_ok", stg_name),
+                        lhs: Sexp::List(ok_lhs, s),
+                        rhs: Sexp::List(
+                            vec![
+                                Sexp::Atom("ok".into(), s),
+                                conclusion_output.clone(),
+                            ],
+                            s,
+                        ),
+                    });
+                }
+
+                // Failure rule
+                let mut fail_lhs = vec![Sexp::Atom(stg_name.clone(), s)];
+                for k in 0..n_ctx {
+                    fail_lhs.push(Sexp::Atom(format!("?__ctx{}", k), s));
+                }
+                fail_lhs.push(Sexp::Atom("fail".into(), s));
+
+                rewrites.push(RewriteRule {
+                    name: format!("{}_fail", stg_name),
+                    lhs: Sexp::List(fail_lhs, s),
+                    rhs: Sexp::Atom("fail".into(), s),
+                });
+
+                // Catch-all (non-linear mismatch or unexpected output pattern)
+                let mut catch_lhs = vec![Sexp::Atom(stg_name.clone(), s)];
+                for k in 0..n_ctx {
+                    catch_lhs.push(Sexp::Atom(format!("?__cx{}", k), s));
+                }
+                catch_lhs.push(Sexp::List(
+                    vec![
+                        Sexp::Atom("ok".into(), s),
+                        Sexp::Atom("?__catch".into(), s),
+                    ],
                     s,
                 ));
+
+                rewrites.push(RewriteRule {
+                    name: format!("{}_catch", stg_name),
+                    lhs: Sexp::List(catch_lhs, s),
+                    rhs: Sexp::Atom("fail".into(), s),
+                });
             }
-            rewrites.push(RewriteRule {
-                name: format!("{}_catch", stg_name),
-                lhs: Sexp::List(catch_lhs_items, s),
-                rhs: Sexp::Atom("fail".into(), s),
-            });
         }
     }
 

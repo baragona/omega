@@ -384,6 +384,50 @@ impl Session {
                             &system,
                         )?;
                     }
+                    "import" => {
+                        // Theory-level import: [import TheoryName]
+                        if decl.len() >= 2 {
+                            let import_theory = decl[1].as_atom().unwrap_or("?").to_string();
+
+                            // Import compiled graph rules
+                            if let Some(imported) = self.compiled_rules.get(&import_theory).cloned() {
+                                let count = imported.len();
+                                for gr in imported {
+                                    graph_rules.push(gr);
+                                }
+                                self.output.push(format!(
+                                    "[IMPORT] {} graph rules from {}",
+                                    count, import_theory
+                                ));
+                            }
+
+                            // Import text rules
+                            if let Some(imported) = self.rules.get(&import_theory).cloned() {
+                                for rule in imported {
+                                    theory_rules.push(rule);
+                                }
+                            }
+
+                            // Import @derive rules (for refutation and derivation checking)
+                            if let Some(imported) = self.derive_rules_ordered.get(&import_theory).cloned() {
+                                for dr in &imported {
+                                    self.derive_rules_ordered
+                                        .entry(theory_name.clone())
+                                        .or_default()
+                                        .push(dr.clone());
+                                    self.derive_rules
+                                        .entry(theory_name.clone())
+                                        .or_default()
+                                        .insert(dr.name.clone(), dr.clone());
+                                }
+                            }
+
+                            // Ensure imported staging ops are in known_ops
+                            for op in &self.extra_known_ops {
+                                known_ops.insert(op.clone());
+                            }
+                        }
+                    }
                     "Inductive" => {
                         if decl.len() >= 2 {
                             let name = decl[1].as_atom().unwrap_or("?");
@@ -488,7 +532,7 @@ impl Session {
             .to_string();
 
         // Look up the parent Theory's compiled rules
-        let graph_rules = self
+        let mut graph_rules = self
             .compiled_rules
             .get(&theory_name)
             .cloned()
@@ -660,6 +704,25 @@ impl Session {
                         )?;
                         assertion_count += 1;
                     }
+                    "auto" => {
+                        self.process_auto(
+                            &decl[1..],
+                            &graph_rules,
+                            &known_ops,
+                            &system,
+                        )?;
+                        assertion_count += 1;
+                    }
+                    "lemma" => {
+                        self.process_lemma(
+                            &decl[1..],
+                            &mut graph_rules,
+                            &mut known_ops,
+                            &system,
+                            &theory_name,
+                        )?;
+                        assertion_count += 1;
+                    }
                     "derive" => {
                         self.process_derive_check(
                             &decl[1..],
@@ -700,7 +763,7 @@ impl Session {
                             block: "Proofs".into(),
                             detail: format!(
                                 "unknown declaration '{}' — Proofs blocks allow: \
-                                 assert-eq, assert-neq, eval, check, derive, refute, def",
+                                 assert-eq, assert-neq, eval, check, auto, lemma, derive, refute, def",
                                 decl_head
                             ),
                         });
@@ -711,6 +774,9 @@ impl Session {
 
         // Restore defs snapshot (local defs don't leak)
         self.defs = defs_snapshot;
+
+        // Persist any lemma-added rules back to compiled_rules
+        self.compiled_rules.insert(theory_name.clone(), graph_rules);
 
         self.output.push(format!(
             "[PROOFS] {} verified ({} assertions)",
@@ -1265,6 +1331,16 @@ impl Session {
         let judgment_expr = &items[1];
         let expected_output = &items[2];
 
+        // Wildcard `_` means "accept any [ok X]" (like auto)
+        if expected_output.as_atom() == Some("_") {
+            return self.process_auto(
+                &[items[0].clone(), judgment_expr.clone()],
+                graph_rules,
+                known_ops,
+                config,
+            );
+        }
+
         // Build and normalize the judgment expression
         let (lhs_root, _) =
             self.build_and_normalize(judgment_expr, graph_rules, known_ops, config)?;
@@ -1314,6 +1390,203 @@ impl Session {
                 ),
             })
         }
+    }
+
+    /// Process an `[auto name judgment-expr]` command.
+    /// Like `check` but without specifying the expected output — computes and reports it.
+    fn process_auto(
+        &mut self,
+        items: &[Sexp],
+        graph_rules: &[rewrite::GraphRule],
+        known_ops: &HashSet<String>,
+        config: &SystemConfig,
+    ) -> Result<()> {
+        if items.len() < 2 {
+            return Err(ApeironError::InvalidConfig {
+                block: "auto".into(),
+                detail: "need: [auto name judgment-expr]".into(),
+            });
+        }
+
+        let proof_name = items[0]
+            .as_atom()
+            .unwrap_or("?")
+            .to_string();
+        let judgment_expr = &items[1];
+
+        // Build and normalize the judgment expression
+        let (lhs_root, _) =
+            self.build_and_normalize(judgment_expr, graph_rules, known_ops, config)?;
+
+        // Read back the result
+        let lhs_port = self.arena.port(lhs_root, 1);
+        let lhs_ptr = if lhs_port.is_connected() {
+            lhs_port.target
+        } else {
+            lhs_root
+        };
+
+        let result_term = readback::readback(&self.arena, lhs_ptr);
+
+        // Check if result is [ok X]
+        match &result_term {
+            readback::Term::App(func, args) if args.len() == 1 => {
+                if let readback::Term::Const(ref head) = **func {
+                    if head == "ok" {
+                        self.output.push(format!(
+                            "[AUTO] {} computed {}",
+                            proof_name, args[0]
+                        ));
+                        return Ok(());
+                    }
+                }
+                Err(ApeironError::JudgmentMismatch {
+                    name: proof_name,
+                    detail: format!("judgment got stuck: {}", result_term),
+                })
+            }
+            readback::Term::Const(ref head) if head == "fail" => {
+                Err(ApeironError::JudgmentMismatch {
+                    name: proof_name,
+                    detail: "judgment reduced to fail (no matching rule)".into(),
+                })
+            }
+            _ => Err(ApeironError::JudgmentMismatch {
+                name: proof_name,
+                detail: format!("judgment got stuck: {}", result_term),
+            }),
+        }
+    }
+
+    /// Process a `[lemma name judgment-expr expected-output]` command.
+    /// Like `check` but also injects the proved conclusion as a new 0-premise @derive rule.
+    fn process_lemma(
+        &mut self,
+        items: &[Sexp],
+        graph_rules: &mut Vec<rewrite::GraphRule>,
+        known_ops: &mut HashSet<String>,
+        config: &SystemConfig,
+        theory_name: &str,
+    ) -> Result<()> {
+        if items.len() < 3 {
+            return Err(ApeironError::InvalidConfig {
+                block: "lemma".into(),
+                detail: "need: [lemma name judgment-expr expected-output]".into(),
+            });
+        }
+
+        let proof_name = items[0]
+            .as_atom()
+            .unwrap_or("?")
+            .to_string();
+        let judgment_expr = &items[1];
+        let expected_output = &items[2];
+
+        // 1. Verify (like check)
+        let (lhs_root, _) =
+            self.build_and_normalize(judgment_expr, graph_rules, known_ops, config)?;
+
+        let s = crate::parser::Span::default();
+        let ok_expected = Sexp::List(
+            vec![
+                Sexp::Atom("ok".into(), s),
+                expected_output.clone(),
+            ],
+            s,
+        );
+        let (rhs_root, _) =
+            self.build_and_normalize(&ok_expected, graph_rules, known_ops, config)?;
+
+        let lhs_port = self.arena.port(lhs_root, 1);
+        let rhs_port = self.arena.port(rhs_root, 1);
+        let lhs_ptr = if lhs_port.is_connected() {
+            lhs_port.target
+        } else {
+            lhs_root
+        };
+        let rhs_ptr = if rhs_port.is_connected() {
+            rhs_port.target
+        } else {
+            rhs_root
+        };
+
+        let canonical = config.binding != BindingMode::Nominal;
+        let lhs_hash = hash::topological_hash_mode(&self.arena, lhs_ptr, canonical);
+        let rhs_hash = hash::topological_hash_mode(&self.arena, rhs_ptr, canonical);
+
+        if lhs_hash != rhs_hash {
+            let lhs_term = readback::readback(&self.arena, lhs_ptr);
+            let rhs_term = readback::readback(&self.arena, rhs_ptr);
+            return Err(ApeironError::JudgmentMismatch {
+                name: proof_name,
+                detail: format!(
+                    "lemma: judgment yielded {} but expected {}",
+                    lhs_term, rhs_term
+                ),
+            });
+        }
+
+        // 2. Create a new 0-premise @derive rule
+        // Reconstruct the full conclusion: [J inputs... output]
+        let conclusion = if let Some(j_items) = judgment_expr.as_list() {
+            let mut concl_items = j_items.to_vec();
+            concl_items.push(expected_output.clone());
+            Sexp::List(concl_items, s)
+        } else {
+            Sexp::List(
+                vec![judgment_expr.clone(), expected_output.clone()],
+                s,
+            )
+        };
+
+        let derive_rule = DerivRule {
+            name: format!("__lemma_{}", proof_name),
+            premises: vec![],
+            conclusion,
+            absurd: false,
+        };
+
+        // 3. Compile to rewrite rules
+        let system_name = self
+            .theory_systems
+            .get(theory_name)
+            .cloned()
+            .unwrap_or_default();
+        let theory_judgments = self
+            .judgments
+            .get(&system_name)
+            .cloned()
+            .unwrap_or_default();
+
+        let (derived_rewrites, staging_ops) =
+            judgment::compile_derive_rules(&[derive_rule.clone()], &theory_judgments);
+
+        for op in &staging_ops {
+            known_ops.insert(op.clone());
+            self.extra_known_ops.insert(op.clone());
+        }
+
+        for rule in &derived_rewrites {
+            if let Some(gr) = rewrite::compile_rule(&rule.name, &rule.lhs, &rule.rhs) {
+                graph_rules.push(gr);
+            }
+        }
+
+        // 4. Register the derive rule
+        self.derive_rules_ordered
+            .entry(theory_name.to_string())
+            .or_default()
+            .push(derive_rule.clone());
+        self.derive_rules
+            .entry(theory_name.to_string())
+            .or_default()
+            .insert(derive_rule.name.clone(), derive_rule);
+
+        self.output.push(format!(
+            "[LEMMA] {} verified and added as derived rule",
+            proof_name
+        ));
+        Ok(())
     }
 
     /// Process a `[derive name :by rule :sub [...] :shows [conclusion]]` command.

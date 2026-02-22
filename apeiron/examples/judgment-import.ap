@@ -1,0 +1,111 @@
+;; Apeiron: Theory Imports — Composing Theories Incrementally
+;;
+;; The `import` command (lowercase) copies all rules and @derive
+;; declarations from another theory into the current one.
+;; This enables modular theory development.
+
+;; ════════════════════════════════════════════════════════════
+;; Base: Natural Number Arithmetic
+;; ════════════════════════════════════════════════════════════
+
+[System Arith
+  [@syntax
+    [sort Nat] [sort Result]
+    [op z] [op s]
+    [op add] [op mul]
+    [judgment eval-nat :inputs [Nat] :output Nat]
+  ]
+  [@binding implicit]
+  [@check rewriting]
+]
+
+[Theory PeanoBase :in Arith
+  [op ok] [op fail]
+
+  ;; Addition
+  [@derive eval-add-z
+    :conclusion [eval-nat [add z ?n] ?n]]
+
+  [@derive eval-add-s
+    :premises [[eval-nat [add ?m ?n] ?r]]
+    :conclusion [eval-nat [add [s ?m] ?n] [s ?r]]]
+]
+
+[Proofs PeanoBaseCheck :in PeanoBase
+  ;; 0 + 2 = 2
+  [check add-z [eval-nat [add z [s [s z]]]] [s [s z]]]
+
+  ;; 1 + 1 = 2
+  [check add-one [eval-nat [add [s z] [s z]]] [s [s z]]]
+
+  ;; 2 + 1 = 3
+  [check add-two [eval-nat [add [s [s z]] [s z]]] [s [s [s z]]]]
+]
+
+;; ════════════════════════════════════════════════════════════
+;; Extended: Import PeanoBase and add Multiplication
+;; ════════════════════════════════════════════════════════════
+
+[Theory PeanoFull :in Arith
+  ;; Import all rules from PeanoBase
+  [import PeanoBase]
+
+  ;; Add multiplication on top
+  [@derive eval-mul-z
+    :conclusion [eval-nat [mul z ?n] z]]
+
+  [@derive eval-mul-s
+    :premises [[eval-nat [mul ?m ?n] ?r]
+               [eval-nat [add ?n ?r] ?total]]
+    :conclusion [eval-nat [mul [s ?m] ?n] ?total]]
+]
+
+[Proofs PeanoFullCheck :in PeanoFull
+  ;; Addition still works (imported)
+  [check imported-add [eval-nat [add [s z] [s z]]] [s [s z]]]
+
+  ;; Multiplication: 0 * 3 = 0
+  [check mul-zero [eval-nat [mul z [s [s [s z]]]]] z]
+
+  ;; Multiplication: 1 * 3 = 3
+  [check mul-one [eval-nat [mul [s z] [s [s [s z]]]]] [s [s [s z]]]]
+
+  ;; Multiplication: 2 * 3 = 6
+  [check mul-two
+    [eval-nat [mul [s [s z]] [s [s [s z]]]]]
+    [s [s [s [s [s [s z]]]]]]]
+
+  ;; Auto: let the engine figure out 3 * 2
+  [auto mul-three-two [eval-nat [mul [s [s [s z]]] [s [s z]]]]]
+
+  ;; Lemma: cache 2+1=3, then use it
+  [lemma add-two-one [eval-nat [add [s [s z]] [s z]]] [s [s [s z]]]]
+
+  ;; Wildcard: let the engine infer 1*3
+  [check wildcard-mul [eval-nat [mul [s z] [s [s [s z]]]]] _]
+]
+
+;; ════════════════════════════════════════════════════════════
+;; Double Import: Import PeanoFull into a Comparison Theory
+;; ════════════════════════════════════════════════════════════
+
+[Theory PeanoCompare :in Arith
+  [import PeanoFull]
+
+  [op true-v] [op false-v]
+
+  ;; is-zero: check if a number is zero
+  [@derive eval-is-zero-z
+    :conclusion [eval-nat [add z z] z]]
+
+  ;; We can compose with the imported mul and add
+]
+
+[Proofs CompareCheck :in PeanoCompare
+  ;; Everything from PeanoFull is available
+  [check chain-add [eval-nat [add [s [s z]] [s z]]] [s [s [s z]]]]
+  [check chain-mul [eval-nat [mul [s [s z]] [s [s z]]]] [s [s [s [s z]]]]]
+
+  ;; Auto on addition
+  [auto composed [eval-nat [add [s [s z]] [s [s [s z]]]]]]
+]

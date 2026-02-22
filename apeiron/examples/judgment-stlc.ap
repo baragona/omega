@@ -127,4 +127,29 @@
       [lam-t [arrow Base Base] [lam-t Base
         [app-t [vs vz] [app-t [vs vz] vz]]]]]
     [arrow [arrow Base Base] [arrow Base Base]]]
+
+  ;; ── Auto: compute types without specifying the answer ──
+
+  ;; 11. Auto infers identity type
+  [auto auto-identity [typeof nil [lam-t Base vz]]]
+
+  ;; 12. Auto infers K combinator type
+  [auto auto-const [typeof nil [lam-t Base [lam-t Nat [vs vz]]]]]
+
+  ;; 13. Wildcard `_` in check — equivalent to auto
+  [check wildcard-compose
+    [typeof nil
+      [lam-t [arrow Nat Bool] [lam-t [arrow Base Nat] [lam-t Base
+        [app-t [vs [vs vz]] [app-t [vs vz] vz]]]]]]
+    _]
+
+  ;; ── Lemma: prove once, use as derived rule ──
+
+  ;; 14. Lemma: cache the identity type
+  [lemma identity-lemma [typeof nil [lam-t Base vz]] [arrow Base Base]]
+
+  ;; 15. Subsequent proof can use the lemma shortcut
+  [check post-lemma-app
+    [typeof nil [app-t [lam-t [arrow Base Base] vz] [lam-t Base vz]]]
+    [arrow Base Base]]
 ]
