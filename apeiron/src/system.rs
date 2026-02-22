@@ -74,6 +74,16 @@ pub struct RewriteRule {
 }
 
 /// A running session with loaded systems and theories.
+/// A parameterized theory template: raw declarations awaiting instantiation.
+#[derive(Debug, Clone)]
+pub struct TheoryTemplate {
+    pub params: Vec<(String, String)>,       // (name, sort) pairs
+    pub system_name: String,
+    pub ops: Vec<String>,                    // theory-level op declarations
+    pub raw_rules: Vec<RewriteRule>,         // explicit @rule declarations
+    pub raw_derives: Vec<DerivRule>,         // @derive declarations
+}
+
 pub struct Session {
     pub systems: HashMap<String, SystemConfig>,
     pub arena: Arena,
@@ -101,6 +111,12 @@ pub struct Session {
     pub derive_rules: HashMap<String, HashMap<String, DerivRule>>,
     /// Derive rules indexed by theory name (ordered list for search).
     pub derive_rules_ordered: HashMap<String, Vec<DerivRule>>,
+    /// Parameterized theory templates awaiting instantiation.
+    pub templates: HashMap<String, TheoryTemplate>,
+    /// Per-theory operator names (for alias renaming at import).
+    pub theory_ops: HashMap<String, Vec<String>>,
+    /// Per-theory raw @rule declarations (for alias renaming at import).
+    pub raw_theory_rules: HashMap<String, Vec<RewriteRule>>,
 }
 
 impl Session {
@@ -120,6 +136,9 @@ impl Session {
             judgments: HashMap::new(),
             derive_rules: HashMap::new(),
             derive_rules_ordered: HashMap::new(),
+            templates: HashMap::new(),
+            theory_ops: HashMap::new(),
+            raw_theory_rules: HashMap::new(),
         }
     }
 
@@ -244,14 +263,58 @@ impl Session {
 
         let theory_name = items[1].as_atom().unwrap_or("?").to_string();
 
-        // Find system reference: either `:in SystemName` or look up by convention
+        // Parse optional :params and :in from the header
         let mut system_name = None;
-        let mut body_start = 2;
+        let body_start;
+        let mut theory_params: Vec<(String, String)> = Vec::new();
 
-        if items.len() > 3 && items[2].is_atom(":in") {
-            system_name = items[3].as_atom().map(|s| s.to_string());
-            body_start = 4;
+        // Scan for :params and :in keywords in the header
+        let mut i = 2;
+        while i < items.len() {
+            if items[i].is_atom(":params") {
+                i += 1;
+                if i < items.len() {
+                    if let Some(param_list) = items[i].as_list() {
+                        for p in param_list {
+                            if let Some(pair) = p.as_list() {
+                                if pair.len() == 2 {
+                                    let pname = pair[0].as_atom().unwrap_or("?").to_string();
+                                    let psort = pair[1].as_atom().unwrap_or("?").to_string();
+                                    // Validate parameter name
+                                    if pname.starts_with('?') || pname.starts_with('@') || pname.starts_with("__") {
+                                        return Err(ApeironError::InvalidConfig {
+                                            block: "Theory".into(),
+                                            detail: format!("invalid parameter name '{}': must not start with ?, @, or __", pname),
+                                        });
+                                    }
+                                    let reserved = ["ok", "fail", "import", "lam", "app"];
+                                    if reserved.contains(&pname.as_str()) {
+                                        return Err(ApeironError::InvalidConfig {
+                                            block: "Theory".into(),
+                                            detail: format!("invalid parameter name '{}': reserved word", pname),
+                                        });
+                                    }
+                                    theory_params.push((pname, psort));
+                                }
+                            }
+                        }
+                    }
+                }
+                i += 1;
+                continue;
+            }
+            if items[i].is_atom(":in") {
+                i += 1;
+                if i < items.len() {
+                    system_name = items[i].as_atom().map(|s| s.to_string());
+                }
+                i += 1;
+                continue;
+            }
+            // First non-keyword item = start of body
+            break;
         }
+        body_start = i;
 
         // Resolve system config
         let system = if let Some(ref sn) = system_name {
@@ -271,6 +334,25 @@ impl Session {
                 })?
         };
 
+        // If parameterized, collect template and return early (no compilation)
+        if !theory_params.is_empty() {
+            let template = self.collect_template(
+                &theory_name,
+                &theory_params,
+                &system.name,
+                &items[body_start..],
+            )?;
+            self.templates.insert(theory_name.clone(), template);
+            self.theory_systems
+                .insert(theory_name.clone(), system.name.clone());
+            self.output.push(format!(
+                "[TEMPLATE] {} stored ({} params)",
+                theory_name,
+                theory_params.len()
+            ));
+            return Ok(());
+        }
+
         // Collect known operator names from the system's @syntax
         let mut known_ops: HashSet<String> = system
             .operators
@@ -281,6 +363,7 @@ impl Session {
         let mut theory_rules = Vec::new();
         let mut graph_rules: Vec<rewrite::GraphRule> = Vec::new();
         let is_reversible = system.check_modes.contains(&CheckMode::Reversible);
+        let mut local_ops: Vec<String> = Vec::new();
 
         // Process theory body
         for item in &items[body_start..] {
@@ -320,6 +403,7 @@ impl Session {
                             let name = decl[1].as_atom().unwrap_or("?").to_string();
                             known_ops.insert(name.clone());
                             self.extra_known_ops.insert(name.clone());
+                            local_ops.push(name.clone());
                             self.output.push(format!("[OP] {}", name));
                         }
                     }
@@ -327,6 +411,11 @@ impl Session {
                         self.process_rule(&decl[1..], &mut theory_rules)?;
                         // Compile the just-added rule into a GraphRule
                         if let Some(rule) = theory_rules.last() {
+                            // Store raw rule for aliased import
+                            self.raw_theory_rules
+                                .entry(theory_name.clone())
+                                .or_default()
+                                .push(rule.clone());
                             if let Some(gr) =
                                 rewrite::compile_rule(&rule.name, &rule.lhs, &rule.rhs)
                             {
@@ -385,46 +474,67 @@ impl Session {
                         )?;
                     }
                     "import" => {
-                        // Theory-level import: [import TheoryName]
+                        // Theory-level import: [import Name args... :as Alias]
                         if decl.len() >= 2 {
-                            let import_theory = decl[1].as_atom().unwrap_or("?").to_string();
+                            let import_name = decl[1].as_atom().unwrap_or("?").to_string();
 
-                            // Import compiled graph rules
-                            if let Some(imported) = self.compiled_rules.get(&import_theory).cloned() {
-                                let count = imported.len();
-                                for gr in imported {
-                                    graph_rules.push(gr);
-                                }
-                                self.output.push(format!(
-                                    "[IMPORT] {} graph rules from {}",
-                                    count, import_theory
-                                ));
-                            }
-
-                            // Import text rules
-                            if let Some(imported) = self.rules.get(&import_theory).cloned() {
-                                for rule in imported {
-                                    theory_rules.push(rule);
+                            // Parse args and :as Alias from remaining items
+                            let mut import_args: Vec<Sexp> = Vec::new();
+                            let mut alias: Option<String> = None;
+                            let mut j = 2;
+                            while j < decl.len() {
+                                if decl[j].is_atom(":as") {
+                                    j += 1;
+                                    if j < decl.len() {
+                                        alias = decl[j].as_atom().map(|s| s.to_string());
+                                    }
+                                    j += 1;
+                                } else {
+                                    import_args.push(decl[j].clone());
+                                    j += 1;
                                 }
                             }
 
-                            // Import @derive rules (for refutation and derivation checking)
-                            if let Some(imported) = self.derive_rules_ordered.get(&import_theory).cloned() {
-                                for dr in &imported {
-                                    self.derive_rules_ordered
-                                        .entry(theory_name.clone())
-                                        .or_default()
-                                        .push(dr.clone());
-                                    self.derive_rules
-                                        .entry(theory_name.clone())
-                                        .or_default()
-                                        .insert(dr.name.clone(), dr.clone());
-                                }
-                            }
-
-                            // Ensure imported staging ops are in known_ops
-                            for op in &self.extra_known_ops {
-                                known_ops.insert(op.clone());
+                            // Dispatch based on whether it's a template or existing theory
+                            if self.templates.contains_key(&import_name) {
+                                // Parameterized import
+                                let a = alias.as_deref().ok_or_else(|| {
+                                    ApeironError::InvalidConfig {
+                                        block: "Theory".into(),
+                                        detail: format!(
+                                            "parameterized import of '{}' requires ':as Alias'",
+                                            import_name
+                                        ),
+                                    }
+                                })?;
+                                self.process_parameterized_import(
+                                    &import_name,
+                                    &import_args,
+                                    a,
+                                    &theory_name,
+                                    &mut known_ops,
+                                    &mut theory_rules,
+                                    &mut graph_rules,
+                                )?;
+                            } else if !import_args.is_empty() {
+                                // Args provided but theory is not parameterized
+                                return Err(ApeironError::InvalidConfig {
+                                    block: "Theory".into(),
+                                    detail: format!(
+                                        "theory '{}' is not parameterized, but args were provided",
+                                        import_name
+                                    ),
+                                });
+                            } else {
+                                // Simple import (with optional alias)
+                                self.process_simple_import(
+                                    &import_name,
+                                    alias.as_deref(),
+                                    &theory_name,
+                                    &mut known_ops,
+                                    &mut theory_rules,
+                                    &mut graph_rules,
+                                )?;
                             }
                         }
                     }
@@ -493,6 +603,9 @@ impl Session {
             }
         }
 
+        // Store theory-level ops for aliased import
+        self.theory_ops.insert(theory_name.clone(), local_ops);
+
         self.rules.insert(theory_name.clone(), theory_rules);
         self.compiled_rules
             .insert(theory_name.clone(), graph_rules);
@@ -500,6 +613,380 @@ impl Session {
             .insert(theory_name.clone(), system.name.clone());
         self.output
             .push(format!("[THEORY] {} loaded", theory_name));
+        Ok(())
+    }
+
+    /// Collect raw declarations from a parameterized theory body into a template.
+    fn collect_template(
+        &self,
+        theory_name: &str,
+        params: &[(String, String)],
+        system_name: &str,
+        body: &[Sexp],
+    ) -> Result<TheoryTemplate> {
+        let mut ops = Vec::new();
+        let mut raw_rules = Vec::new();
+        let mut raw_derives = Vec::new();
+
+        for item in body {
+            if let Some(decl) = item.as_list() {
+                if decl.is_empty() {
+                    continue;
+                }
+                let head = decl[0].as_atom().unwrap_or("");
+                match head {
+                    "op" | "Op" => {
+                        if decl.len() >= 2 {
+                            let name = decl[1].as_atom().unwrap_or("?").to_string();
+                            ops.push(name);
+                        }
+                    }
+                    "@rule" => {
+                        // Parse raw rule: [@rule name [lhs] ==> rhs]
+                        if let Some(rule) = Self::parse_rule_raw(&decl[1..]) {
+                            raw_rules.push(rule);
+                        }
+                    }
+                    "@derive" => {
+                        if let Some(dr) = judgment::parse_derive_rule(&decl[1..]) {
+                            raw_derives.push(dr);
+                        }
+                    }
+                    "import" => {
+                        return Err(ApeironError::InvalidConfig {
+                            block: "Theory".into(),
+                            detail: format!(
+                                "parameterized theory '{}' cannot contain [import]",
+                                theory_name
+                            ),
+                        });
+                    }
+                    _ => {} // skip other declarations in template
+                }
+            }
+        }
+
+        Ok(TheoryTemplate {
+            params: params.to_vec(),
+            system_name: system_name.to_string(),
+            ops,
+            raw_rules,
+            raw_derives,
+        })
+    }
+
+    /// Parse a raw @rule without side effects: returns (name, lhs, rhs).
+    fn parse_rule_raw(items: &[Sexp]) -> Option<RewriteRule> {
+        // items = [name [lhs] ==> rhs] or [name [lhs] ==> [rhs]]
+        if items.len() < 4 {
+            return None;
+        }
+        let name = items[0].as_atom()?.to_string();
+        let lhs = items[1].clone();
+        // items[2] should be "==>"
+        let rhs = items[3].clone();
+        Some(RewriteRule { name, lhs, rhs })
+    }
+
+    /// Process a simple (non-parameterized) import, optionally with alias.
+    fn process_simple_import(
+        &mut self,
+        import_theory: &str,
+        alias: Option<&str>,
+        theory_name: &str,
+        known_ops: &mut HashSet<String>,
+        theory_rules: &mut Vec<RewriteRule>,
+        graph_rules: &mut Vec<rewrite::GraphRule>,
+    ) -> Result<()> {
+        if alias.is_none() {
+            // Existing behavior: copy everything verbatim
+            if let Some(imported) = self.compiled_rules.get(import_theory).cloned() {
+                let count = imported.len();
+                for gr in imported {
+                    graph_rules.push(gr);
+                }
+                self.output.push(format!(
+                    "[IMPORT] {} graph rules from {}",
+                    count, import_theory
+                ));
+            }
+
+            if let Some(imported) = self.rules.get(import_theory).cloned() {
+                for rule in imported {
+                    theory_rules.push(rule);
+                }
+            }
+
+            if let Some(imported) = self.derive_rules_ordered.get(import_theory).cloned() {
+                for dr in &imported {
+                    self.derive_rules_ordered
+                        .entry(theory_name.to_string())
+                        .or_default()
+                        .push(dr.clone());
+                    self.derive_rules
+                        .entry(theory_name.to_string())
+                        .or_default()
+                        .insert(dr.name.clone(), dr.clone());
+                }
+            }
+
+            for op in &self.extra_known_ops.clone() {
+                known_ops.insert(op.clone());
+            }
+
+            return Ok(());
+        }
+
+        // Aliased import: build rename map from theory_ops
+        let alias = alias.unwrap();
+        let source_ops = self.theory_ops.get(import_theory).cloned().unwrap_or_default();
+
+        let mut rename_map: HashMap<String, Sexp> = HashMap::new();
+        let s = crate::parser::Span::default();
+        for op_name in &source_ops {
+            if op_name == "ok" || op_name == "fail" {
+                continue;
+            }
+            let aliased = format!("{}.{}", alias, op_name);
+            rename_map.insert(op_name.clone(), Sexp::Atom(aliased, s));
+        }
+
+        // Rename and re-compile @derive rules
+        if let Some(imported_derives) = self.derive_rules_ordered.get(import_theory).cloned() {
+            let renamed_derives: Vec<DerivRule> = imported_derives
+                .iter()
+                .map(|dr| {
+                    let new_name = format!("{}.{}", alias, dr.name);
+                    DerivRule {
+                        name: new_name,
+                        premises: dr.premises.iter().map(|p| judgment::subst_sexp(p, &rename_map)).collect(),
+                        conclusion: judgment::subst_sexp(&dr.conclusion, &rename_map),
+                        absurd: dr.absurd,
+                    }
+                })
+                .collect();
+
+            // Compile renamed derives
+            let theory_judgments = {
+                let sys_name = self.theory_systems.get(import_theory).cloned().unwrap_or_default();
+                self.judgments.get(&sys_name).cloned().unwrap_or_default()
+            };
+            let (derived_rewrites, staging_ops) =
+                judgment::compile_derive_rules(&renamed_derives, &theory_judgments);
+
+            for op in &staging_ops {
+                known_ops.insert(op.clone());
+                self.extra_known_ops.insert(op.clone());
+            }
+            known_ops.insert("ok".to_string());
+            known_ops.insert("fail".to_string());
+            self.extra_known_ops.insert("ok".to_string());
+            self.extra_known_ops.insert("fail".to_string());
+
+            for rule in &derived_rewrites {
+                self.output.push(format!(
+                    "[RULE] {} : {} ==> {}",
+                    rule.name, rule.lhs, rule.rhs
+                ));
+                if let Some(gr) = rewrite::compile_rule(&rule.name, &rule.lhs, &rule.rhs) {
+                    graph_rules.push(gr);
+                }
+                theory_rules.push(rule.clone());
+            }
+
+            // Register derive rules
+            for dr in &renamed_derives {
+                self.derive_rules_ordered
+                    .entry(theory_name.to_string())
+                    .or_default()
+                    .push(dr.clone());
+                self.derive_rules
+                    .entry(theory_name.to_string())
+                    .or_default()
+                    .insert(dr.name.clone(), dr.clone());
+            }
+
+            // Register aliased ops
+            for op_name in &source_ops {
+                if op_name == "ok" || op_name == "fail" {
+                    continue;
+                }
+                let aliased = format!("{}.{}", alias, op_name);
+                known_ops.insert(aliased.clone());
+                self.extra_known_ops.insert(aliased);
+            }
+
+            self.output.push(format!(
+                "[IMPORT] {} with alias {} ({} derive rules)",
+                import_theory, alias, renamed_derives.len()
+            ));
+        }
+
+        // Rename and import @rule declarations
+        if let Some(imported_rules) = self.raw_theory_rules.get(import_theory).cloned() {
+            for rule in &imported_rules {
+                let new_name = format!("{}.{}", alias, rule.name);
+                let new_lhs = judgment::subst_sexp(&rule.lhs, &rename_map);
+                let new_rhs = judgment::subst_sexp(&rule.rhs, &rename_map);
+                let renamed_rule = RewriteRule {
+                    name: new_name,
+                    lhs: new_lhs,
+                    rhs: new_rhs,
+                };
+                if let Some(gr) = rewrite::compile_rule(&renamed_rule.name, &renamed_rule.lhs, &renamed_rule.rhs) {
+                    graph_rules.push(gr);
+                }
+                theory_rules.push(renamed_rule);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Process a parameterized import: instantiate template with args.
+    fn process_parameterized_import(
+        &mut self,
+        template_name: &str,
+        args: &[Sexp],
+        alias: &str,
+        theory_name: &str,
+        known_ops: &mut HashSet<String>,
+        theory_rules: &mut Vec<RewriteRule>,
+        graph_rules: &mut Vec<rewrite::GraphRule>,
+    ) -> Result<()> {
+        let template = self.templates.get(template_name).cloned().ok_or_else(|| {
+            ApeironError::InvalidConfig {
+                block: "Theory".into(),
+                detail: format!("unknown template '{}'", template_name),
+            }
+        })?;
+
+        if args.len() != template.params.len() {
+            return Err(ApeironError::InvalidConfig {
+                block: "Theory".into(),
+                detail: format!(
+                    "parameterized import of '{}' expects {} args, got {}",
+                    template_name,
+                    template.params.len(),
+                    args.len()
+                ),
+            });
+        }
+
+        let s = crate::parser::Span::default();
+
+        // Build combined substitution map:
+        // 1. Parameters → argument values (Sexp, supports compound args)
+        let mut subst_map: HashMap<String, Sexp> = HashMap::new();
+        for (i, (param_name, _)) in template.params.iter().enumerate() {
+            subst_map.insert(param_name.clone(), args[i].clone());
+        }
+
+        // 2. Internal ops → Alias.op (skip ok/fail, skip params)
+        for op_name in &template.ops {
+            if op_name == "ok" || op_name == "fail" {
+                continue;
+            }
+            if subst_map.contains_key(op_name) {
+                continue; // parameter substitution wins
+            }
+            let aliased = format!("{}.{}", alias, op_name);
+            subst_map.insert(op_name.clone(), Sexp::Atom(aliased, s));
+        }
+
+        // Apply substitution to raw @rule declarations
+        for rule in &template.raw_rules {
+            let new_name = format!("{}.{}", alias, rule.name);
+            let new_lhs = judgment::subst_sexp(&rule.lhs, &subst_map);
+            let new_rhs = judgment::subst_sexp(&rule.rhs, &subst_map);
+            let renamed_rule = RewriteRule {
+                name: new_name,
+                lhs: new_lhs,
+                rhs: new_rhs,
+            };
+            self.output.push(format!(
+                "[RULE] {} : {} ==> {}",
+                renamed_rule.name, renamed_rule.lhs, renamed_rule.rhs
+            ));
+            if let Some(gr) = rewrite::compile_rule(&renamed_rule.name, &renamed_rule.lhs, &renamed_rule.rhs) {
+                graph_rules.push(gr);
+            }
+            theory_rules.push(renamed_rule);
+        }
+
+        // Apply substitution to @derive rules
+        let renamed_derives: Vec<DerivRule> = template
+            .raw_derives
+            .iter()
+            .map(|dr| {
+                let new_name = format!("{}.{}", alias, dr.name);
+                DerivRule {
+                    name: new_name,
+                    premises: dr.premises.iter().map(|p| judgment::subst_sexp(p, &subst_map)).collect(),
+                    conclusion: judgment::subst_sexp(&dr.conclusion, &subst_map),
+                    absurd: dr.absurd,
+                }
+            })
+            .collect();
+
+        // Compile renamed derives
+        let theory_judgments = {
+            let sys_name = &template.system_name;
+            self.judgments.get(sys_name).cloned().unwrap_or_default()
+        };
+        let (derived_rewrites, staging_ops) =
+            judgment::compile_derive_rules(&renamed_derives, &theory_judgments);
+
+        for op in &staging_ops {
+            known_ops.insert(op.clone());
+            self.extra_known_ops.insert(op.clone());
+        }
+        known_ops.insert("ok".to_string());
+        known_ops.insert("fail".to_string());
+        self.extra_known_ops.insert("ok".to_string());
+        self.extra_known_ops.insert("fail".to_string());
+
+        for rule in &derived_rewrites {
+            self.output.push(format!(
+                "[RULE] {} : {} ==> {}",
+                rule.name, rule.lhs, rule.rhs
+            ));
+            if let Some(gr) = rewrite::compile_rule(&rule.name, &rule.lhs, &rule.rhs) {
+                graph_rules.push(gr);
+            }
+            theory_rules.push(rule.clone());
+        }
+
+        // Register derive rules
+        for dr in &renamed_derives {
+            self.derive_rules_ordered
+                .entry(theory_name.to_string())
+                .or_default()
+                .push(dr.clone());
+            self.derive_rules
+                .entry(theory_name.to_string())
+                .or_default()
+                .insert(dr.name.clone(), dr.clone());
+        }
+
+        // Register aliased ops
+        for op_name in &template.ops {
+            if op_name == "ok" || op_name == "fail" {
+                continue;
+            }
+            if template.params.iter().any(|(pn, _)| pn == op_name) {
+                continue;
+            }
+            let aliased = format!("{}.{}", alias, op_name);
+            known_ops.insert(aliased.clone());
+            self.extra_known_ops.insert(aliased);
+        }
+
+        self.output.push(format!(
+            "[IMPORT] {} instantiated as {} ({} args, {} derives)",
+            template_name, alias, args.len(), renamed_derives.len()
+        ));
+
         Ok(())
     }
 

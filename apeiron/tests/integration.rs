@@ -1009,3 +1009,193 @@ fn reversible_generates_inverse() {
     // Check that the reverse eval produced output
     assert!(session.output.iter().any(|s| s.starts_with("[EVAL]") && s.contains("unwrap")));
 }
+
+// ================================================================
+// Parameterized Theories & Import Aliases
+// ================================================================
+
+#[test]
+fn parameterized_theory_import() {
+    let source = r#"
+    [System PTest
+      [@syntax
+        [sort Nat] [sort Result]
+        [op z] [op s] [op add]
+        [judgment eval :inputs [Nat] :output Nat]
+      ]
+      [@binding implicit]
+      [@check rewriting]
+    ]
+    [Theory IdCheck :params [[binop Op] [unit Unit]] :in PTest
+      [op eq]
+      [@derive id-left
+        :conclusion [eval [eq [binop unit ?a] ?a] ?a]]
+    ]
+    [Theory PBase :in PTest
+      [op ok] [op fail]
+      [@derive eval-add-z :conclusion [eval [add z ?n] ?n]]
+      [@derive eval-add-s
+        :premises [[eval [add ?m ?n] ?r]]
+        :conclusion [eval [add [s ?m] ?n] [s ?r]]]
+    ]
+    [Theory PExt :in PTest
+      [import PBase]
+      [import IdCheck add z :as AI]
+    ]
+    [Proofs PCheck :in PExt
+      [check base [eval [add [s z] [s z]]] [s [s z]]]
+      [check identity [eval [AI.eq [add z [s [s z]]] [s [s z]]]] [s [s z]]]
+    ]
+    "#;
+
+    let sexps = parser::parse(source).unwrap();
+    let mut session = Session::new();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+    assert!(session.output.iter().any(|s| s.contains("[TEMPLATE] IdCheck stored")));
+    assert!(session.output.iter().any(|s| s.contains("[CHECK] base passed")));
+    assert!(session.output.iter().any(|s| s.contains("[CHECK] identity passed")));
+}
+
+#[test]
+fn parameterized_double_instantiation() {
+    let source = r#"
+    [System DTest
+      [@syntax
+        [sort Nat] [sort Result]
+        [op z] [op s] [op add] [op mul]
+        [judgment eval :inputs [Nat] :output Nat]
+      ]
+      [@binding implicit]
+      [@check rewriting]
+    ]
+    [Theory Checker :params [[binop Op] [unit Unit]] :in DTest
+      [op eq]
+      [@derive chk
+        :conclusion [eval [eq [binop unit ?a] ?a] ?a]]
+    ]
+    [Theory DBase :in DTest
+      [op ok] [op fail]
+      [@derive add-z :conclusion [eval [add z ?n] ?n]]
+      [@derive add-s
+        :premises [[eval [add ?m ?n] ?r]]
+        :conclusion [eval [add [s ?m] ?n] [s ?r]]]
+      [@derive mul-z :conclusion [eval [mul z ?n] z]]
+      [@derive mul-s
+        :premises [[eval [mul ?m ?n] ?r]
+                   [eval [add ?n ?r] ?total]]
+        :conclusion [eval [mul [s ?m] ?n] ?total]]
+    ]
+    [Theory Both :in DTest
+      [import DBase]
+      [import Checker add z :as AC]
+      [import Checker mul [s z] :as MC]
+    ]
+    [Proofs BothCheck :in Both
+      [check add-id [eval [AC.eq [add z [s [s z]]] [s [s z]]]] [s [s z]]]
+      [check mul-id [eval [MC.eq [mul [s z] [s [s [s z]]]] [s [s [s z]]]]] [s [s [s z]]]]
+    ]
+    "#;
+
+    let sexps = parser::parse(source).unwrap();
+    let mut session = Session::new();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+    assert!(session.output.iter().any(|s| s.contains("[CHECK] add-id passed")));
+    assert!(session.output.iter().any(|s| s.contains("[CHECK] mul-id passed")));
+}
+
+#[test]
+fn simple_import_with_alias() {
+    let source = r#"
+    [System ATest
+      [@syntax
+        [sort Nat] [sort Result]
+        [op z] [op s] [op add]
+        [judgment eval :inputs [Nat] :output Nat]
+      ]
+      [@binding implicit]
+      [@check rewriting]
+    ]
+    [Theory ABase :in ATest
+      [op ok] [op fail]
+      [@derive eval-add-z :conclusion [eval [add z ?n] ?n]]
+      [@derive eval-add-s
+        :premises [[eval [add ?m ?n] ?r]]
+        :conclusion [eval [add [s ?m] ?n] [s ?r]]]
+    ]
+    [Theory AExt :in ATest
+      [import ABase :as PB]
+    ]
+    [Proofs ACheck :in AExt
+      [check aliased [eval [add [s z] [s z]]] [s [s z]]]
+    ]
+    "#;
+
+    let sexps = parser::parse(source).unwrap();
+    let mut session = Session::new();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+    assert!(session.output.iter().any(|s| s.contains("[IMPORT] ABase with alias PB")));
+    assert!(session.output.iter().any(|s| s.contains("[CHECK] aliased passed")));
+}
+
+#[test]
+fn parameterized_import_requires_alias() {
+    let source = r#"
+    [System ETest
+      [@syntax [sort Nat] [op z]]
+      [@binding implicit]
+      [@check rewriting]
+    ]
+    [Theory Tmpl :params [[x Nat]] :in ETest]
+    [Theory User :in ETest
+      [import Tmpl z]
+    ]
+    "#;
+
+    let sexps = parser::parse(source).unwrap();
+    let mut session = Session::new();
+    let mut err = None;
+    for sexp in &sexps {
+        if let Err(e) = session.process(sexp) {
+            err = Some(format!("{}", e));
+            break;
+        }
+    }
+    assert!(err.unwrap().contains("requires ':as Alias'"));
+}
+
+#[test]
+fn parameterized_import_wrong_arg_count() {
+    let source = r#"
+    [System ETest2
+      [@syntax [sort Nat] [op z] [op s]]
+      [@binding implicit]
+      [@check rewriting]
+    ]
+    [Theory Tmpl2 :params [[x Nat] [y Nat]] :in ETest2]
+    [Theory User2 :in ETest2
+      [import Tmpl2 z :as T]
+    ]
+    "#;
+
+    let sexps = parser::parse(source).unwrap();
+    let mut session = Session::new();
+    let mut err = None;
+    for sexp in &sexps {
+        if let Err(e) = session.process(sexp) {
+            err = Some(format!("{}", e));
+            break;
+        }
+    }
+    assert!(err.unwrap().contains("expects 2 args, got 1"));
+}
+
+#[test]
+fn example_parameterized() {
+    run_example("examples/parameterized.ap");
+}

@@ -643,6 +643,25 @@ fn match_sexp_inner(
     }
 }
 
+/// Substitute atoms in an Sexp tree. Atoms matching a key in `map` are replaced.
+/// Guards: never substitutes ?meta-vars, @directives, or __stg_ staging ops.
+pub fn subst_sexp(sexp: &Sexp, map: &HashMap<String, Sexp>) -> Sexp {
+    match sexp {
+        Sexp::Atom(name, _span) => {
+            if name.starts_with('?') || name.starts_with('@') || name.starts_with("__stg_") {
+                sexp.clone()
+            } else if let Some(replacement) = map.get(name.as_str()) {
+                replacement.clone()
+            } else {
+                sexp.clone()
+            }
+        }
+        Sexp::List(items, span) => {
+            Sexp::List(items.iter().map(|s| subst_sexp(s, map)).collect(), *span)
+        }
+    }
+}
+
 /// Substitute meta-variables in an sexp using bindings.
 fn substitute_sexp(sexp: &Sexp, bindings: &HashMap<String, Sexp>) -> Sexp {
     match sexp {

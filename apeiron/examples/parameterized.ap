@@ -1,0 +1,97 @@
+;; Apeiron: Parameterized Theories & Import Aliases
+;;
+;; Demonstrates:
+;; 1. Parameterized theory declaration with :params
+;; 2. Import with args + mandatory :as alias
+;; 3. Double instantiation (same template, different args/aliases)
+;; 4. Simple import with :as alias
+
+;; ════════════════════════════════════════════════════════════
+;; System: Algebraic structures over natural numbers
+;; ════════════════════════════════════════════════════════════
+
+[System Algebra
+  [@syntax
+    [sort Nat] [sort Result]
+    [op z] [op s]
+    [op add] [op mul]
+    [judgment eval :inputs [Nat] :output Nat]
+  ]
+  [@binding implicit]
+  [@check rewriting]
+]
+
+;; ════════════════════════════════════════════════════════════
+;; Parameterized theory: identity law for a binary op
+;; Template: op(e, x) = x  (left identity)
+;; ════════════════════════════════════════════════════════════
+
+[Theory IdentityCheck :params [[op Op] [e Unit]] :in Algebra
+  [op eq]
+  [@derive id-left
+    :conclusion [eval [eq [op e ?a] ?a] ?a]]
+]
+
+;; ════════════════════════════════════════════════════════════
+;; Base arithmetic (non-parameterized)
+;; ════════════════════════════════════════════════════════════
+
+[Theory PeanoBase :in Algebra
+  [op ok] [op fail]
+
+  ;; Addition
+  [@derive eval-add-z :conclusion [eval [add z ?n] ?n]]
+  [@derive eval-add-s
+    :premises [[eval [add ?m ?n] ?r]]
+    :conclusion [eval [add [s ?m] ?n] [s ?r]]]
+
+  ;; Multiplication
+  [@derive eval-mul-z :conclusion [eval [mul z ?n] z]]
+  [@derive eval-mul-s
+    :premises [[eval [mul ?m ?n] ?r]
+               [eval [add ?n ?r] ?total]]
+    :conclusion [eval [mul [s ?m] ?n] ?total]]
+]
+
+;; ════════════════════════════════════════════════════════════
+;; Combined: import base + two identity instantiations
+;; ════════════════════════════════════════════════════════════
+
+[Theory Combined :in Algebra
+  [import PeanoBase]
+
+  ;; add(z, x) = x
+  [import IdentityCheck add z :as AddId]
+
+  ;; mul(s(z), x) = x  (compound arg [s z])
+  [import IdentityCheck mul [s z] :as MulId]
+]
+
+[Proofs CombinedCheck :in Combined
+  ;; Base arithmetic
+  [check base-add [eval [add [s z] [s z]]] [s [s z]]]
+  [check base-mul [eval [mul [s [s z]] [s [s [s z]]]]]
+    [s [s [s [s [s [s z]]]]]]]
+
+  ;; Addition identity: add(z, 2) = 2
+  [check add-id [eval [AddId.eq [add z [s [s z]]] [s [s z]]]] [s [s z]]]
+
+  ;; Multiplication identity: mul(1, 3) = 3
+  [check mul-id [eval [MulId.eq [mul [s z] [s [s [s z]]]] [s [s [s z]]]]] [s [s [s z]]]]
+
+  ;; Auto still works on base
+  [auto auto-add [eval [add [s [s z]] [s z]]]]
+]
+
+;; ════════════════════════════════════════════════════════════
+;; Simple import with alias
+;; ════════════════════════════════════════════════════════════
+
+[Theory AliasedBase :in Algebra
+  [import PeanoBase :as PB]
+]
+
+[Proofs AliasedCheck :in AliasedBase
+  [check aliased-add [eval [add [s z] [s z]]] [s [s z]]]
+  [check aliased-mul [eval [mul [s [s z]] [s [s z]]]] [s [s [s [s z]]]]]
+]
