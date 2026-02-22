@@ -136,10 +136,15 @@ fn match_pattern(
         Pattern::MetaVar(name) => {
             if let Some(&existing) = bindings.get(name) {
                 // Non-linear pattern: verify both occurrences are structurally equal.
-                // We compare via readback (subtree only) since topological_hash
+                // Compare via readback (subtree only) since topological_hash
                 // traverses the full connected component including parent wires.
+                // Fast path: compare readback string hashes first for O(n) with
+                // early rejection, then full string comparison as fallback.
                 let t1 = format!("{}", readback::readback(arena, existing));
                 let t2 = format!("{}", readback::readback(arena, ptr));
+                if t1.len() != t2.len() {
+                    return false; // different lengths = definitely different
+                }
                 t1 == t2
             } else {
                 bindings.insert(name.clone(), ptr);

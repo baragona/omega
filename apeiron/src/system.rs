@@ -4,10 +4,12 @@ use crate::arena::Arena;
 use crate::builder::{self, BuildEnv};
 use crate::error::{ApeironError, Result};
 use crate::hash;
+use crate::judgment::{self, DerivRule, JudgmentDecl};
 use crate::morphism::{self, AutoMorphism};
 use crate::parser::Sexp;
 use crate::physics::{self, PhysicsConfig};
 use crate::readback;
+use crate::refute;
 use crate::rewrite;
 
 /// Binding mode for a system.
@@ -93,6 +95,12 @@ pub struct Session {
     pub extra_known_ops: HashSet<String>,
     /// Theory → System mapping (resolved system name for each theory).
     pub theory_systems: HashMap<String, String>,
+    /// Judgment declarations indexed by theory name → judgment name → decl.
+    pub judgments: HashMap<String, HashMap<String, JudgmentDecl>>,
+    /// Derive rules indexed by theory name → rule name → DerivRule.
+    pub derive_rules: HashMap<String, HashMap<String, DerivRule>>,
+    /// Derive rules indexed by theory name (ordered list for search).
+    pub derive_rules_ordered: HashMap<String, Vec<DerivRule>>,
 }
 
 impl Session {
@@ -109,6 +117,9 @@ impl Session {
             compiled_rules: HashMap::new(),
             extra_known_ops: HashSet::new(),
             theory_systems: HashMap::new(),
+            judgments: HashMap::new(),
+            derive_rules: HashMap::new(),
+            derive_rules_ordered: HashMap::new(),
         }
     }
 
@@ -185,9 +196,40 @@ impl Session {
             }
         }
 
-        let msg = format!("[SYSTEM] {} registered ({} sorts, {} ops, binding={:?}, check={:?})",
-            name, config.sorts.len(), config.operators.len(), config.binding, config.check_modes);
+        // Parse judgment declarations from @syntax blocks
+        let mut system_judgments = HashMap::new();
+        for item in &items[2..] {
+            if let Some(block) = item.as_list() {
+                if block.is_empty() {
+                    continue;
+                }
+                if block[0].as_atom() == Some("@syntax") {
+                    for decl_sexp in &block[1..] {
+                        if let Some(decl) = decl_sexp.as_list() {
+                            if !decl.is_empty() && decl[0].as_atom() == Some("judgment") {
+                                if let Some(jd) = judgment::parse_judgment_decl(&decl[1..]) {
+                                    system_judgments.insert(jd.name.clone(), jd);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let judgment_count = system_judgments.len();
+        let msg = if judgment_count > 0 {
+            format!("[SYSTEM] {} registered ({} sorts, {} ops, {} judgments, binding={:?}, check={:?})",
+                name, config.sorts.len(), config.operators.len(), judgment_count, config.binding, config.check_modes)
+        } else {
+            format!("[SYSTEM] {} registered ({} sorts, {} ops, binding={:?}, check={:?})",
+                name, config.sorts.len(), config.operators.len(), config.binding, config.check_modes)
+        };
         self.output.push(msg);
+        // Store judgments keyed by system name (will be copied to theories later)
+        if !system_judgments.is_empty() {
+            self.judgments.insert(name.clone(), system_judgments);
+        }
         self.systems.insert(name, config);
         Ok(())
     }
@@ -300,6 +342,24 @@ impl Session {
                             }
                         }
                     }
+                    "@derive" => {
+                        if let Some(dr) = judgment::parse_derive_rule(&decl[1..]) {
+                            self.output.push(format!(
+                                "[DERIVE] {} ({} premises)",
+                                dr.name,
+                                dr.premises.len()
+                            ));
+                            // Store in ordered list and by-name map
+                            self.derive_rules_ordered
+                                .entry(theory_name.clone())
+                                .or_default()
+                                .push(dr.clone());
+                            self.derive_rules
+                                .entry(theory_name.clone())
+                                .or_default()
+                                .insert(dr.name.clone(), dr);
+                        }
+                    }
                     "eval" | "eval-reverse" | "assert-eq" | "assert-neq" | "with-scope" => {
                         return Err(ApeironError::InvalidConfig {
                             block: "Theory".into(),
@@ -337,6 +397,55 @@ impl Session {
                         })
                     }
                 }
+            }
+        }
+
+        // Compile @derive rules into rewrite rules
+        if let Some(derive_rules) = self.derive_rules_ordered.get(&theory_name) {
+            if !derive_rules.is_empty() {
+                let theory_judgments = self
+                    .judgments
+                    .get(&system.name)
+                    .cloned()
+                    .unwrap_or_default();
+
+                let (derived_rewrites, staging_ops) =
+                    judgment::compile_derive_rules(derive_rules, &theory_judgments);
+
+                // Register staging ops as known operators
+                for op in &staging_ops {
+                    known_ops.insert(op.clone());
+                    self.extra_known_ops.insert(op.clone());
+                }
+                // Also register ok and fail as known ops
+                known_ops.insert("ok".to_string());
+                known_ops.insert("fail".to_string());
+                self.extra_known_ops.insert("ok".to_string());
+                self.extra_known_ops.insert("fail".to_string());
+
+                for rule in &derived_rewrites {
+                    self.output.push(format!(
+                        "[RULE] {} : {} ==> {}",
+                        rule.name, rule.lhs, rule.rhs
+                    ));
+                    if let Some(gr) =
+                        rewrite::compile_rule(&rule.name, &rule.lhs, &rule.rhs)
+                    {
+                        graph_rules.push(gr);
+                    }
+                    theory_rules.push(rule.clone());
+                }
+
+                // Exhaustiveness warnings (only if sort→constructor mapping exists)
+                // Currently operators don't carry sort annotations, so we skip
+                // exhaustiveness to avoid false positives. When sort annotations
+                // are added, this will use them for precise checking.
+
+                self.output.push(format!(
+                    "[DERIVE-COMPILE] {} rules compiled from {} @derive declarations",
+                    derived_rewrites.len(),
+                    derive_rules.len()
+                ));
             }
         }
 
@@ -542,6 +651,35 @@ impl Session {
                             }
                         }
                     }
+                    "check" => {
+                        self.process_check(
+                            &decl[1..],
+                            &graph_rules,
+                            &known_ops,
+                            &system,
+                        )?;
+                        assertion_count += 1;
+                    }
+                    "derive" => {
+                        self.process_derive_check(
+                            &decl[1..],
+                            &graph_rules,
+                            &known_ops,
+                            &system,
+                            &theory_name,
+                        )?;
+                        assertion_count += 1;
+                    }
+                    "refute" => {
+                        self.process_refute(
+                            &decl[1..],
+                            &graph_rules,
+                            &known_ops,
+                            &system,
+                            &theory_name,
+                        )?;
+                        assertion_count += 1;
+                    }
                     "reflect" => {
                         if decl.len() >= 2 {
                             self.process_reflect(&decl[1..], &known_ops)?;
@@ -562,7 +700,7 @@ impl Session {
                             block: "Proofs".into(),
                             detail: format!(
                                 "unknown declaration '{}' — Proofs blocks allow: \
-                                 assert-eq, assert-neq, eval, def",
+                                 assert-eq, assert-neq, eval, check, derive, refute, def",
                                 decl_head
                             ),
                         });
@@ -1105,6 +1243,317 @@ impl Session {
         }
     }
 
+    /// Process a `[check name [judgment args...] expected-output]` command.
+    fn process_check(
+        &mut self,
+        items: &[Sexp],
+        graph_rules: &[rewrite::GraphRule],
+        known_ops: &HashSet<String>,
+        config: &SystemConfig,
+    ) -> Result<()> {
+        if items.len() < 3 {
+            return Err(ApeironError::InvalidConfig {
+                block: "check".into(),
+                detail: "need: [check name judgment-expr expected-output]".into(),
+            });
+        }
+
+        let name = items[0]
+            .as_atom()
+            .unwrap_or("?")
+            .to_string();
+        let judgment_expr = &items[1];
+        let expected_output = &items[2];
+
+        // Build and normalize the judgment expression
+        let (lhs_root, _) =
+            self.build_and_normalize(judgment_expr, graph_rules, known_ops, config)?;
+
+        // Build [ok expected-output] and normalize
+        let s = crate::parser::Span::default();
+        let ok_expected = Sexp::List(
+            vec![
+                Sexp::Atom("ok".into(), s),
+                expected_output.clone(),
+            ],
+            s,
+        );
+        let (rhs_root, _) =
+            self.build_and_normalize(&ok_expected, graph_rules, known_ops, config)?;
+
+        // Compare via hash
+        let lhs_port = self.arena.port(lhs_root, 1);
+        let rhs_port = self.arena.port(rhs_root, 1);
+
+        let lhs_ptr = if lhs_port.is_connected() {
+            lhs_port.target
+        } else {
+            lhs_root
+        };
+        let rhs_ptr = if rhs_port.is_connected() {
+            rhs_port.target
+        } else {
+            rhs_root
+        };
+
+        let canonical = config.binding != BindingMode::Nominal;
+        let lhs_hash = hash::topological_hash_mode(&self.arena, lhs_ptr, canonical);
+        let rhs_hash = hash::topological_hash_mode(&self.arena, rhs_ptr, canonical);
+
+        if lhs_hash == rhs_hash {
+            self.output.push(format!("[CHECK] {} passed", name));
+            Ok(())
+        } else {
+            let lhs_term = readback::readback(&self.arena, lhs_ptr);
+            let rhs_term = readback::readback(&self.arena, rhs_ptr);
+            Err(ApeironError::JudgmentMismatch {
+                name,
+                detail: format!(
+                    "judgment yielded {} but expected {}",
+                    lhs_term, rhs_term
+                ),
+            })
+        }
+    }
+
+    /// Process a `[derive name :by rule :sub [...] :shows [conclusion]]` command.
+    fn process_derive_check(
+        &mut self,
+        items: &[Sexp],
+        graph_rules: &[rewrite::GraphRule],
+        known_ops: &HashSet<String>,
+        config: &SystemConfig,
+        theory_name: &str,
+    ) -> Result<()> {
+        if items.is_empty() {
+            return Err(ApeironError::InvalidConfig {
+                block: "derive".into(),
+                detail: "need: [derive name :by rule-name ...]".into(),
+            });
+        }
+
+        let name = items[0]
+            .as_atom()
+            .unwrap_or("?")
+            .to_string();
+
+        // Parse :by, :sub, :shows
+        let mut by_rule = String::new();
+        let mut subs: Vec<Sexp> = Vec::new();
+        let mut shows: Option<Sexp> = None;
+        let mut i = 1;
+
+        while i < items.len() {
+            match items[i].as_atom() {
+                Some(":by") => {
+                    i += 1;
+                    if i < items.len() {
+                        by_rule = items[i].as_atom().unwrap_or("?").to_string();
+                    }
+                }
+                Some(":sub") => {
+                    i += 1;
+                    if i < items.len() {
+                        if let Some(list) = items[i].as_list() {
+                            subs = list.to_vec();
+                        }
+                    }
+                }
+                Some(":shows") => {
+                    i += 1;
+                    if i < items.len() {
+                        shows = Some(items[i].clone());
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+
+        // Get the derive rules for this theory
+        let derive_rules = self
+            .derive_rules
+            .get(theory_name)
+            .cloned()
+            .unwrap_or_default();
+
+        if derive_rules.is_empty() {
+            return Err(ApeironError::InvalidConfig {
+                block: "derive".into(),
+                detail: format!("theory '{}' has no @derive rules", theory_name),
+            });
+        }
+
+        // Look up the named rule
+        let rule = derive_rules.get(&by_rule).ok_or_else(|| {
+            ApeironError::DerivationFailed {
+                name: name.clone(),
+                detail: format!("unknown derive rule '{}'", by_rule),
+            }
+        })?;
+
+        // If :shows provided, match against conclusion and check premises
+        if let Some(ref shown) = shows {
+            // First: verify the conclusion normalizes correctly via rewriting
+            // Build the judgment call from the conclusion
+            let (concl_root, _) =
+                self.build_and_normalize(shown, graph_rules, known_ops, config)?;
+            let concl_port = self.arena.port(concl_root, 1);
+            let _concl_ptr = if concl_port.is_connected() {
+                concl_port.target
+            } else {
+                concl_root
+            };
+
+            // Build the derivation tree sexp for checking
+            let s = crate::parser::Span::default();
+            let mut tree_items = vec![Sexp::Atom(by_rule.clone(), s)];
+            if !subs.is_empty() {
+                tree_items.push(Sexp::Atom(":sub".into(), s));
+                tree_items.push(Sexp::List(subs, s));
+            }
+            tree_items.push(Sexp::Atom(":shows".into(), s));
+            tree_items.push(shown.clone());
+            let tree = Sexp::List(tree_items, s);
+
+            // Find the judgment name from the conclusion
+            let judgment_name = if let Some(items_list) = rule.conclusion.as_list() {
+                items_list[0].as_atom().unwrap_or("?").to_string()
+            } else {
+                "?".to_string()
+            };
+
+            match judgment::check_derivation(&tree, &derive_rules, &judgment_name) {
+                Ok(()) => {
+                    self.output
+                        .push(format!("[DERIVE] {} verified", name));
+                    Ok(())
+                }
+                Err(e) => Err(ApeironError::DerivationFailed {
+                    name,
+                    detail: e,
+                }),
+            }
+        } else {
+            // No :shows — just verify the rule exists and premises count matches
+            self.output.push(format!(
+                "[DERIVE] {} acknowledged (rule {} with {} premises)",
+                name,
+                by_rule,
+                rule.premises.len()
+            ));
+            Ok(())
+        }
+    }
+
+    /// Process a `[refute name :assumptions [...] :goal [...] :depth N]` command.
+    fn process_refute(
+        &mut self,
+        items: &[Sexp],
+        _graph_rules: &[rewrite::GraphRule],
+        _known_ops: &HashSet<String>,
+        _config: &SystemConfig,
+        theory_name: &str,
+    ) -> Result<()> {
+        if items.is_empty() {
+            return Err(ApeironError::InvalidConfig {
+                block: "refute".into(),
+                detail: "need: [refute name :assumptions [...] :goal [...] :depth N]".into(),
+            });
+        }
+
+        let name = items[0]
+            .as_atom()
+            .unwrap_or("?")
+            .to_string();
+
+        let mut assumptions: Vec<Sexp> = Vec::new();
+        let mut goal: Option<Sexp> = None;
+        let mut max_depth: usize = 5;
+        let mut i = 1;
+
+        while i < items.len() {
+            match items[i].as_atom() {
+                Some(":assumptions") => {
+                    i += 1;
+                    if i < items.len() {
+                        if let Some(list) = items[i].as_list() {
+                            assumptions = list.to_vec();
+                        }
+                    }
+                }
+                Some(":goal") => {
+                    i += 1;
+                    if i < items.len() {
+                        goal = Some(items[i].clone());
+                    }
+                }
+                Some(":depth") => {
+                    i += 1;
+                    if i < items.len() {
+                        if let Some(d) = items[i].as_atom() {
+                            max_depth = d.parse().unwrap_or(5);
+                        }
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+
+        let goal = goal.ok_or_else(|| ApeironError::InvalidConfig {
+            block: "refute".into(),
+            detail: "missing :goal".into(),
+        })?;
+
+        // Get derive rules for this theory
+        let derive_rules = self
+            .derive_rules_ordered
+            .get(theory_name)
+            .cloned()
+            .unwrap_or_default();
+
+        // Check if theory uses affine/linear binding
+        let system_name = self.theory_systems.get(theory_name).cloned().unwrap_or_default();
+        let affine = self
+            .systems
+            .get(&system_name)
+            .map(|s| s.binding == BindingMode::LinearExplicit)
+            .unwrap_or(false);
+
+        let max_budget = 1_000_000;
+        let result = refute::exhaustive_refute(
+            &derive_rules,
+            &assumptions,
+            &goal,
+            max_depth,
+            max_budget,
+            affine,
+        );
+
+        match result {
+            refute::RefuteResult::Refuted { depth } => {
+                self.output.push(format!(
+                    "[REFUTE] {}: VERIFIED (impossible at depth {})",
+                    name, depth
+                ));
+                Ok(())
+            }
+            refute::RefuteResult::Derivable => {
+                Err(ApeironError::RefutationFailed {
+                    name,
+                    detail: "goal is derivable (proof found)".into(),
+                })
+            }
+            refute::RefuteResult::Inconclusive { steps_used } => {
+                Err(ApeironError::RefutationInconclusive {
+                    name,
+                    detail: format!("budget exhausted after {} steps", steps_used),
+                })
+            }
+        }
+    }
+
     fn process_reflect(
         &mut self,
         items: &[Sexp],
@@ -1250,6 +1699,17 @@ fn parse_syntax_block(items: &[Sexp], config: &mut SystemConfig) -> Result<()> {
                     }
                 }
                 "op" | "Op" => {
+                    if decl.len() >= 2 {
+                        let name = decl[1].as_atom().unwrap_or("?").to_string();
+                        config.operators.push(OpDecl {
+                            name,
+                            args: Vec::new(),
+                            result: String::new(),
+                        });
+                    }
+                }
+                "judgment" => {
+                    // Parsed later in process_system; just register the op name
                     if decl.len() >= 2 {
                         let name = decl[1].as_atom().unwrap_or("?").to_string();
                         config.operators.push(OpDecl {

@@ -31,6 +31,14 @@ pub enum ApeironError {
     MorphismError { name: String, detail: String },
     UnknownMorphism { name: String },
     OperatorNotInTarget { source_op: String, target_system: String },
+
+    // Judgment / derivation errors
+    DerivationFailed { name: String, detail: String },
+    JudgmentMismatch { name: String, detail: String },
+
+    // Refutation errors
+    RefutationFailed { name: String, detail: String },
+    RefutationInconclusive { name: String, detail: String },
 }
 
 impl fmt::Display for ApeironError {
@@ -73,6 +81,18 @@ impl fmt::Display for ApeironError {
             }
             Self::OperatorNotInTarget { source_op, target_system } => {
                 write!(f, "source operator '{}' has no mapping in target system '{}'. Add [Map {} ...] to the AutoMorphism.", source_op, target_system, source_op)
+            }
+            Self::DerivationFailed { name, detail } => {
+                write!(f, "derivation '{}' failed: {}", name, detail)
+            }
+            Self::JudgmentMismatch { name, detail } => {
+                write!(f, "judgment '{}' mismatch: {}", name, detail)
+            }
+            Self::RefutationFailed { name, detail } => {
+                write!(f, "refutation '{}' failed: {}", name, detail)
+            }
+            Self::RefutationInconclusive { name, detail } => {
+                write!(f, "refutation '{}' inconclusive: {}", name, detail)
             }
         }
     }

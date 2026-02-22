@@ -1,0 +1,77 @@
+;; Apeiron: Explicit Derivation Trees via `derive` command
+;;
+;; Demonstrates the `derive` command which lets users provide
+;; explicit derivation trees naming which rule applies at each step.
+;; This is the Apeiron equivalent of writing proof terms.
+
+;; ════════════════════════════════════════════════════════════
+;; Layer 1: THE SYSTEM
+;; ════════════════════════════════════════════════════════════
+
+[System STLC
+  [@syntax
+    [sort Ty] [sort Tm] [sort Ctx]
+    [op Base] [op Nat] [op arrow]
+    [op vz] [op vs] [op lam-t] [op app-t]
+    [op nil] [op ext]
+    [judgment typeof :inputs [Ctx Tm] :output Ty]
+  ]
+  [@binding implicit]
+  [@check rewriting]
+]
+
+;; ════════════════════════════════════════════════════════════
+;; Layer 2: THE THEORY
+;; ════════════════════════════════════════════════════════════
+
+[Theory STLCRules :in STLC
+  [@derive typeof-vz
+    :conclusion [typeof [ext ?A ?G] vz ?A]]
+
+  [@derive typeof-vs
+    :premises [[typeof ?G ?e ?A]]
+    :conclusion [typeof [ext ?B ?G] [vs ?e] ?A]]
+
+  [@derive typeof-lam
+    :premises [[typeof [ext ?A ?G] ?e ?B]]
+    :conclusion [typeof ?G [lam-t ?A ?e] [arrow ?A ?B]]]
+
+  [@derive typeof-app
+    :premises [[typeof ?G ?e1 [arrow ?A ?B]]
+               [typeof ?G ?e2 ?A]]
+    :conclusion [typeof ?G [app-t ?e1 ?e2] ?B]]
+]
+
+;; ════════════════════════════════════════════════════════════
+;; Layer 3: THE PROOFS — Explicit Derivation Trees
+;; ════════════════════════════════════════════════════════════
+
+[Proofs STLCDerive :in STLCRules
+
+  ;; 1. Computed check: λx.x : Base → Base (for comparison)
+  [check identity-check [typeof nil [lam-t Base vz]] [arrow Base Base]]
+
+  ;; 2. Explicit derivation: λx.x : Base → Base
+  ;;    by typeof-lam with sub [typeof-vz]
+  [derive identity-derive
+    :by typeof-lam
+    :sub [[typeof-vz :shows [typeof [ext Base nil] vz Base]]]
+    :shows [typeof nil [lam-t Base vz] [arrow Base Base]]]
+
+  ;; 3. Explicit derivation: λx.λy.x : Base → Nat → Base (K combinator)
+  ;;    by typeof-lam with sub [typeof-lam with sub [typeof-vs with sub [typeof-vz]]]
+  [derive const-derive
+    :by typeof-lam
+    :sub [[typeof-lam
+           :sub [[typeof-vs
+                  :sub [[typeof-vz
+                         :shows [typeof [ext Base nil] vz Base]]]
+                  :shows [typeof [ext Nat [ext Base nil]] [vs vz] Base]]]
+           :shows [typeof [ext Base nil] [lam-t Nat [vs vz]] [arrow Nat Base]]]]
+    :shows [typeof nil [lam-t Base [lam-t Nat [vs vz]]] [arrow Base [arrow Nat Base]]]]
+
+  ;; 4. Axiom derivation: variable lookup
+  [derive vz-derive
+    :by typeof-vz
+    :shows [typeof [ext Base nil] vz Base]]
+]

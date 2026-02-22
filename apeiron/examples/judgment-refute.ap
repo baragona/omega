@@ -1,0 +1,178 @@
+;; Apeiron: Refutation Engine — Proving Impossibility
+;;
+;; Demonstrates the `refute` command which performs exhaustive
+;; backward-chaining proof search to verify that a goal is
+;; NOT derivable from the given assumptions and derive rules.
+;;
+;; This enables "negative reasoning" — proving things are impossible,
+;; not just proving they're possible.
+
+;; ════════════════════════════════════════════════════════════
+;; Example 1: Conservation Laws in Particle Physics
+;; ════════════════════════════════════════════════════════════
+
+[System ConservationTheory
+  [@syntax
+    [sort Particle]
+    [sort Result]
+    ;; Particles
+    [op electron] [op positron] [op photon] [op pair]
+    ;; Judgment: [react input output] means input can react to produce output
+    [judgment react :inputs [Particle] :output Result]
+  ]
+  [@binding implicit]
+  [@check rewriting]
+]
+
+[Theory ConservationRules :in ConservationTheory
+  [op ok] [op fail]
+
+  ;; Pair annihilation: electron + positron → photon + photon
+  [@derive annihilate
+    :conclusion [react [pair electron positron] [pair photon photon]]]
+
+  ;; Pair creation: photon + photon → electron + positron
+  [@derive create-pair
+    :conclusion [react [pair photon photon] [pair electron positron]]]
+]
+
+[Proofs ConservationCheck :in ConservationRules
+  ;; POSITIVE: pair annihilation is possible
+  [check annihilation
+    [react [pair electron positron]]
+    [pair photon photon]]
+
+  ;; POSITIVE: pair creation is possible
+  [check pair-creation
+    [react [pair photon photon]]
+    [pair electron positron]]
+
+  ;; NEGATIVE: single electron can't become a photon (conservation violation)
+  [refute no-electron-to-photon
+    :assumptions []
+    :goal [react electron photon]
+    :depth 3]
+
+  ;; NEGATIVE: photon can't spontaneously become electron (needs pair)
+  [refute no-photon-to-electron
+    :assumptions []
+    :goal [react photon electron]
+    :depth 3]
+
+  ;; NEGATIVE: can't create matter from nothing
+  [refute no-creation-from-nothing
+    :assumptions []
+    :goal [react photon [pair electron positron]]
+    :depth 3]
+]
+
+;; ════════════════════════════════════════════════════════════
+;; Example 2: Simple Type Safety (No Step Rules = All Values)
+;; ════════════════════════════════════════════════════════════
+
+[System SafetyTheory
+  [@syntax
+    [sort Val]
+    [sort Step]
+    [op zero] [op succ] [op true-v] [op false-v]
+    ;; No step judgment needed — we use refute to show nothing steps
+    [judgment steps :inputs [Val] :output Val]
+  ]
+  [@binding implicit]
+  [@check rewriting]
+]
+
+[Theory SafetyRules :in SafetyTheory
+  [op ok] [op fail]
+  ;; No step rules at all — all values are irreducible
+]
+
+[Proofs SafetyCheck :in SafetyRules
+  ;; NEGATIVE: zero can't step to anything
+  [refute zero-stuck
+    :assumptions []
+    :goal [steps zero zero]
+    :depth 3]
+
+  ;; NEGATIVE: true can't step
+  [refute true-stuck
+    :assumptions []
+    :goal [steps true-v false-v]
+    :depth 3]
+
+  ;; NEGATIVE: succ zero can't step
+  [refute succ-stuck
+    :assumptions []
+    :goal [steps [succ zero] zero]
+    :depth 3]
+]
+
+;; ════════════════════════════════════════════════════════════
+;; Example 3: No-Cloning in a Resource Theory
+;; ════════════════════════════════════════════════════════════
+;; Uses derive rules that consume resources.
+;; The refutation engine checks that cloning is impossible.
+
+[System ResourceTheory
+  [@syntax
+    [sort Resource]
+    [sort Result]
+    [op qubit] [op bit] [op tensor] [op unit]
+    [op measure]
+    [judgment derive-res :inputs [Resource] :output Result]
+  ]
+  [@binding implicit]
+  [@check rewriting]
+]
+
+[Theory ResourceRules :in ResourceTheory
+  [op ok] [op fail]
+
+  ;; A qubit can be measured to produce a bit
+  [@derive measure-qubit
+    :conclusion [derive-res [measure qubit] bit]]
+
+  ;; Tensor products can be split (but each piece is separate)
+  [@derive split-left
+    :conclusion [derive-res [tensor ?A ?B] ?A]]
+
+  [@derive split-right
+    :conclusion [derive-res [tensor ?A ?B] ?B]]
+
+  ;; Unit is trivially derivable
+  [@derive unit-trivial
+    :conclusion [derive-res unit unit]]
+]
+
+[Proofs ResourceCheck :in ResourceRules
+  ;; POSITIVE: measuring a qubit gives a bit
+  [check measure-ok [derive-res [measure qubit]] bit]
+
+  ;; POSITIVE: projection of tensor (first matching rule: split-left → left element)
+  [check split-left-ok [derive-res [tensor qubit bit]] qubit]
+
+  ;; POSITIVE: projection of tensor (first matching rule: split-left → left element)
+  [check split-right-ok [derive-res [tensor bit qubit]] bit]
+
+  ;; POSITIVE: unit
+  [check unit-ok [derive-res unit] unit]
+
+  ;; NEGATIVE: can't get a qubit from a bit (no such rule)
+  [refute no-bit-to-qubit
+    :assumptions []
+    :goal [derive-res bit qubit]
+    :depth 3]
+
+  ;; NEGATIVE: can't clone a qubit via tensor
+  ;; Having [qubit] should not let you derive [tensor qubit qubit]
+  [refute no-clone-qubit
+    :assumptions []
+    :goal [derive-res qubit [tensor qubit qubit]]
+    :depth 5]
+
+  ;; NEGATIVE: measurement is irreversible (no bit → qubit)
+  [refute irreversible-measurement
+    :assumptions []
+    :goal [derive-res [measure bit] qubit]
+    :depth 3]
+]

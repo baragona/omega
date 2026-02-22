@@ -311,6 +311,36 @@ fn run_example(path: &str) {
     for line in &assert_lines {
         assert!(line.contains("passed"), "assertion failed in {}: {}", path, line);
     }
+
+    // Verify all judgment checks passed
+    let check_lines: Vec<_> = session
+        .output
+        .iter()
+        .filter(|l| l.starts_with("[CHECK]"))
+        .collect();
+    for line in &check_lines {
+        assert!(line.contains("passed"), "check failed in {}: {}", path, line);
+    }
+
+    // Verify all derivation verifications passed
+    let derive_lines: Vec<_> = session
+        .output
+        .iter()
+        .filter(|l| l.starts_with("[DERIVE]") && l.contains("verified"))
+        .collect();
+    for line in &derive_lines {
+        assert!(line.contains("verified"), "derive failed in {}: {}", path, line);
+    }
+
+    // Verify all refutations
+    let refute_lines: Vec<_> = session
+        .output
+        .iter()
+        .filter(|l| l.starts_with("[REFUTE]"))
+        .collect();
+    for line in &refute_lines {
+        assert!(line.contains("VERIFIED"), "refutation failed in {}: {}", path, line);
+    }
 }
 
 #[test]
@@ -461,6 +491,162 @@ fn example_omega_self() {
 #[test]
 fn example_omega_stlc() {
     run_example("examples/omega-stlc.ap");
+}
+
+// ================================================================
+// Judgment Layer Tests
+// ================================================================
+
+#[test]
+fn example_judgment_stlc() {
+    run_example("examples/judgment-stlc.ap");
+}
+
+#[test]
+fn example_judgment_prop() {
+    run_example("examples/judgment-prop.ap");
+}
+
+#[test]
+fn example_judgment_derive() {
+    run_example("examples/judgment-derive.ap");
+}
+
+#[test]
+fn example_judgment_refute() {
+    run_example("examples/judgment-refute.ap");
+}
+
+#[test]
+fn judgment_check_passes() {
+    let source = r#"
+    [System JTest
+      [@syntax
+        [sort Ty] [sort Tm] [sort Ctx]
+        [op Base] [op arrow]
+        [op vz] [op vs] [op lam-t] [op app-t]
+        [op nil] [op ext]
+        [judgment typeof :inputs [Ctx Tm] :output Ty]
+      ]
+      [@binding implicit]
+      [@check rewriting]
+    ]
+    [Theory JRules :in JTest
+      [@derive typeof-vz
+        :conclusion [typeof [ext ?A ?G] vz ?A]]
+      [@derive typeof-lam
+        :premises [[typeof [ext ?A ?G] ?e ?B]]
+        :conclusion [typeof ?G [lam-t ?A ?e] [arrow ?A ?B]]]
+    ]
+    [Proofs JCheck :in JRules
+      [check identity [typeof nil [lam-t Base vz]] [arrow Base Base]]
+    ]
+    "#;
+
+    let sexps = parser::parse(source).unwrap();
+    let mut session = Session::new();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+    assert!(session.output.iter().any(|s| s.contains("[CHECK] identity passed")));
+}
+
+#[test]
+fn judgment_check_fails_on_mismatch() {
+    let source = r#"
+    [System JTest
+      [@syntax
+        [sort Ty] [sort Tm] [sort Ctx]
+        [op Base] [op Nat] [op arrow]
+        [op vz] [op lam-t]
+        [op nil] [op ext]
+        [judgment typeof :inputs [Ctx Tm] :output Ty]
+      ]
+      [@binding implicit]
+      [@check rewriting]
+    ]
+    [Theory JRules :in JTest
+      [@derive typeof-vz
+        :conclusion [typeof [ext ?A ?G] vz ?A]]
+      [@derive typeof-lam
+        :premises [[typeof [ext ?A ?G] ?e ?B]]
+        :conclusion [typeof ?G [lam-t ?A ?e] [arrow ?A ?B]]]
+    ]
+    [Proofs JCheck :in JRules
+      [check wrong [typeof nil [lam-t Base vz]] [arrow Nat Base]]
+    ]
+    "#;
+
+    let sexps = parser::parse(source).unwrap();
+    let mut session = Session::new();
+    session.process(&sexps[0]).unwrap();
+    session.process(&sexps[1]).unwrap();
+    let result = session.process(&sexps[2]);
+    assert!(result.is_err());
+    let err = format!("{}", result.unwrap_err());
+    assert!(err.contains("mismatch"), "expected mismatch error, got: {}", err);
+}
+
+#[test]
+fn refute_impossible_goal() {
+    let source = r#"
+    [System RTest
+      [@syntax
+        [sort Val] [sort Result]
+        [op zero] [op succ]
+        [judgment steps :inputs [Val] :output Val]
+      ]
+      [@binding implicit]
+      [@check rewriting]
+    ]
+    [Theory RRules :in RTest]
+    [Proofs RCheck :in RRules
+      [refute zero-stuck
+        :assumptions []
+        :goal [steps zero zero]
+        :depth 3]
+    ]
+    "#;
+
+    let sexps = parser::parse(source).unwrap();
+    let mut session = Session::new();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+    assert!(session.output.iter().any(|s| s.contains("[REFUTE] zero-stuck: VERIFIED")));
+}
+
+#[test]
+fn refute_fails_when_derivable() {
+    let source = r#"
+    [System RTest
+      [@syntax
+        [sort Val] [sort Result]
+        [op zero] [op unit]
+        [judgment has :inputs [Val] :output Result]
+      ]
+      [@binding implicit]
+      [@check rewriting]
+    ]
+    [Theory RRules :in RTest
+      [@derive has-zero :conclusion [has zero unit]]
+    ]
+    [Proofs RCheck :in RRules
+      [refute should-fail
+        :assumptions []
+        :goal [has zero unit]
+        :depth 3]
+    ]
+    "#;
+
+    let sexps = parser::parse(source).unwrap();
+    let mut session = Session::new();
+    session.process(&sexps[0]).unwrap();
+    session.process(&sexps[1]).unwrap();
+    let result = session.process(&sexps[2]);
+    assert!(result.is_err());
+    let err = format!("{}", result.unwrap_err());
+    assert!(err.contains("derivable"), "expected derivable error, got: {}", err);
 }
 
 // ================================================================

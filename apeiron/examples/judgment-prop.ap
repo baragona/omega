@@ -1,0 +1,83 @@
+;; Apeiron: Propositional Logic Checker via @derive (Judgment Layer)
+;;
+;; Demonstrates the judgment layer for a propositional logic type checker.
+;; @derive rules compile to staging combinators automatically.
+;;
+;; Judgment: [valid form result] — checks if a propositional formula is valid.
+;; Results are wrapped in [ok formula] on success or fail on failure.
+
+;; ════════════════════════════════════════════════════════════
+;; Layer 1: THE SYSTEM
+;; ════════════════════════════════════════════════════════════
+
+[System PropLogic
+  [@syntax
+    [sort Form]
+    [sort Result]
+    ;; Propositions
+    [op top] [op bot]
+    [op f-and] [op f-imp] [op f-not]
+    ;; Judgment
+    [judgment valid :inputs [Form] :output Result]
+  ]
+  [@binding implicit]
+  [@check rewriting]
+]
+
+;; ════════════════════════════════════════════════════════════
+;; Layer 2: THE THEORY — Derivation Rules
+;; ════════════════════════════════════════════════════════════
+
+[Theory PropRules :in PropLogic
+
+  ;; Register extra ops for staging
+  [op ok] [op fail]
+
+  ;; ── Axioms (0 premises) ──
+
+  ;; top is always valid
+  [@derive valid-top
+    :conclusion [valid top top]]
+
+  ;; ── Rules with premises ──
+
+  ;; and: both sides must be valid
+  [@derive valid-and
+    :premises [[valid ?A ?A] [valid ?B ?B]]
+    :conclusion [valid [f-and ?A ?B] [f-and ?A ?B]]]
+
+  ;; implication: if A valid implies B valid (encoded: B must be valid)
+  ;; Simplified: A → B is valid if B is valid (strong: B is a tautology)
+  [@derive valid-imp-strong
+    :premises [[valid ?B ?B]]
+    :conclusion [valid [f-imp ?A ?B] [f-imp ?A ?B]]]
+
+  ;; not-bot: ¬⊥ is valid (negation of bottom)
+  [@derive valid-not-bot
+    :conclusion [valid [f-not bot] [f-not bot]]]
+]
+
+;; ════════════════════════════════════════════════════════════
+;; Layer 3: THE PROOFS
+;; ════════════════════════════════════════════════════════════
+
+[Proofs PropCheck :in PropRules
+
+  ;; 1. ⊤ is valid
+  [check top-valid [valid top] top]
+
+  ;; 2. ⊤ ∧ ⊤ is valid
+  [check and-top-top [valid [f-and top top]] [f-and top top]]
+
+  ;; 3. ¬⊥ is valid
+  [check not-bot [valid [f-not bot]] [f-not bot]]
+
+  ;; 4. A → ⊤ is valid (for any A, since ⊤ is a tautology)
+  [check imp-a-top [valid [f-imp bot top]] [f-imp bot top]]
+
+  ;; 5. (⊤ ∧ ¬⊥) is valid
+  [check and-top-not-bot [valid [f-and top [f-not bot]]] [f-and top [f-not bot]]]
+
+  ;; 6. Nested: ⊤ ∧ (A → ⊤)
+  [check nested [valid [f-and top [f-imp bot top]]] [f-and top [f-imp bot top]]]
+]

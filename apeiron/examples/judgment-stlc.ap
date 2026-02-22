@@ -1,0 +1,130 @@
+;; Apeiron: STLC Type Checker via @derive (Judgment Layer)
+;;
+;; Same type-checking logic as omega-stlc.ap, but using the generic
+;; judgment layer. @derive rules compile to the same ok/fail staging
+;; combinator pattern automatically — zero hand-written plumbing.
+;;
+;; Comparison:
+;;   omega-stlc.ap: 11 hand-written @rule (typeof + chk-app + mk-arrow)
+;;   judgment-stlc.ap: 4 @derive rules (typeof-vz/vs/lam/app)
+;;
+;; The judgment layer generates ~16 rewrite rules from these 4 derive rules.
+
+;; ════════════════════════════════════════════════════════════
+;; Layer 1: THE SYSTEM — Syntax & Physics
+;; ════════════════════════════════════════════════════════════
+
+[System STLC
+  [@syntax
+    [sort Ty] [sort Tm] [sort Ctx]
+    ;; Types
+    [op Base] [op Nat] [op Bool]
+    [op arrow]
+    ;; Terms (de Bruijn)
+    [op vz] [op vs]
+    [op lam-t] [op app-t]
+    ;; Contexts
+    [op nil] [op ext]
+    ;; Judgment declaration: typeof takes (Ctx, Tm) and computes Ty
+    [judgment typeof :inputs [Ctx Tm] :output Ty]
+  ]
+  [@binding implicit]
+  [@check rewriting]
+]
+
+;; ════════════════════════════════════════════════════════════
+;; Layer 2: THE THEORY — Derivation Rules
+;; ════════════════════════════════════════════════════════════
+;; Each @derive rule declares premises and conclusion.
+;; The compiler generates staging combinators automatically.
+
+[Theory STLCRules :in STLC
+
+  ;; Variable at index 0: type is head of context (axiom: 0 premises)
+  [@derive typeof-vz
+    :conclusion [typeof [ext ?A ?G] vz ?A]]
+
+  ;; Shift: look past head, recurse into tail (1 premise)
+  [@derive typeof-vs
+    :premises [[typeof ?G ?e ?A]]
+    :conclusion [typeof [ext ?B ?G] [vs ?e] ?A]]
+
+  ;; Lambda: extend context, compute body type (1 premise)
+  [@derive typeof-lam
+    :premises [[typeof [ext ?A ?G] ?e ?B]]
+    :conclusion [typeof ?G [lam-t ?A ?e] [arrow ?A ?B]]]
+
+  ;; Application: check function and argument types (2 premises)
+  ;; Non-linear ?A ensures domain matches argument type.
+  [@derive typeof-app
+    :premises [[typeof ?G ?e1 [arrow ?A ?B]]
+               [typeof ?G ?e2 ?A]]
+    :conclusion [typeof ?G [app-t ?e1 ?e2] ?B]]
+]
+
+;; ════════════════════════════════════════════════════════════
+;; Layer 3: THE PROOFS — Verified Typing Theorems
+;; ════════════════════════════════════════════════════════════
+;; Uses `check` command: normalizes [typeof ctx term], compares to expected type.
+
+[Proofs STLCCheck :in STLCRules
+
+  ;; 1. λx.x : Base → Base  (identity / I combinator)
+  [check identity [typeof nil [lam-t Base vz]] [arrow Base Base]]
+
+  ;; 2. λx.λy.x : Base → Nat → Base  (K combinator / const)
+  [check const
+    [typeof nil [lam-t Base [lam-t Nat [vs vz]]]]
+    [arrow Base [arrow Nat Base]]]
+
+  ;; 3. λx.λy.y : Base → Base → Base  (Church false)
+  [check church-false
+    [typeof nil [lam-t Base [lam-t Base vz]]]
+    [arrow Base [arrow Base Base]]]
+
+  ;; 4. (λx.x)(λx.x) : Base → Base  (self-application of identity)
+  [check apply-id-to-id
+    [typeof nil [app-t [lam-t [arrow Base Base] vz] [lam-t Base vz]]]
+    [arrow Base Base]]
+
+  ;; 5. λf.λg.λx.f(g(x)) : (Nat→Bool)→(Base→Nat)→Base→Bool  (compose / B combinator)
+  [check compose
+    [typeof nil
+      [lam-t [arrow Nat Bool] [lam-t [arrow Base Nat] [lam-t Base
+        [app-t [vs [vs vz]] [app-t [vs vz] vz]]]]]]
+    [arrow [arrow Nat Bool] [arrow [arrow Base Nat] [arrow Base Bool]]]]
+
+  ;; 6. λf.λg.λx.f(x)(g(x)) : (Base→Nat→Bool)→(Base→Nat)→Base→Bool  (S combinator)
+  [check s-combinator
+    [typeof nil
+      [lam-t [arrow Base [arrow Nat Bool]] [lam-t [arrow Base Nat] [lam-t Base
+        [app-t [app-t [vs [vs vz]] vz] [app-t [vs vz] vz]]]]]]
+    [arrow [arrow Base [arrow Nat Bool]] [arrow [arrow Base Nat] [arrow Base Bool]]]]
+
+  ;; 7. Church pair constructor
+  [check church-pair
+    [typeof nil
+      [lam-t Base [lam-t Nat [lam-t [arrow Base [arrow Nat Bool]]
+        [app-t [app-t vz [vs [vs vz]]] [vs vz]]]]]]
+    [arrow Base [arrow Nat [arrow [arrow Base [arrow Nat Bool]] Bool]]]]
+
+  ;; 8. flip: (Base→Nat→Bool)→Nat→Base→Bool
+  [check flip
+    [typeof nil
+      [lam-t [arrow Base [arrow Nat Bool]] [lam-t Nat [lam-t Base
+        [app-t [app-t [vs [vs vz]] vz] [vs vz]]]]]]
+    [arrow [arrow Base [arrow Nat Bool]] [arrow Nat [arrow Base Bool]]]]
+
+  ;; 9. Γ,f:Base→Nat ⊢ λx.f(x) : Base → Nat  (eta-expansion in context)
+  [check eta-expansion
+    [typeof [ext [arrow Base Nat] nil]
+      [lam-t Base [app-t [vs vz] vz]]]
+    [arrow Base Nat]]
+
+  ;; 10. Church numeral 2: (Base→Base) → Base → Base
+  [check church-two
+    [typeof nil
+      [lam-t [arrow Base Base] [lam-t Base
+        [app-t [vs vz] [app-t [vs vz] vz]]]]]
+    [arrow [arrow Base Base] [arrow Base Base]]]
+]
