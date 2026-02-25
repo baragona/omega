@@ -51,6 +51,8 @@ pub struct HyperionSession {
     pub vn_theories: HashMap<String, VonNeumannTheory>,
     /// Captured @rule LHS/RHS from each theory (for functor verification)
     pub theory_rules: HashMap<String, Vec<(Sexp, Sexp)>>,
+    /// Registered Apeiron Signature names (to avoid duplicates)
+    pub registered_signatures: HashSet<String>,
     /// Skip categorical law verification
     pub skip_laws: bool,
     pub output: Vec<String>,
@@ -70,6 +72,7 @@ impl HyperionSession {
             adjunctions: HashMap::new(),
             vn_theories: HashMap::new(),
             theory_rules: HashMap::new(),
+            registered_signatures: HashSet::new(),
             skip_laws: false,
             output: Vec::new(),
         }
@@ -231,8 +234,20 @@ impl HyperionSession {
         // Compile: verify compatibility + generate system
         let compiled = compile::compile_universe(&name, &cat, &sub)?;
 
+        // Generate and register the Apeiron Signature (typed ops, deduplicated per category)
+        let sig_name = format!("__hyp_sig_{}", cat.name);
+        let sig_ref = if !self.registered_signatures.contains(&sig_name) {
+            let sig_sexp = compile::emit_signature_sexp(&cat);
+            self.apeiron.process(&sig_sexp)?;
+            self.drain_apeiron_output();
+            self.registered_signatures.insert(sig_name.clone());
+            Some(sig_name)
+        } else {
+            Some(sig_name)
+        };
+
         // Generate and register the Apeiron system
-        let system_sexp = compile::emit_system_sexp(&cat, &sub, &compiled);
+        let system_sexp = compile::emit_system_sexp(&cat, &sub, &compiled, sig_ref.as_deref());
         self.apeiron.process(&system_sexp)?;
 
         // Drain apeiron output

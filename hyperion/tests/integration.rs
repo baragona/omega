@@ -2546,3 +2546,208 @@ fn transport_discovery_example() {
 fn egraph_transport_example() {
     run_file("examples/egraph-transport.hyp");
 }
+
+// ============================================================
+// Surjection gap closure tests
+// ============================================================
+
+#[test]
+fn nominal_scoping_end_to_end() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category NomCat
+            [Object Name]
+            [Morphism bind :domain [Name Name] :codomain Name]
+            [ModalOperator box]
+            [Context Scope1]
+        ]
+        [Substrate NomSub
+            @engine interaction-graph
+            @resource-mode optimal-sharing
+            @barrier nominal-scoping
+            @equality topological-hash
+        ]
+        [Universe NomWorld :category NomCat :substrate NomSub]
+    "#;
+    process_all(&mut session, input).expect("NominalScoping should compile");
+    assert!(session.universes.contains_key("NomWorld"));
+}
+
+#[test]
+fn nominal_rejects_exponential() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category CCC
+            [Object Term]
+            [Exponential lam :object Term]
+        ]
+        [Substrate NomSub
+            @engine interaction-graph
+            @resource-mode optimal-sharing
+            @barrier nominal-scoping
+            @equality topological-hash
+        ]
+        [Universe Bad :category CCC :substrate NomSub]
+    "#;
+    let err = process_all(&mut session, input).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("Nominal scoping"), "Got: {}", msg);
+}
+
+#[test]
+fn reversible_engine_end_to_end() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category MonCat
+            [Object Obj]
+            [Morphism tensor :domain [Obj Obj] :codomain Obj]
+            [TensorProduct tensor]
+            [Unit unit]
+        ]
+        [Substrate RevSub
+            @engine reversible-graph
+            @resource-mode optimal-sharing
+            @barrier transparent
+            @equality rewrite-equivalence
+        ]
+        [Universe RevWorld :category MonCat :substrate RevSub]
+        [Theory RevTheory :in RevWorld
+            [@rule [tensor [tensor ?a ?b] ?c] ==> [tensor ?a [tensor ?b ?c]]]
+            [@rule [tensor unit ?a] ==> ?a]
+            [@rule [tensor ?a unit] ==> ?a]
+        ]
+    "#;
+    process_all(&mut session, input).expect("ReversibleGraph should compile");
+    assert!(session.universes.contains_key("RevWorld"));
+}
+
+#[test]
+fn reversible_rejects_exponential() {
+    // ReversibleGraph does not support lambda (beta-reduction is information-destroying)
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category CCC
+            [Object Term]
+            [Exponential lam :object Term]
+        ]
+        [Substrate RevSub
+            @engine reversible-graph
+            @resource-mode optimal-sharing
+            @barrier transparent
+            @equality topological-hash
+        ]
+        [Universe Bad :category CCC :substrate RevSub]
+    "#;
+    let err = process_all(&mut session, input).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("Exponential support"), "Got: {}", msg);
+}
+
+#[test]
+fn concurrent_engine_end_to_end() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category CCC
+            [Object Type] [Object Term]
+            [Morphism app :domain [Term Term] :codomain Term]
+            [Exponential lam :object Term]
+            [Evaluator app]
+        ]
+        [Substrate ConcSub
+            @engine concurrent-graph
+            @resource-mode optimal-sharing
+            @barrier transparent
+            @equality rewrite-equivalence
+        ]
+        [Universe ConcWorld :category CCC :substrate ConcSub]
+    "#;
+    process_all(&mut session, input).expect("ConcurrentGraph should compile");
+    assert!(session.universes.contains_key("ConcWorld"));
+}
+
+#[test]
+fn extensional_equality_end_to_end() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category Simple [Object T] [Morphism f :domain [T] :codomain T]]
+        [Substrate ExtSub
+            @engine interaction-graph
+            @resource-mode optimal-sharing
+            @barrier transparent
+            @equality extensional-equivalence
+        ]
+        [Universe ExtWorld :category Simple :substrate ExtSub]
+    "#;
+    process_all(&mut session, input).expect("ExtensionalEquivalence should compile");
+    assert!(session.universes.contains_key("ExtWorld"));
+}
+
+#[test]
+fn full_unification_end_to_end() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category Simple [Object T] [Morphism f :domain [T] :codomain T]]
+        [Substrate FullUnifSub
+            @engine interaction-graph
+            @resource-mode optimal-sharing
+            @barrier transparent
+            @equality full-unification
+        ]
+        [Universe FullUnifWorld :category Simple :substrate FullUnifSub]
+    "#;
+    process_all(&mut session, input).expect("FullUnification should compile");
+    assert!(session.universes.contains_key("FullUnifWorld"));
+}
+
+#[test]
+fn typed_signature_generated() {
+    // Verify that Apeiron session has a Signature with typed ops
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category Arith
+            [Object Nat]
+            [Morphism z :domain [] :codomain Nat]
+            [Morphism s :domain [Nat] :codomain Nat]
+            [Morphism plus :domain [Nat Nat] :codomain Nat]
+        ]
+        [Substrate Net
+            @engine interaction-graph
+            @resource-mode optimal-sharing
+            @barrier transparent
+            @equality rewrite-equivalence
+        ]
+        [Universe PeanoWorld :category Arith :substrate Net]
+    "#;
+    process_all(&mut session, input).expect("Should compile with typed signature");
+    assert!(session.registered_signatures.contains("__hyp_sig_Arith"));
+    // The Apeiron session should have the signature registered
+    assert!(session.apeiron.signatures.contains_key("__hyp_sig_Arith"));
+    let sig = &session.apeiron.signatures["__hyp_sig_Arith"];
+    assert_eq!(sig.sorts.len(), 1); // Nat
+    assert_eq!(sig.operators.len(), 3); // z, s, plus
+    // plus should have typed args [Nat, Nat, Nat]
+    let plus_op = sig.operators.iter().find(|o| o.name == "plus").unwrap();
+    assert_eq!(plus_op.args, vec!["Nat", "Nat", "Nat"]);
+}
+
+#[test]
+fn signature_deduplication() {
+    // Two universes with the same category should share a signature
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category C [Object T] [Morphism f :domain [T] :codomain T]]
+        [Substrate A @engine interaction-graph @resource-mode optimal-sharing @barrier transparent @equality rewrite-equivalence]
+        [Substrate B @engine term-tree @resource-mode deep-copy @barrier transparent @equality rewrite-equivalence]
+        [Universe U1 :category C :substrate A]
+        [Universe U2 :category C :substrate B]
+    "#;
+    process_all(&mut session, input).expect("Should compile both universes");
+    // Only one signature should be registered
+    assert_eq!(session.registered_signatures.len(), 1);
+    assert!(session.registered_signatures.contains("__hyp_sig_C"));
+}
+
+#[test]
+fn surjection_demo_example() {
+    run_file("examples/surjection-demo.hyp");
+}

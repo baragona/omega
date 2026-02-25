@@ -73,11 +73,21 @@ fn check_compatibility(cat: &CategoryDef, sub: &SubstrateDef) -> Result<()> {
             });
         }
     }
+    // NominalScoping + Exponential is incompatible (nominal logic does not support higher-order abstraction)
+    if matches!(sub.barrier, BarrierMode::NominalScoping) && cat.has_exponential() {
+        return Err(HyperionError::Incompatible {
+            category: cat.name.clone(),
+            substrate: sub.name.clone(),
+            detail: "Nominal scoping does not support Exponential (nominal logic does not support higher-order abstraction)".into(),
+        });
+    }
+
     // Exponential + Evaluator requires lambda+beta capable engines
     if cat.has_exponential() || cat.has_evaluator() {
         let supports_lambda = matches!(
             sub.engine,
             Engine::InteractionGraph | Engine::TermTree | Engine::AbstractMachine
+            | Engine::ConcurrentGraph
         );
         if !supports_lambda {
             return Err(HyperionError::Incompatible {
@@ -95,7 +105,7 @@ fn check_compatibility(cat: &CategoryDef, sub: &SubstrateDef) -> Result<()> {
     if cat.has_modal_operator() || cat.has_context() {
         let supports_scopes = matches!(
             sub.barrier,
-            BarrierMode::ContextualMembranes | BarrierMode::Cryptographic
+            BarrierMode::ContextualMembranes | BarrierMode::Cryptographic | BarrierMode::NominalScoping
         );
         if !supports_scopes {
             return Err(HyperionError::Incompatible {
@@ -114,6 +124,7 @@ fn check_compatibility(cat: &CategoryDef, sub: &SubstrateDef) -> Result<()> {
         let supports_tensor = matches!(
             sub.engine,
             Engine::InteractionGraph | Engine::SymmetricMonoidal
+            | Engine::ReversibleGraph | Engine::ConcurrentGraph
         );
         if !supports_tensor {
             return Err(HyperionError::Incompatible {
@@ -145,6 +156,7 @@ fn check_compatibility(cat: &CategoryDef, sub: &SubstrateDef) -> Result<()> {
         let supports_lambda = matches!(
             sub.engine,
             Engine::InteractionGraph | Engine::TermTree | Engine::AbstractMachine
+            | Engine::ConcurrentGraph
         );
         if !supports_lambda {
             return Err(HyperionError::Incompatible {
@@ -163,6 +175,7 @@ fn check_compatibility(cat: &CategoryDef, sub: &SubstrateDef) -> Result<()> {
         let supports_lambda = matches!(
             sub.engine,
             Engine::InteractionGraph | Engine::TermTree | Engine::AbstractMachine
+            | Engine::ConcurrentGraph
         );
         if !supports_lambda {
             return Err(HyperionError::Incompatible {
@@ -181,7 +194,9 @@ fn check_compatibility(cat: &CategoryDef, sub: &SubstrateDef) -> Result<()> {
 
 /// Determine the Apeiron binding mode from category + substrate.
 fn binding_mode(cat: &CategoryDef, sub: &SubstrateDef) -> &'static str {
-    if cat.has_modal_operator() && matches!(sub.barrier, BarrierMode::ContextualMembranes) {
+    if matches!(sub.barrier, BarrierMode::NominalScoping) {
+        "nominal"
+    } else if cat.has_modal_operator() && matches!(sub.barrier, BarrierMode::ContextualMembranes) {
         "contextual"
     } else if matches!(sub.resource_mode, ResourceMode::StrictlyLinear) {
         "linear-explicit"
@@ -198,7 +213,7 @@ fn binding_mode(cat: &CategoryDef, sub: &SubstrateDef) -> &'static str {
 
 /// Determine the Apeiron check modes from substrate.
 fn check_modes(sub: &SubstrateDef) -> Vec<&'static str> {
-    match sub.equality {
+    let mut modes = match sub.equality {
         EqualityMode::RewriteEquivalence => vec!["rewriting", "beta-reduction"],
         EqualityMode::TopologicalHash => vec!["oracle"],
         EqualityMode::Unification => vec!["pattern-unification"],
@@ -208,7 +223,19 @@ fn check_modes(sub: &SubstrateDef) -> Vec<&'static str> {
         EqualityMode::EqualitySaturation => {
             vec!["rewriting", "beta-reduction", "equality-saturation"]
         }
+        EqualityMode::ExtensionalEquivalence => vec!["rewriting", "beta-reduction", "extensional"],
+        EqualityMode::FullUnification => vec!["unification"],
+    };
+
+    // Engine-driven check modes (appended to equality-driven modes)
+    if matches!(sub.engine, Engine::ReversibleGraph) {
+        modes.push("reversible");
     }
+    if matches!(sub.engine, Engine::ConcurrentGraph) {
+        modes.push("confluent-race");
+    }
+
+    modes
 }
 
 /// Generate categorical laws for a category.
@@ -230,26 +257,18 @@ pub fn build_law_proofs_sexp(
     laws::build_law_proofs(theory_name, &category_laws, witness_sort)
 }
 
-/// Generate the Apeiron [System ...] S-expression for a compiled universe.
-pub fn emit_system_sexp(
-    cat: &CategoryDef,
-    sub: &SubstrateDef,
-    compiled: &CompiledUniverse,
-) -> Sexp {
+/// Generate an Apeiron [Signature ...] S-expression with typed operator declarations.
+pub fn emit_signature_sexp(cat: &CategoryDef) -> Sexp {
     let sp = Span::default();
-    let mut system_items: Vec<Sexp> = Vec::new();
+    let mut items: Vec<Sexp> = Vec::new();
 
-    // [System __hyp_Cat_Sub ...]
-    system_items.push(Sexp::Atom("System".into(), sp));
-    system_items.push(Sexp::Atom(compiled.system_name.clone(), sp));
+    let sig_name = format!("__hyp_sig_{}", cat.name);
+    items.push(Sexp::Atom("Signature".into(), sp));
+    items.push(Sexp::Atom(sig_name, sp));
 
-    // [@syntax ...] block
-    let mut syntax_items: Vec<Sexp> = Vec::new();
-    syntax_items.push(Sexp::Atom("@syntax".into(), sp));
-
-    // Sorts from objects
+    // [sort ObjName] for each object
     for obj in &cat.objects {
-        syntax_items.push(Sexp::List(
+        items.push(Sexp::List(
             vec![
                 Sexp::Atom("sort".into(), sp),
                 Sexp::Atom(obj.name.clone(), sp),
@@ -258,15 +277,67 @@ pub fn emit_system_sexp(
         ));
     }
 
-    // Operators from morphisms
+    // [op name domain... codomain] for each morphism (typed!)
     for morph in &cat.morphisms {
-        syntax_items.push(Sexp::List(
-            vec![
-                Sexp::Atom("op".into(), sp),
-                Sexp::Atom(morph.name.clone(), sp),
-            ],
-            sp,
-        ));
+        let mut op_items: Vec<Sexp> = Vec::new();
+        op_items.push(Sexp::Atom("op".into(), sp));
+        op_items.push(Sexp::Atom(morph.name.clone(), sp));
+        for d in &morph.domain {
+            op_items.push(Sexp::Atom(d.clone(), sp));
+        }
+        op_items.push(Sexp::Atom(morph.codomain.clone(), sp));
+        items.push(Sexp::List(op_items, sp));
+    }
+
+    Sexp::List(items, sp)
+}
+
+/// Generate the Apeiron [System ...] S-expression for a compiled universe.
+pub fn emit_system_sexp(
+    cat: &CategoryDef,
+    sub: &SubstrateDef,
+    compiled: &CompiledUniverse,
+    signature_name: Option<&str>,
+) -> Sexp {
+    let sp = Span::default();
+    let mut system_items: Vec<Sexp> = Vec::new();
+
+    // [System __hyp_Cat_Sub ...]
+    system_items.push(Sexp::Atom("System".into(), sp));
+    system_items.push(Sexp::Atom(compiled.system_name.clone(), sp));
+
+    // :signature ref (if Signature was registered)
+    if let Some(sig) = signature_name {
+        system_items.push(Sexp::Atom(":signature".into(), sp));
+        system_items.push(Sexp::Atom(sig.to_string(), sp));
+    }
+
+    // [@syntax ...] block
+    let mut syntax_items: Vec<Sexp> = Vec::new();
+    syntax_items.push(Sexp::Atom("@syntax".into(), sp));
+
+    if signature_name.is_none() {
+        // Sorts from objects (only if no signature — signature carries them)
+        for obj in &cat.objects {
+            syntax_items.push(Sexp::List(
+                vec![
+                    Sexp::Atom("sort".into(), sp),
+                    Sexp::Atom(obj.name.clone(), sp),
+                ],
+                sp,
+            ));
+        }
+
+        // Operators from morphisms (only if no signature)
+        for morph in &cat.morphisms {
+            syntax_items.push(Sexp::List(
+                vec![
+                    Sexp::Atom("op".into(), sp),
+                    Sexp::Atom(morph.name.clone(), sp),
+                ],
+                sp,
+            ));
+        }
     }
 
     // Operators from structure
@@ -563,7 +634,7 @@ mod tests {
         let cat = make_ccc();
         let sub = make_inet();
         let compiled = compile_universe("WeakLF", &cat, &sub).unwrap();
-        let sexp = emit_system_sexp(&cat, &sub, &compiled);
+        let sexp = emit_system_sexp(&cat, &sub, &compiled, None);
 
         // Should be a list starting with "System"
         let items = sexp.as_list().unwrap();
@@ -615,5 +686,155 @@ mod tests {
             morphism_name_for("NetToTree", "SimpleMath"),
             "__fun_NetToTree_SimpleMath"
         );
+    }
+
+    #[test]
+    fn nominal_binding_mode() {
+        let cat = CategoryDef {
+            name: "Simple".into(),
+            objects: vec![ObjectDecl { name: "T".into() }],
+            morphisms: vec![],
+            structure: vec![],
+        };
+        let sub = SubstrateDef {
+            name: "Nom".into(),
+            engine: Engine::InteractionGraph,
+            resource_mode: ResourceMode::OptimalSharing,
+            barrier: BarrierMode::NominalScoping,
+            equality: EqualityMode::TopologicalHash,
+        };
+        assert_eq!(binding_mode(&cat, &sub), "nominal");
+    }
+
+    #[test]
+    fn nominal_rejects_exponential() {
+        let cat = make_ccc(); // has Exponential
+        let sub = SubstrateDef {
+            name: "Nom".into(),
+            engine: Engine::InteractionGraph,
+            resource_mode: ResourceMode::OptimalSharing,
+            barrier: BarrierMode::NominalScoping,
+            equality: EqualityMode::TopologicalHash,
+        };
+        let result = compile_universe("Bad", &cat, &sub);
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("Nominal scoping"));
+    }
+
+    #[test]
+    fn reversible_check_mode() {
+        let sub = SubstrateDef {
+            name: "Rev".into(),
+            engine: Engine::ReversibleGraph,
+            resource_mode: ResourceMode::OptimalSharing,
+            barrier: BarrierMode::Transparent,
+            equality: EqualityMode::RewriteEquivalence,
+        };
+        let modes = check_modes(&sub);
+        assert!(modes.contains(&"reversible"));
+        assert!(modes.contains(&"rewriting"));
+    }
+
+    #[test]
+    fn concurrent_check_mode() {
+        let sub = SubstrateDef {
+            name: "Conc".into(),
+            engine: Engine::ConcurrentGraph,
+            resource_mode: ResourceMode::OptimalSharing,
+            barrier: BarrierMode::Transparent,
+            equality: EqualityMode::RewriteEquivalence,
+        };
+        let modes = check_modes(&sub);
+        assert!(modes.contains(&"confluent-race"));
+        assert!(modes.contains(&"rewriting"));
+    }
+
+    #[test]
+    fn extensional_check_mode() {
+        let sub = SubstrateDef {
+            name: "Ext".into(),
+            engine: Engine::InteractionGraph,
+            resource_mode: ResourceMode::OptimalSharing,
+            barrier: BarrierMode::Transparent,
+            equality: EqualityMode::ExtensionalEquivalence,
+        };
+        let modes = check_modes(&sub);
+        assert!(modes.contains(&"extensional"));
+        assert!(modes.contains(&"rewriting"));
+        assert!(modes.contains(&"beta-reduction"));
+    }
+
+    #[test]
+    fn full_unification_check_mode() {
+        let sub = SubstrateDef {
+            name: "FullU".into(),
+            engine: Engine::InteractionGraph,
+            resource_mode: ResourceMode::OptimalSharing,
+            barrier: BarrierMode::Transparent,
+            equality: EqualityMode::FullUnification,
+        };
+        let modes = check_modes(&sub);
+        assert_eq!(modes, vec!["unification"]);
+    }
+
+    #[test]
+    fn pattern_unification_unchanged() {
+        let sub = SubstrateDef {
+            name: "PatU".into(),
+            engine: Engine::InteractionGraph,
+            resource_mode: ResourceMode::OptimalSharing,
+            barrier: BarrierMode::Transparent,
+            equality: EqualityMode::Unification,
+        };
+        let modes = check_modes(&sub);
+        assert_eq!(modes, vec!["pattern-unification"]);
+    }
+
+    #[test]
+    fn emit_signature_sexp_produces_typed_ops() {
+        let cat = make_ccc();
+        let sig = emit_signature_sexp(&cat);
+        let items = sig.as_list().unwrap();
+        assert_eq!(items[0].as_atom().unwrap(), "Signature");
+        assert_eq!(items[1].as_atom().unwrap(), "__hyp_sig_CartesianClosed");
+
+        // Should have 2 sort declarations + 2 typed op declarations = 6 items total (Signature + name + 4)
+        // sorts: Type, Term
+        // ops: [op arrow Type Type Type], [op app Term Term Term]
+        assert_eq!(items.len(), 6);
+
+        // Check a typed op
+        let arrow_op = items[4].as_list().unwrap();
+        assert_eq!(arrow_op[0].as_atom().unwrap(), "op");
+        assert_eq!(arrow_op[1].as_atom().unwrap(), "arrow");
+        assert_eq!(arrow_op[2].as_atom().unwrap(), "Type");
+        assert_eq!(arrow_op[3].as_atom().unwrap(), "Type");
+        assert_eq!(arrow_op[4].as_atom().unwrap(), "Type"); // codomain
+    }
+
+    #[test]
+    fn emit_system_sexp_with_signature_reference() {
+        let cat = make_ccc();
+        let sub = make_inet();
+        let compiled = compile_universe("WeakLF", &cat, &sub).unwrap();
+        let sexp = emit_system_sexp(&cat, &sub, &compiled, Some("__hyp_sig_CartesianClosed"));
+        let items = sexp.as_list().unwrap();
+
+        // Should have :signature reference
+        let sig_idx = items.iter().position(|s| s.as_atom() == Some(":signature")).unwrap();
+        assert_eq!(items[sig_idx + 1].as_atom().unwrap(), "__hyp_sig_CartesianClosed");
+
+        // @syntax should NOT contain sorts/morphisms (they come from Signature)
+        let syntax = items.iter().find(|s| {
+            s.as_list().and_then(|l| l.first()).and_then(|s| s.as_atom()) == Some("@syntax")
+        }).unwrap();
+        let syntax_items = syntax.as_list().unwrap();
+        // Should only have @syntax head + structure-derived ops (lam from Exponential)
+        // Not the sorts (Type, Term) or morphisms (arrow, app)
+        let has_sort = syntax_items.iter().any(|s| {
+            s.as_list().and_then(|l| l.first()).and_then(|s| s.as_atom()) == Some("sort")
+        });
+        assert!(!has_sort, "Signature-referenced system should not have sorts in @syntax");
     }
 }

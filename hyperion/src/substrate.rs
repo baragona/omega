@@ -11,6 +11,8 @@ pub enum Engine {
     CellularAutomaton,
     AbstractMachine,
     VonNeumann,
+    ReversibleGraph,
+    ConcurrentGraph,
 }
 
 /// Resource management mode.
@@ -31,6 +33,7 @@ pub enum BarrierMode {
     OneWayValve,
     TemporalPhase,
     Cryptographic,
+    NominalScoping,
 }
 
 /// Equality checking mode.
@@ -43,6 +46,12 @@ pub enum EqualityMode {
     Unification,
     /// HoTT: equality is a space (paths between points, paths between paths)
     TopologicalHomotopy,
+    /// Equality saturation via e-graphs: bidirectional rule application.
+    EqualitySaturation,
+    /// Extensional equivalence: functions equal iff they agree on all inputs.
+    ExtensionalEquivalence,
+    /// Full (higher-order) unification, not just Miller pattern fragment.
+    FullUnification,
 }
 
 /// A substrate definition: the physical laws of computation.
@@ -158,10 +167,12 @@ fn parse_engine(val: &str, substrate: &str) -> Result<Engine> {
         "cellular-automaton" => Ok(Engine::CellularAutomaton),
         "abstract-machine" => Ok(Engine::AbstractMachine),
         "von-neumann" => Ok(Engine::VonNeumann),
+        "reversible-graph" => Ok(Engine::ReversibleGraph),
+        "concurrent-graph" => Ok(Engine::ConcurrentGraph),
         _ => Err(HyperionError::ParseError {
             block: "Substrate".into(),
             detail: format!(
-                "Substrate '{}': unknown engine '{}'. Expected one of: interaction-graph, term-tree, symmetric-monoidal, cellular-automaton, abstract-machine, von-neumann",
+                "Substrate '{}': unknown engine '{}'. Expected one of: interaction-graph, term-tree, symmetric-monoidal, cellular-automaton, abstract-machine, von-neumann, reversible-graph, concurrent-graph",
                 substrate, val
             ),
         }),
@@ -192,10 +203,11 @@ fn parse_barrier_mode(val: &str, substrate: &str) -> Result<BarrierMode> {
         "one-way-valve" => Ok(BarrierMode::OneWayValve),
         "temporal-phase" => Ok(BarrierMode::TemporalPhase),
         "cryptographic" => Ok(BarrierMode::Cryptographic),
+        "nominal-scoping" => Ok(BarrierMode::NominalScoping),
         _ => Err(HyperionError::ParseError {
             block: "Substrate".into(),
             detail: format!(
-                "Substrate '{}': unknown barrier '{}'. Expected one of: transparent, contextual-membranes, one-way-valve, temporal-phase, cryptographic",
+                "Substrate '{}': unknown barrier '{}'. Expected one of: transparent, contextual-membranes, one-way-valve, temporal-phase, cryptographic, nominal-scoping",
                 substrate, val
             ),
         }),
@@ -210,10 +222,13 @@ fn parse_equality_mode(val: &str, substrate: &str) -> Result<EqualityMode> {
         "observational" => Ok(EqualityMode::Observational),
         "unification" => Ok(EqualityMode::Unification),
         "topological-homotopy" => Ok(EqualityMode::TopologicalHomotopy),
+        "equality-saturation" | "e-graph" | "egraph" => Ok(EqualityMode::EqualitySaturation),
+        "extensional-equivalence" | "extensional" => Ok(EqualityMode::ExtensionalEquivalence),
+        "full-unification" => Ok(EqualityMode::FullUnification),
         _ => Err(HyperionError::ParseError {
             block: "Substrate".into(),
             detail: format!(
-                "Substrate '{}': unknown equality '{}'. Expected one of: topological-hash, rewrite-equivalence, alpha-equivalence, observational, unification, topological-homotopy",
+                "Substrate '{}': unknown equality '{}'. Expected one of: topological-hash, rewrite-equivalence, alpha-equivalence, observational, unification, topological-homotopy, equality-saturation, extensional-equivalence, full-unification",
                 substrate, val
             ),
         }),
@@ -259,6 +274,90 @@ mod tests {
         assert_eq!(sub.name, "CompartmentNet");
         assert_eq!(sub.barrier, BarrierMode::ContextualMembranes);
         assert_eq!(sub.equality, EqualityMode::RewriteEquivalence);
+    }
+
+    #[test]
+    fn parse_nominal_scoping_substrate() {
+        let input = r#"[Substrate NominalNet
+            @engine interaction-graph
+            @resource-mode optimal-sharing
+            @barrier nominal-scoping
+            @equality topological-hash
+        ]"#;
+        let sexps = parse(input).unwrap();
+        let items = sexps[0].as_list().unwrap();
+        let sub = parse_substrate(items).unwrap();
+        assert_eq!(sub.barrier, BarrierMode::NominalScoping);
+    }
+
+    #[test]
+    fn parse_reversible_graph_engine() {
+        let input = r#"[Substrate RevNet
+            @engine reversible-graph
+            @resource-mode optimal-sharing
+            @barrier transparent
+            @equality topological-hash
+        ]"#;
+        let sexps = parse(input).unwrap();
+        let items = sexps[0].as_list().unwrap();
+        let sub = parse_substrate(items).unwrap();
+        assert_eq!(sub.engine, Engine::ReversibleGraph);
+    }
+
+    #[test]
+    fn parse_concurrent_graph_engine() {
+        let input = r#"[Substrate ConcNet
+            @engine concurrent-graph
+            @resource-mode optimal-sharing
+            @barrier transparent
+            @equality topological-hash
+        ]"#;
+        let sexps = parse(input).unwrap();
+        let items = sexps[0].as_list().unwrap();
+        let sub = parse_substrate(items).unwrap();
+        assert_eq!(sub.engine, Engine::ConcurrentGraph);
+    }
+
+    #[test]
+    fn parse_extensional_equivalence() {
+        let input = r#"[Substrate ExtNet
+            @engine interaction-graph
+            @resource-mode optimal-sharing
+            @barrier transparent
+            @equality extensional-equivalence
+        ]"#;
+        let sexps = parse(input).unwrap();
+        let items = sexps[0].as_list().unwrap();
+        let sub = parse_substrate(items).unwrap();
+        assert_eq!(sub.equality, EqualityMode::ExtensionalEquivalence);
+    }
+
+    #[test]
+    fn parse_extensional_shorthand() {
+        let input = r#"[Substrate ExtNet
+            @engine interaction-graph
+            @resource-mode optimal-sharing
+            @barrier transparent
+            @equality extensional
+        ]"#;
+        let sexps = parse(input).unwrap();
+        let items = sexps[0].as_list().unwrap();
+        let sub = parse_substrate(items).unwrap();
+        assert_eq!(sub.equality, EqualityMode::ExtensionalEquivalence);
+    }
+
+    #[test]
+    fn parse_full_unification() {
+        let input = r#"[Substrate FullUnifNet
+            @engine interaction-graph
+            @resource-mode optimal-sharing
+            @barrier transparent
+            @equality full-unification
+        ]"#;
+        let sexps = parse(input).unwrap();
+        let items = sexps[0].as_list().unwrap();
+        let sub = parse_substrate(items).unwrap();
+        assert_eq!(sub.equality, EqualityMode::FullUnification);
     }
 
     #[test]

@@ -1,0 +1,186 @@
+;; surjection-demo.hyp
+;;
+;; Demonstrates all features that close the Hyperion→Apeiron surjection gap:
+;; - Typed operator signatures (via Signature blocks)
+;; - NominalScoping barrier mode
+;; - ReversibleGraph engine
+;; - ConcurrentGraph engine
+;; - ExtensionalEquivalence equality mode
+;; - FullUnification equality mode
+
+;; ============================================================
+;; Part 1: Typed Signatures
+;; ============================================================
+;; Every morphism carries domain/codomain type info into the Apeiron Signature.
+
+[Category Arith
+  [Object Nat]
+  [Morphism z :domain [] :codomain Nat]
+  [Morphism s :domain [Nat] :codomain Nat]
+  [Morphism plus :domain [Nat Nat] :codomain Nat]
+]
+
+[Substrate RewriteNet
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Universe ArithWorld :category Arith :substrate RewriteNet]
+
+[Theory PeanoArith :in ArithWorld
+  [@rule plus-z [plus z ?n] ==> ?n]
+  [@rule plus-s [plus [s ?n] ?m] ==> [s [plus ?n ?m]]]
+]
+
+[Proofs ArithCheck :in PeanoArith
+  [assert-eq two-plus-three
+    [plus [s [s z]] [s [s [s z]]]]
+    [s [s [s [s [s z]]]]]]
+]
+
+;; ============================================================
+;; Part 2: NominalScoping
+;; ============================================================
+;; Nominal logic: names are first-class, alpha-equivalence via name-swapping.
+
+[Category NominalCat
+  [Object Name]
+  [Morphism bind :domain [Name Name] :codomain Name]
+  [Morphism swap :domain [Name Name Name] :codomain Name]
+  [ModalOperator freshness]
+  [Context NomScope]
+]
+
+[Substrate NominalSub
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier nominal-scoping
+  @equality topological-hash
+]
+
+[Universe NominalWorld :category NominalCat :substrate NominalSub]
+
+[Theory NomTheory :in NominalWorld :no-laws
+  [const a Name]
+  [const b Name]
+]
+
+;; ============================================================
+;; Part 3: ReversibleGraph
+;; ============================================================
+;; Reversible computation: every reduction step is invertible.
+;; No lambda (beta-reduction destroys information), but tensor is fine.
+
+[Category RevMonoid
+  [Object Bit]
+  [Morphism cnot :domain [Bit Bit] :codomain Bit]
+  [Morphism toff :domain [Bit Bit Bit] :codomain Bit]
+  [TensorProduct tensor]
+  [Unit unit]
+]
+
+[Substrate RevSub
+  @engine reversible-graph
+  @resource-mode strictly-linear
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Universe RevWorld :category RevMonoid :substrate RevSub]
+
+[Theory RevTheory :in RevWorld
+  [@rule assoc [tensor [tensor ?a ?b] ?c] ==> [tensor ?a [tensor ?b ?c]]]
+  [@rule lunit [tensor unit ?a] ==> ?a]
+  [@rule runit [tensor ?a unit] ==> ?a]
+]
+
+;; ============================================================
+;; Part 4: ConcurrentGraph
+;; ============================================================
+;; Concurrent graph reduction: confluent race between parallel reducers.
+;; Supports lambda (closures are thread-safe) and tensor (parallel composition).
+
+[Category ConcCCC
+  [Object Type]
+  [Object Term]
+  [Morphism app :domain [Term Term] :codomain Term]
+  [Exponential lam :object Term]
+  [Evaluator app]
+]
+
+[Substrate ConcSub
+  @engine concurrent-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Universe ConcWorld :category ConcCCC :substrate ConcSub]
+
+[Theory ConcTheory :in ConcWorld
+  [const a Term]
+]
+
+[Proofs ConcCheck :in ConcTheory
+  [assert-eq beta [app [lam x x] a] a]
+]
+
+;; ============================================================
+;; Part 5: ExtensionalEquivalence
+;; ============================================================
+;; Extensional equality: functions equal iff they agree on all inputs.
+
+[Category ExtCat
+  [Object T]
+  [Morphism f :domain [T] :codomain T]
+  [Morphism g :domain [T T] :codomain T]
+]
+
+[Substrate ExtSub
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality extensional-equivalence
+]
+
+[Universe ExtWorld :category ExtCat :substrate ExtSub]
+
+[Theory ExtTheory :in ExtWorld :no-laws
+  [const a T]
+  [@rule id-simp [f ?x] ==> ?x]
+]
+
+[Proofs ExtCheck :in ExtTheory
+  [assert-eq ext-id [f a] a]
+]
+
+;; ============================================================
+;; Part 6: FullUnification
+;; ============================================================
+;; Full (higher-order) unification, beyond the Miller pattern fragment.
+
+[Category UnifCat
+  [Object S]
+  [Morphism h :domain [S S] :codomain S]
+]
+
+[Substrate FullUnifSub
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality full-unification
+]
+
+[Universe FullUnifWorld :category UnifCat :substrate FullUnifSub]
+
+[Theory UnifTheory :in FullUnifWorld :no-laws
+  [const x S]
+  [const y S]
+  [@rule h-simp [h x ?a] ==> ?a]
+]
+
+[Proofs UnifCheck :in UnifTheory
+  [assert-eq simplify [h x y] y]
+]
