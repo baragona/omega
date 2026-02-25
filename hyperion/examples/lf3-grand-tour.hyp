@@ -108,6 +108,12 @@
   ;;   -> concat( refl(tensor(a,b)), refl(tensor(a,b)) )  [tensor-refl]
   ;;   -> refl(tensor(a,b))                                [path-left-unit]
   [def path_mix [concat [tensor [refl a] [refl b]] [refl [tensor a b]]]]
+
+  ;; Eta-reducible term for transport demo:
+  ;; (lam x (app f x)) is eta-equal to f under homotopy, but structurally distinct.
+  ;; Transport does NOT eta-contract (it only runs physics + rewrite), so this
+  ;; arrives in the target universe still eta-expanded.
+  [def etaTerm [lam x [app f x]]]
 ]
 
 ;; A5. Source proofs: beta, monoidal, PathType(ap-refl), and cross-structure interactions
@@ -146,8 +152,13 @@
   ;; beta-redex (app (lam x x) a) inside barrier is suspended (NOT reduced to a).
   [assert-neq barrier-stuck [barrier WorldA [app [lam x x] a]] a]
 
-  ;; With scope active, inner beta-redex proceeds (builder doesn't suspend).
-  ;; The barrier wrapping is still present in hash but inner term reduces.
+  ;; Cleanest "blocked vs allowed" pair: same terms, one outside scope, one inside.
+  ;; Outside scope: barrier blocks inner beta, so NOT equal to [barrier WorldA a].
+  [assert-neq barrier-not-reduced [barrier WorldA [app [lam x x] a]]
+                                  [barrier WorldA a]]
+
+  ;; With scope active, barrier dissolves its inner suspension, so the
+  ;; beta-redex (app (lam x x) a) reduces to a. Barrier wrapper remains.
   [with-scope WorldA
     [assert-eq barrier-inner-reduces [barrier WorldA [app [lam x x] a]]
                                      [barrier WorldA a]]
@@ -196,13 +207,20 @@
 ;; :no-laws skips categorical law verification (no user rules to verify against).
 [Theory StageTransported :in StageOracle :no-laws
   [const a Term]
+  [const f Term]
   [Import transported-beta2 [ComputeToOracle beta2]]
   [Import transported-duped [ComputeToOracle duped]]
+  [Import transported-eta   [ComputeToOracle etaTerm]]
 ]
 
 [Proofs StageTransportChecks :in StageTransported
   [assert-eq transported-beta2-ok transported-beta2 [tensor a a]]
   [assert-eq transported-duped-ok transported-duped [tensor a a]]
+
+  ;; Eta transport demo: etaTerm = (lam x (app f x)) was transported.
+  ;; The target substrate (SealedOracle) uses topological-hash (no eta).
+  ;; So the transported term is NOT equal to f — it stays eta-expanded.
+  [assert-neq transported-eta-not-contracted transported-eta f]
 ]
 
 ;; ============================================================
@@ -246,6 +264,10 @@
 [Universe AffU :category LinModalHoTT :substrate AffineGraph]
 
 ;; B4. Linear theory: ONLY linear-safe rules (no discard, no duplicate)
+;;     Resource enforcement is real — the following rule would be REJECTED
+;;     at check time because ?x appears twice in the RHS (duplication):
+;;       [@rule illegal-dup [box ?x] ==> [tensor ?x ?x]]
+;;       ;; -> "resource violation: strictly-linear requires exactly 1 use of ?x in RHS, got 2"
 [Theory LinBase :in LinU
   [const p Obj]
   [const q Obj]
@@ -285,6 +307,7 @@
   [@rule tensor-reflL [tensor [reflL ?x] [reflL ?y]] ==> [reflL [tensor ?x ?y]]]
 
   ;; AFFINE-ONLY rules: discard is legal here (not in strictly-linear)
+  ;;   (drop would be rejected in strictly-linear: "requires exactly 1 use of ?x, got 0")
   [@rule drop-discard [drop ?x] ==> unit]
 
   ;; Nontrivial affine rule: drop the second resource in a pair
@@ -294,7 +317,8 @@
   ;; tensor(p, drop(q)) -> p   [drop-snd]
   [def aff_keep_first [tensor p [drop q]]]
 
-  ;; tensor(drop(p), unit) -> tensor(unit, unit) -> unit
+  ;; tensor(drop(p), drop(q)) -> tensor(unit, unit) -> unit
+  ;; (drop-discard on each, then mon-lunitL collapses tensor(unit, unit))
   [def aff_discard_all [tensor [drop p] [drop q]]]
 ]
 
@@ -305,8 +329,9 @@
   ;; Nontrivial: drop second resource, keep first
   [assert-eq aff-keep aff_keep_first p]
 
-  ;; Double discard: both resources vanish
-  [assert-eq aff-discard-all aff_discard_all [tensor unit unit]]
+  ;; Double discard: both resources fully annihilated to unit
+  ;; drop(p)->unit, drop(q)->unit, tensor(unit,unit)->unit via mon-lunitL
+  [assert-eq aff-discard-all aff_discard_all unit]
 
   ;; Path laws still hold in affine mode
   [assert-eq aff-path [concatL [reflL p] [reflL p]] [reflL p]]
@@ -348,17 +373,20 @@
 ;; Part A (StageHoTT):
 ;;   - CCC + SymmetricMonoidal + Modal + PathType(+Evaluator) all compile together
 ;;   - 14 categorical law witness tests pass (both source and target substrates)
-;;   - 13 user assertions pass (beta, monoidal, path, cross-structure glue, eta, barrier)
-;;   - Eta-contraction: [lam x [app f x]] = f on homotopy, != f on hash (wow moment!)
-;;   - Barrier scoping: [barrier WorldA a] blocks without scope, dissolves with [with-scope]
+;;   - 14 user assertions pass (beta, monoidal, path, cross-structure glue, eta, barrier)
+;;   - Eta-contraction: [lam x [app f x]] = f on homotopy, != f on hash
+;;   - Eta transport: transported etaTerm stays eta-expanded (assert-neq on hash target)
+;;   - Barrier scoping: blocked/allowed pair — assert-neq vs with-scope assert-eq
 ;;   - VerifyFunctor confirms 8 rules preserved across substrates
-;;   - 2 transported terms normalize correctly via functor
+;;   - 3 transported terms verified (beta2, duped, etaTerm)
 ;;
 ;; Part B (LinModalHoTT):
 ;;   - Monoidal + Modal + PathType compile on both strictly-linear and affine
 ;;   - 10 categorical law witness tests pass (both LinBase and AffExt)
 ;;   - Resource enforcement: strictly-linear/affine constraints validated on @rule metas
+;;     (see LinBase comment for concrete rejected rule)
 ;;   - Affine-only rules (drop-discard, drop-snd) work in AffExt but aren't in LinBase
+;;   - Double-discard normalizes all the way to unit (not just tensor(unit,unit))
 ;;   - VerifyFunctor confirms 6 linear-safe rules preserved in affine target
 ;;   - 1 transported term verified
 ;;   - NatTrans + Adjunction scaffolding (Promotion/Dereliction)
