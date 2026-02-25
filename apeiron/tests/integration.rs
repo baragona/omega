@@ -1199,3 +1199,18 @@ fn parameterized_import_wrong_arg_count() {
 fn example_parameterized() {
     run_example("examples/parameterized.ap");
 }
+
+#[test]
+fn example_egraph_demo() {
+    run_example("examples/egraph-demo.apeiron");
+}
+
+#[test]
+fn example_law_demo() {
+    run_example("examples/law-demo.apeiron");
+}
+
+#[test]
+fn example_theory_compose() {
+    run_example("examples/theory-compose.apeiron");
+}

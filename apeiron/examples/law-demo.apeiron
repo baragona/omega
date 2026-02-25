@@ -1,0 +1,39 @@
+;; Law Demo: @law (===) vs @rule (==>) + eval-simplify
+;;
+;; @rule: directed computation rules (forward only in e-graph)
+;; @law:  equational laws (bidirectional in e-graph)
+;; eval-simplify: e-graph extraction finds simplest normal form
+
+[System PeanoAlg
+  [@syntax
+    [sort Nat]
+    [op z] [op s] [op add] [op mul]
+  ]
+  [@binding implicit]
+  [@check rewriting equality-saturation]
+]
+
+[Theory PeanoLaws :in PeanoAlg
+  ;; Directed computation rules (forward only)
+  [@rule add-z [add z ?n] ==> ?n]
+  [@rule add-s [add [s ?n] ?m] ==> [s [add ?n ?m]]]
+  [@rule mul-z [mul z ?n] ==> z]
+  [@rule mul-s [mul [s ?n] ?m] ==> [add ?m [mul ?n ?m]]]
+
+  ;; Equational laws (bidirectional in e-graph)
+  [@law add-comm [add ?x ?y] === [add ?y ?x]]
+  [@law mul-comm [mul ?x ?y] === [mul ?y ?x]]
+]
+
+[Proofs LawCheck :in PeanoLaws
+  ;; Basic computation (directed rules)
+  [assert-eq two-plus-one [add [s [s z]] [s z]] [s [s [s z]]]]
+
+  ;; Commutativity via e-graph (needs bidirectional law)
+  [assert-eq add-comm-test [add [s z] [s [s z]]] [add [s [s z]] [s z]]]
+  [assert-eq mul-comm-test [mul [s z] [s [s z]]] [mul [s [s z]] [s z]]]
+
+  ;; eval-simplify: find simplest equivalent form
+  [eval-simplify simple-add [add z [s [s z]]]]
+  [eval-simplify simple-mul [mul [s z] [s [s z]]]]
+]

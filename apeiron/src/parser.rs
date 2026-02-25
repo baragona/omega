@@ -23,6 +23,7 @@ pub enum Token {
     StringLit(String),
     Arrow,    // =>
     RuleArrow, // ==>
+    LawArrow,  // ===
     Eof,
 }
 
@@ -185,6 +186,17 @@ pub fn tokenize(input: &str) -> Result<Vec<SpannedToken>> {
                     span: Span { start, end },
                 });
             }
+            '=' if i + 2 < chars.len() && chars[i + 1] == '=' && chars[i + 2] == '=' => {
+                tokens.push(SpannedToken {
+                    token: Token::LawArrow,
+                    span: Span {
+                        start,
+                        end: Pos { line, col: col + 2 },
+                    },
+                });
+                i += 3;
+                col += 3;
+            }
             '=' if i + 2 < chars.len() && chars[i + 1] == '=' && chars[i + 2] == '>' => {
                 tokens.push(SpannedToken {
                     token: Token::RuleArrow,
@@ -300,6 +312,7 @@ fn parse_sexp(tokens: &[SpannedToken], pos: usize) -> Result<(Sexp, usize)> {
         }
         Token::Arrow => Ok((Sexp::Atom("=>".into(), tokens[pos].span), pos + 1)),
         Token::RuleArrow => Ok((Sexp::Atom("==>".into(), tokens[pos].span), pos + 1)),
+        Token::LawArrow => Ok((Sexp::Atom("===".into(), tokens[pos].span), pos + 1)),
         Token::RBracket => Err(ApeironError::UnexpectedToken {
             expected: "expression".into(),
             got: "]".into(),
@@ -367,6 +380,13 @@ mod tests {
         let sexps = parse("[@rule [plus z ?n] ==> ?n]").unwrap();
         let items = sexps[0].as_list().unwrap();
         assert!(items[2].is_atom("==>"));
+    }
+
+    #[test]
+    fn parse_law_arrow() {
+        let sexps = parse("[@law comm [f ?x ?y] === [f ?y ?x]]").unwrap();
+        let items = sexps[0].as_list().unwrap();
+        assert!(items[3].is_atom("==="));
     }
 
     #[test]

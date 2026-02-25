@@ -1,0 +1,78 @@
+;; E-Graph Equality Saturation Demo
+;; Demonstrates how @law (bidirectional ===) vs @rule (directed ==>) affect
+;; the e-graph. Laws are bidirectional; rules are forward-only.
+
+;; Named signature — reusable syntax declaration
+[Signature AlgSig
+  [sort S]
+  [op f]
+  [op g]
+  [op h]
+]
+
+;; System references signature + enables e-graph
+[System AlgEngine :signature AlgSig
+  [@binding implicit]
+  [@check rewriting equality-saturation]
+]
+
+;; Theory with laws that go BOTH ways through the e-graph
+[Theory Algebra :in AlgEngine
+  [@law r1 [f ?x ?y] === [g ?x ?y]]
+  [@law r2 [f ?x ?y] === [h ?y ?x]]
+]
+
+;; This passes because e-graph finds: g(a,b) ← f(a,b) → h(b,a)
+[Proofs AlgCheck :in Algebra
+  [assert-eq comm-via-egraph [g a b] [h b a]]
+]
+
+;; A more complex example: transitivity chains
+[System ChainEngine
+  [@syntax [sort S] [op p] [op q] [op r] [op s]]
+  [@binding implicit]
+  [@check rewriting equality-saturation]
+]
+
+;; Forward-only rules: chain works in one direction
+[Theory Chain :in ChainEngine
+  [@rule pq [p ?x] ==> [q ?x]]
+  [@rule qr [q ?x] ==> [r ?x]]
+  [@rule rs [r ?x] ==> [s ?x]]
+]
+
+[Proofs ChainCheck :in Chain
+  ;; p(a) = s(a) via p→q→r→s (four hops, forward direction)
+  [assert-eq four-hops [p a] [s a]]
+]
+
+;; Same chain but with laws: bidirectional, so reverse also works
+[Theory ChainLaw :in ChainEngine
+  [@law pq [p ?x] === [q ?x]]
+  [@law qr [q ?x] === [r ?x]]
+  [@law rs [r ?x] === [s ?x]]
+]
+
+[Proofs ChainLawCheck :in ChainLaw
+  [assert-eq four-hops [p a] [s a]]
+  ;; Also works backwards: s(a) = p(a) (bidirectional laws)
+  [assert-eq four-hops-rev [s a] [p a]]
+]
+
+;; Conflicting laws: same LHS, different RHS
+[System ConflictEngine
+  [@syntax [sort S] [op source] [op target1] [op target2]]
+  [@binding implicit]
+  [@check rewriting equality-saturation]
+]
+
+[Theory Conflict :in ConflictEngine
+  [@law to-t1 [source ?x] === [target1 ?x]]
+  [@law to-t2 [source ?x] === [target2 ?x]]
+]
+
+[Proofs ConflictCheck :in Conflict
+  ;; target1(a) = target2(a) because both reduce FROM source(a)
+  ;; Directional rewriting would fail here — e-graph finds the connection
+  [assert-eq via-source [target1 a] [target2 a]]
+]

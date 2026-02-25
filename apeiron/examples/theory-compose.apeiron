@@ -1,0 +1,43 @@
+;; Theory Composition: @rule + @law propagation through imports
+;;
+;; Demonstrates that bidirectional laws survive theory composition.
+
+[System ArithSys
+  [@syntax
+    [sort Nat]
+    [op z] [op s] [op add] [op mul]
+  ]
+  [@binding implicit]
+  [@check rewriting equality-saturation]
+]
+
+;; Base addition theory with computation rules + commutativity law
+[Theory Addition :in ArithSys
+  [@rule add-z [add z ?n] ==> ?n]
+  [@rule add-s [add [s ?n] ?m] ==> [s [add ?n ?m]]]
+  [@law  add-comm [add ?x ?y] === [add ?y ?x]]
+]
+
+;; Multiplication theory imports Addition, adds its own rules + law
+[Theory Multiplication :in ArithSys
+  [import Addition]
+  [@rule mul-z [mul z ?n] ==> z]
+  [@rule mul-s [mul [s ?n] ?m] ==> [add ?m [mul ?n ?m]]]
+  [@law  mul-comm [mul ?x ?y] === [mul ?y ?x]]
+]
+
+[Proofs ComposeCheck :in Multiplication
+  ;; Computation works through imported rules
+  [assert-eq two-plus-one [add [s [s z]] [s z]] [s [s [s z]]]]
+  [assert-eq two-times-two [mul [s [s z]] [s [s z]]] [s [s [s [s z]]]]]
+
+  ;; Imported law survives composition: add-comm via e-graph
+  [assert-eq imported-add-comm [add [s z] [s [s z]]] [add [s [s z]] [s z]]]
+
+  ;; Local law works: mul-comm via e-graph
+  [assert-eq local-mul-comm [mul [s z] [s [s z]]] [mul [s [s z]] [s z]]]
+
+  ;; E-graph extraction: simplify expressions
+  [eval-simplify simplified-add [add z [s z]]]
+  [eval-simplify simplified-mul [mul [s z] [s [s z]]]]
+]

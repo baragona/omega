@@ -203,6 +203,7 @@ pub fn compile_derive_rules(
                 name: rule.name.clone(),
                 lhs,
                 rhs,
+                bidirectional: false,
             });
         } else {
             // N-premise rule: sequential staging with dependency-aware chaining.
@@ -322,6 +323,7 @@ pub fn compile_derive_rules(
                     name: rule.name.clone(),
                     lhs,
                     rhs: Sexp::List(rhs_items, s),
+                    bidirectional: false,
                 });
             }
 
@@ -357,6 +359,7 @@ pub fn compile_derive_rules(
                         name: format!("{}_ok", stg_name),
                         lhs: Sexp::List(ok_lhs, s),
                         rhs: Sexp::List(ok_rhs, s),
+                        bidirectional: false,
                     });
                 } else {
                     // Last stage: success produces final result
@@ -379,6 +382,7 @@ pub fn compile_derive_rules(
                             ],
                             s,
                         ),
+                        bidirectional: false,
                     });
                 }
 
@@ -393,6 +397,7 @@ pub fn compile_derive_rules(
                     name: format!("{}_fail", stg_name),
                     lhs: Sexp::List(fail_lhs, s),
                     rhs: Sexp::Atom("fail".into(), s),
+                    bidirectional: false,
                 });
 
                 // Catch-all (non-linear mismatch or unexpected output pattern)
@@ -412,6 +417,7 @@ pub fn compile_derive_rules(
                     name: format!("{}_catch", stg_name),
                     lhs: Sexp::List(catch_lhs, s),
                     rhs: Sexp::Atom("fail".into(), s),
+                    bidirectional: false,
                 });
             }
         }

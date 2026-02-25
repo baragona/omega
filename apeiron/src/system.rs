@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::arena::Arena;
 use crate::builder::{self, BuildEnv};
+use crate::egraph;
 use crate::error::{ApeironError, Result};
 use crate::eta;
 use crate::hash;
@@ -42,6 +43,8 @@ pub enum CheckMode {
     ConfluentRace,
     /// Eta-contraction: (lam x (app f x)) = f
     Eta,
+    /// Equality saturation via e-graphs: bidirectional rule application.
+    EqualitySaturation,
 }
 
 /// An operator declared in @syntax.
@@ -58,6 +61,14 @@ pub struct SortDecl {
     pub name: String,
 }
 
+/// A reusable, named collection of sorts and operators.
+#[derive(Debug, Clone)]
+pub struct Signature {
+    pub name: String,
+    pub sorts: Vec<SortDecl>,
+    pub operators: Vec<OpDecl>,
+}
+
 /// System-level configuration.
 #[derive(Debug, Clone)]
 pub struct SystemConfig {
@@ -66,14 +77,19 @@ pub struct SystemConfig {
     pub operators: Vec<OpDecl>,
     pub binding: BindingMode,
     pub check_modes: HashSet<CheckMode>,
+    /// Name of the signature this system was built from (if any).
+    pub signature_name: Option<String>,
 }
 
-/// A rewrite rule: lhs ==> rhs.
+/// A rewrite rule: lhs ==> rhs (directed) or lhs === rhs (bidirectional law).
 #[derive(Debug, Clone)]
 pub struct RewriteRule {
     pub name: String,
     pub lhs: Sexp,
     pub rhs: Sexp,
+    /// If true, this is an equational law (===) — bidirectional in e-graph.
+    /// If false, this is a directed computation rule (==>) — forward only.
+    pub bidirectional: bool,
 }
 
 /// A running session with loaded systems and theories.
@@ -92,6 +108,8 @@ pub struct Session {
     pub arena: Arena,
     /// Rewrite rules indexed by theory.
     pub rules: HashMap<String, Vec<RewriteRule>>,
+    /// Named signatures: reusable syntax declarations.
+    pub signatures: HashMap<String, Signature>,
     /// Definitions: name → Sexp body.
     pub defs: HashMap<String, Sexp>,
     /// Named scopes: name → numeric ID.
@@ -128,6 +146,7 @@ impl Session {
             systems: HashMap::new(),
             arena: Arena::new(),
             rules: HashMap::new(),
+            signatures: HashMap::new(),
             defs: HashMap::new(),
             scopes: HashMap::new(),
             next_scope_id: 0,
@@ -161,6 +180,7 @@ impl Session {
 
         let head = items[0].as_atom().unwrap_or("");
         match head {
+            "Signature" => self.process_signature(items),
             "System" => self.process_system(items),
             "Theory" => self.process_theory(items),
             "Proofs" => self.process_proofs(items),
@@ -171,6 +191,82 @@ impl Session {
                 col: 0,
             }),
         }
+    }
+
+    fn process_signature(&mut self, items: &[Sexp]) -> Result<()> {
+        if items.len() < 2 {
+            return Err(ApeironError::InvalidConfig {
+                block: "Signature".into(),
+                detail: "missing signature name".into(),
+            });
+        }
+
+        let name = items[1]
+            .as_atom()
+            .ok_or_else(|| ApeironError::InvalidConfig {
+                block: "Signature".into(),
+                detail: "signature name must be an atom".into(),
+            })?
+            .to_string();
+
+        let mut sorts = Vec::new();
+        let mut operators = Vec::new();
+
+        // Parse [sort S] and [op f ...] declarations inside the Signature
+        for item in &items[2..] {
+            if let Some(decl) = item.as_list() {
+                if decl.is_empty() {
+                    continue;
+                }
+                let decl_head = decl[0].as_atom().unwrap_or("");
+                match decl_head {
+                    "sort" => {
+                        if let Some(sort_name) = decl.get(1).and_then(|s| s.as_atom()) {
+                            sorts.push(SortDecl {
+                                name: sort_name.to_string(),
+                            });
+                        }
+                    }
+                    "op" => {
+                        if let Some(op_name) = decl.get(1).and_then(|s| s.as_atom()) {
+                            let args: Vec<String> = decl[2..]
+                                .iter()
+                                .filter_map(|s| s.as_atom().map(|a| a.to_string()))
+                                .collect();
+                            operators.push(OpDecl {
+                                name: op_name.to_string(),
+                                args: args.clone(),
+                                result: args.last().cloned().unwrap_or_default(),
+                            });
+                        }
+                    }
+                    _ => {
+                        return Err(ApeironError::InvalidConfig {
+                            block: "Signature".into(),
+                            detail: format!("unknown declaration in Signature: {}", decl_head),
+                        });
+                    }
+                }
+            }
+        }
+
+        self.output.push(format!(
+            "[SIGNATURE] {} registered ({} sorts, {} ops)",
+            name,
+            sorts.len(),
+            operators.len()
+        ));
+
+        self.signatures.insert(
+            name.clone(),
+            Signature {
+                name,
+                sorts,
+                operators,
+            },
+        );
+
+        Ok(())
     }
 
     fn process_system(&mut self, items: &[Sexp]) -> Result<()> {
@@ -195,10 +291,38 @@ impl Session {
             operators: Vec::new(),
             binding: BindingMode::Implicit,
             check_modes: HashSet::new(),
+            signature_name: None,
         };
 
+        // Check for :signature SigName in header items (before block parsing)
+        let mut block_start = 2;
+        if items.len() > 3
+            && items[2].as_atom() == Some(":signature")
+        {
+            let sig_name = items[3]
+                .as_atom()
+                .ok_or_else(|| ApeironError::InvalidConfig {
+                    block: "System".into(),
+                    detail: "signature name must be an atom".into(),
+                })?
+                .to_string();
+
+            let sig = self.signatures.get(&sig_name).ok_or_else(|| {
+                ApeironError::InvalidConfig {
+                    block: "System".into(),
+                    detail: format!("unknown signature: {}", sig_name),
+                }
+            })?;
+
+            // Copy sorts and operators from signature
+            config.sorts.extend(sig.sorts.iter().cloned());
+            config.operators.extend(sig.operators.iter().cloned());
+            config.signature_name = Some(sig_name);
+            block_start = 4;
+        }
+
         // Parse blocks within the System
-        for item in &items[2..] {
+        for item in &items[block_start..] {
             if let Some(block) = item.as_list() {
                 if block.is_empty() {
                     continue;
@@ -434,6 +558,16 @@ impl Session {
                             }
                         }
                     }
+                    "@law" => {
+                        self.process_law(&decl[1..], &mut theory_rules)?;
+                        // Laws do NOT compile to GraphRules — they are e-graph only
+                        if let Some(rule) = theory_rules.last() {
+                            self.raw_theory_rules
+                                .entry(theory_name.clone())
+                                .or_default()
+                                .push(rule.clone());
+                        }
+                    }
                     "@derive" => {
                         if let Some(dr) = judgment::parse_derive_rule(&decl[1..]) {
                             self.output.push(format!(
@@ -452,7 +586,7 @@ impl Session {
                                 .insert(dr.name.clone(), dr);
                         }
                     }
-                    "eval" | "eval-reverse" | "assert-eq" | "assert-neq" | "with-scope" => {
+                    "eval" | "eval-reverse" | "eval-simplify" | "assert-eq" | "assert-neq" | "with-scope" => {
                         return Err(ApeironError::InvalidConfig {
                             block: "Theory".into(),
                             detail: format!(
@@ -650,6 +784,12 @@ impl Session {
                             raw_rules.push(rule);
                         }
                     }
+                    "@law" => {
+                        // Parse raw law: [@law name [lhs] === rhs]
+                        if let Some(rule) = Self::parse_law_raw(&decl[1..]) {
+                            raw_rules.push(rule);
+                        }
+                    }
                     "@derive" => {
                         if let Some(dr) = judgment::parse_derive_rule(&decl[1..]) {
                             raw_derives.push(dr);
@@ -678,17 +818,25 @@ impl Session {
         })
     }
 
-    /// Parse a raw @rule without side effects: returns (name, lhs, rhs).
+    /// Parse a raw @rule or @law without side effects.
     fn parse_rule_raw(items: &[Sexp]) -> Option<RewriteRule> {
-        // items = [name [lhs] ==> rhs] or [name [lhs] ==> [rhs]]
+        Self::parse_rule_raw_with_sep(items, false)
+    }
+
+    fn parse_law_raw(items: &[Sexp]) -> Option<RewriteRule> {
+        Self::parse_rule_raw_with_sep(items, true)
+    }
+
+    fn parse_rule_raw_with_sep(items: &[Sexp], bidirectional: bool) -> Option<RewriteRule> {
+        // items = [name [lhs] ==> rhs] or [name [lhs] === rhs]
         if items.len() < 4 {
             return None;
         }
         let name = items[0].as_atom()?.to_string();
         let lhs = items[1].clone();
-        // items[2] should be "==>"
+        // items[2] should be "==>" or "==="
         let rhs = items[3].clone();
-        Some(RewriteRule { name, lhs, rhs })
+        Some(RewriteRule { name, lhs, rhs, bidirectional })
     }
 
     /// Process a simple (non-parameterized) import, optionally with alias.
@@ -835,9 +983,12 @@ impl Session {
                     name: new_name,
                     lhs: new_lhs,
                     rhs: new_rhs,
+                    bidirectional: rule.bidirectional,
                 };
-                if let Some(gr) = rewrite::compile_rule(&renamed_rule.name, &renamed_rule.lhs, &renamed_rule.rhs) {
-                    graph_rules.push(gr);
+                if !rule.bidirectional {
+                    if let Some(gr) = rewrite::compile_rule(&renamed_rule.name, &renamed_rule.lhs, &renamed_rule.rhs) {
+                        graph_rules.push(gr);
+                    }
                 }
                 theory_rules.push(renamed_rule);
             }
@@ -906,13 +1057,18 @@ impl Session {
                 name: new_name,
                 lhs: new_lhs,
                 rhs: new_rhs,
+                bidirectional: rule.bidirectional,
             };
+            let sep = if rule.bidirectional { "===" } else { "==>" };
             self.output.push(format!(
-                "[RULE] {} : {} ==> {}",
-                renamed_rule.name, renamed_rule.lhs, renamed_rule.rhs
+                "[{}] {} : {} {} {}",
+                if rule.bidirectional { "LAW" } else { "RULE" },
+                renamed_rule.name, renamed_rule.lhs, sep, renamed_rule.rhs
             ));
-            if let Some(gr) = rewrite::compile_rule(&renamed_rule.name, &renamed_rule.lhs, &renamed_rule.rhs) {
-                graph_rules.push(gr);
+            if !rule.bidirectional {
+                if let Some(gr) = rewrite::compile_rule(&renamed_rule.name, &renamed_rule.lhs, &renamed_rule.rhs) {
+                    graph_rules.push(gr);
+                }
             }
             theory_rules.push(renamed_rule);
         }
@@ -1107,6 +1263,7 @@ impl Session {
                             &graph_rules,
                             &known_ops,
                             &system,
+                            &theory_name,
                         )?;
                         assertion_count += 1;
                     }
@@ -1121,6 +1278,15 @@ impl Session {
                     }
                     "eval" => {
                         self.process_eval(&decl[1..], &graph_rules, &known_ops, &system)?;
+                    }
+                    "eval-simplify" => {
+                        self.process_eval_simplify(
+                            &decl[1..],
+                            &graph_rules,
+                            &known_ops,
+                            &system,
+                            &theory_name,
+                        )?;
                     }
                     "eval-reverse" => {
                         self.process_eval(
@@ -1157,6 +1323,7 @@ impl Session {
                                                     &graph_rules,
                                                     &known_ops,
                                                     &system,
+                                                    &theory_name,
                                                 )?;
                                                 assertion_count += 1;
                                             }
@@ -1238,12 +1405,12 @@ impl Session {
                             self.process_reflect(&decl[1..], &known_ops)?;
                         }
                     }
-                    "@rule" => {
+                    "@rule" | "@law" => {
                         return Err(ApeironError::InvalidConfig {
                             block: "Proofs".into(),
                             detail: format!(
-                                "cannot add rules in Proofs block '{}' — \
-                                 rules belong in Theory '{}'",
+                                "cannot add rules/laws in Proofs block '{}' — \
+                                 they belong in Theory '{}'",
                                 proofs_name, theory_name
                             ),
                         });
@@ -1276,23 +1443,35 @@ impl Session {
     }
 
     fn process_rule(&mut self, items: &[Sexp], rules: &mut Vec<RewriteRule>) -> Result<()> {
-        // Find the ==> separator
+        self.process_rule_or_law(items, rules, "==>", false)
+    }
+
+    fn process_law(&mut self, items: &[Sexp], rules: &mut Vec<RewriteRule>) -> Result<()> {
+        self.process_rule_or_law(items, rules, "===", true)
+    }
+
+    fn process_rule_or_law(
+        &mut self,
+        items: &[Sexp],
+        rules: &mut Vec<RewriteRule>,
+        separator: &str,
+        bidirectional: bool,
+    ) -> Result<()> {
+        let label = if bidirectional { "@law" } else { "@rule" };
+        // Find the separator (==> or ===)
         let mut name = String::new();
         let mut lhs_parts = Vec::new();
         let mut rhs_parts = Vec::new();
         let mut found_arrow = false;
 
         for item in items {
-            if item.is_atom("==>") {
+            if item.is_atom(separator) {
                 found_arrow = true;
                 continue;
             }
             if !found_arrow {
-                // Before ==>: could be name or LHS
                 if lhs_parts.is_empty() && item.as_atom().is_some() && item.as_list().is_none() {
-                    // First atom before any list: could be the rule name
                     if name.is_empty() {
-                        // Check if the next thing is ==> (then this is the LHS)
                         name = item.as_atom().unwrap_or("").to_string();
                     } else {
                         lhs_parts.push(item.clone());
@@ -1306,12 +1485,9 @@ impl Session {
         }
 
         if !found_arrow || lhs_parts.is_empty() || rhs_parts.is_empty() {
-            // Try alternate format: name [lhs] ==> rhs
-            // If name was taken as the LHS, fix it
             if !name.is_empty() && !lhs_parts.is_empty() {
                 // name is actually the rule name, lhs_parts[0] is the LHS
             } else if !name.is_empty() && lhs_parts.is_empty() && !rhs_parts.is_empty() {
-                // name is actually the LHS atom
                 lhs_parts.push(Sexp::Atom(
                     name.clone(),
                     crate::parser::Span::default(),
@@ -1322,8 +1498,8 @@ impl Session {
 
         if lhs_parts.is_empty() || rhs_parts.is_empty() {
             return Err(ApeironError::InvalidConfig {
-                block: "@rule".into(),
-                detail: "rule must have LHS ==> RHS".into(),
+                block: label.into(),
+                detail: format!("must have LHS {} RHS", separator),
             });
         }
 
@@ -1340,12 +1516,13 @@ impl Session {
         };
 
         if name.is_empty() {
-            name = format!("rule_{}", rules.len());
+            name = format!("{}_{}", if bidirectional { "law" } else { "rule" }, rules.len());
         }
 
+        let tag = if bidirectional { "LAW" } else { "RULE" };
         self.output
-            .push(format!("[RULE] {} : {} ==> {}", name, lhs, rhs));
-        rules.push(RewriteRule { name, lhs, rhs });
+            .push(format!("[{}] {} : {} {} {}", tag, name, lhs, separator, rhs));
+        rules.push(RewriteRule { name, lhs, rhs, bidirectional });
         Ok(())
     }
 
@@ -1667,12 +1844,56 @@ impl Session {
         Ok(())
     }
 
+    fn process_eval_simplify(
+        &mut self,
+        items: &[Sexp],
+        graph_rules: &[rewrite::GraphRule],
+        known_ops: &HashSet<String>,
+        config: &SystemConfig,
+        theory_name: &str,
+    ) -> Result<()> {
+        if items.is_empty() {
+            return Ok(());
+        }
+
+        // [eval-simplify name expr] or [eval-simplify expr]
+        let (name, expr) =
+            if items.len() >= 2 && items[0].as_atom().is_some() && items[0].as_list().is_none() {
+                (items[0].as_atom().unwrap_or("?").to_string(), &items[1])
+            } else {
+                (format!("simplify_{}", self.output.len()), &items[0])
+            };
+
+        // Step 1: inet normalization
+        let (root, interactions) = self.build_and_normalize(expr, graph_rules, known_ops, config)?;
+
+        // Step 2: readback
+        let result_port = self.arena.port(root, 1);
+        let term = if result_port.is_connected() {
+            readback::readback(&self.arena, result_port.target)
+        } else {
+            readback::Term::Wire(root.0)
+        };
+
+        // Step 3: e-graph extraction for simplest form
+        let readback_sexp = rewrite::term_to_sexp(&term);
+        let theory_rules = self.rules.get(theory_name).cloned().unwrap_or_default();
+        let simplified = egraph::extract_simplest(&readback_sexp, &theory_rules);
+
+        self.output.push(format!(
+            "[SIMPLIFY] {} = {} ({} interactions)",
+            name, simplified, interactions
+        ));
+        Ok(())
+    }
+
     fn process_assert_eq(
         &mut self,
         items: &[Sexp],
         graph_rules: &[rewrite::GraphRule],
         known_ops: &HashSet<String>,
         config: &SystemConfig,
+        theory_name: &str,
     ) -> Result<()> {
         if items.len() < 2 {
             return Err(ApeironError::InvalidConfig {
@@ -1722,9 +1943,28 @@ impl Session {
 
         if lhs_hash == rhs_hash {
             self.output.push(format!("[ASSERT] {} passed", name));
-            Ok(())
-        } else if config.check_modes.contains(&CheckMode::Eta) {
-            // Eta fallback: run eta-contraction on both sides and re-hash
+            return Ok(());
+        }
+
+        // E-graph fallback: equality saturation on post-normalized terms
+        if config.check_modes.contains(&CheckMode::EqualitySaturation) {
+            let lhs_term = readback::readback(&self.arena, lhs_ptr);
+            let rhs_term = readback::readback(&self.arena, rhs_ptr);
+            let lhs_readback = rewrite::term_to_sexp(&lhs_term);
+            let rhs_readback = rewrite::term_to_sexp(&rhs_term);
+
+            let theory_rules = self.rules.get(theory_name).cloned().unwrap_or_default();
+            let result = egraph::check_equal_egraph(&lhs_readback, &rhs_readback, &theory_rules);
+
+            if result == egraph::EGraphResult::Equal {
+                self.output
+                    .push(format!("[ASSERT] {} passed (e-graph)", name));
+                return Ok(());
+            }
+        }
+
+        // Eta fallback
+        if config.check_modes.contains(&CheckMode::Eta) {
             eta::eta_contract(&mut self.arena, lhs_ptr);
             eta::eta_contract(&mut self.arena, rhs_ptr);
 
@@ -1739,23 +1979,23 @@ impl Session {
 
             if lhs_hash2 == rhs_hash2 {
                 self.output.push(format!("[ASSERT] {} passed (eta)", name));
-                Ok(())
-            } else {
-                let lhs_term = readback::readback(&self.arena, lhs_ptr2);
-                let rhs_term = readback::readback(&self.arena, rhs_ptr2);
-                Err(ApeironError::AssertionFailed {
-                    name,
-                    detail: format!("{} != {}", lhs_term, rhs_term),
-                })
+                return Ok(());
             }
-        } else {
-            let lhs_term = readback::readback(&self.arena, lhs_ptr);
-            let rhs_term = readback::readback(&self.arena, rhs_ptr);
-            Err(ApeironError::AssertionFailed {
+
+            let lhs_term = readback::readback(&self.arena, lhs_ptr2);
+            let rhs_term = readback::readback(&self.arena, rhs_ptr2);
+            return Err(ApeironError::AssertionFailed {
                 name,
                 detail: format!("{} != {}", lhs_term, rhs_term),
-            })
+            });
         }
+
+        let lhs_term = readback::readback(&self.arena, lhs_ptr);
+        let rhs_term = readback::readback(&self.arena, rhs_ptr);
+        Err(ApeironError::AssertionFailed {
+            name,
+            detail: format!("{} != {}", lhs_term, rhs_term),
+        })
     }
 
     fn process_assert_neq(
@@ -2590,6 +2830,7 @@ fn parse_check_block(items: &[Sexp], config: &mut SystemConfig) -> Result<()> {
             "reversible" => CheckMode::Reversible,
             "confluent-race" | "race" => CheckMode::ConfluentRace,
             "eta" | "eta-contraction" => CheckMode::Eta,
+            "equality-saturation" | "e-graph" | "egraph" => CheckMode::EqualitySaturation,
             _ => {
                 return Err(ApeironError::InvalidConfig {
                     block: "@check".into(),
@@ -2812,5 +3053,250 @@ mod tests {
         // Theory def 'two' persists, but proof-local 'local-three' should not
         assert!(session.defs.contains_key("two"));
         assert!(!session.defs.contains_key("local-three"));
+    }
+
+    #[test]
+    fn signature_basic_parse() {
+        let source = r#"
+        [Signature MySig
+          [sort S]
+          [sort T]
+          [op f]
+          [op g]
+        ]
+        [System Sys :signature MySig
+          [@binding implicit]
+          [@check rewriting]
+        ]
+        "#;
+
+        let sexps = parser::parse(source).unwrap();
+        let mut session = Session::new();
+        for sexp in &sexps {
+            session.process(sexp).unwrap();
+        }
+
+        assert!(session.signatures.contains_key("MySig"));
+        let sig = session.signatures.get("MySig").unwrap();
+        assert_eq!(sig.sorts.len(), 2);
+        assert_eq!(sig.operators.len(), 2);
+
+        let sys = session.systems.get("Sys").unwrap();
+        assert_eq!(sys.sorts.len(), 2);
+        assert_eq!(sys.operators.len(), 2);
+        assert_eq!(sys.signature_name, Some("MySig".to_string()));
+    }
+
+    #[test]
+    fn signature_backward_compat() {
+        // Inline @syntax still works without a signature
+        let source = r#"
+        [System Sys
+          [@syntax [sort A] [op f]]
+          [@binding implicit]
+          [@check rewriting]
+        ]
+        "#;
+
+        let sexps = parser::parse(source).unwrap();
+        let mut session = Session::new();
+        for sexp in &sexps {
+            session.process(sexp).unwrap();
+        }
+
+        let sys = session.systems.get("Sys").unwrap();
+        assert_eq!(sys.sorts.len(), 1);
+        assert_eq!(sys.operators.len(), 1);
+        assert_eq!(sys.signature_name, None);
+    }
+
+    #[test]
+    fn signature_plus_inline_ops() {
+        // Signature + inline @syntax combine
+        let source = r#"
+        [Signature BaseSig
+          [sort S]
+          [op f]
+        ]
+        [System Sys :signature BaseSig
+          [@syntax [sort T] [op g]]
+          [@binding implicit]
+          [@check rewriting]
+        ]
+        "#;
+
+        let sexps = parser::parse(source).unwrap();
+        let mut session = Session::new();
+        for sexp in &sexps {
+            session.process(sexp).unwrap();
+        }
+
+        let sys = session.systems.get("Sys").unwrap();
+        assert_eq!(sys.sorts.len(), 2); // S from sig + T from inline
+        assert_eq!(sys.operators.len(), 2); // f from sig + g from inline
+    }
+
+    #[test]
+    fn egraph_assert_eq_end_to_end() {
+        let source = r#"
+        [System AlgEngine
+          [@syntax [sort S] [op f] [op g]]
+          [@binding implicit]
+          [@check rewriting equality-saturation]
+        ]
+        [Theory Algebra :in AlgEngine
+          [@rule r1 [f ?x ?y] ==> [g ?y ?x]]
+        ]
+        [Proofs AlgCheck :in Algebra
+          [assert-eq comm-test [g b a] [f a b]]
+        ]
+        "#;
+
+        let sexps = parser::parse(source).unwrap();
+        let mut session = Session::new();
+        for sexp in &sexps {
+            session.process(sexp).unwrap();
+        }
+
+        assert!(session
+            .output
+            .iter()
+            .any(|s| s.contains("comm-test") && s.contains("passed")));
+    }
+
+    #[test]
+    fn egraph_conflicting_rules_end_to_end() {
+        // Two laws with same LHS, different RHS. E-graph resolves via bidirectionality.
+        let source = r#"
+        [System AlgEngine
+          [@syntax [sort S] [op f] [op g] [op h]]
+          [@binding implicit]
+          [@check rewriting equality-saturation]
+        ]
+        [Theory Algebra :in AlgEngine
+          [@law r1 [f ?x] === [g ?x]]
+          [@law r2 [f ?x] === [h ?x]]
+        ]
+        [Proofs AlgCheck :in Algebra
+          [assert-eq via-f [g a] [h a]]
+        ]
+        "#;
+
+        let sexps = parser::parse(source).unwrap();
+        let mut session = Session::new();
+        for sexp in &sexps {
+            session.process(sexp).unwrap();
+        }
+
+        assert!(session
+            .output
+            .iter()
+            .any(|s| s.contains("via-f") && s.contains("passed") && s.contains("e-graph")));
+    }
+
+    #[test]
+    fn law_basic_parse() {
+        let source = r#"
+        [System S
+          [@syntax [sort T] [op f]]
+          [@binding implicit]
+          [@check rewriting equality-saturation]
+        ]
+        [Theory Laws :in S
+          [@law comm [f ?x ?y] === [f ?y ?x]]
+        ]
+        "#;
+
+        let sexps = parser::parse(source).unwrap();
+        let mut session = Session::new();
+        for sexp in &sexps {
+            session.process(sexp).unwrap();
+        }
+
+        // Verify law was logged
+        assert!(session.output.iter().any(|s| s.contains("[LAW] comm")));
+
+        // Verify rule is bidirectional
+        let rules = session.rules.get("Laws").unwrap();
+        assert_eq!(rules.len(), 1);
+        assert!(rules[0].bidirectional);
+    }
+
+    #[test]
+    fn law_not_in_graph_rules() {
+        let source = r#"
+        [System S
+          [@syntax [sort T] [op f]]
+          [@binding implicit]
+          [@check rewriting equality-saturation]
+        ]
+        [Theory NoGraph :in S
+          [@law comm [f ?x ?y] === [f ?y ?x]]
+        ]
+        "#;
+
+        let sexps = parser::parse(source).unwrap();
+        let mut session = Session::new();
+        for sexp in &sexps {
+            session.process(sexp).unwrap();
+        }
+
+        // Laws should NOT produce GraphRules (interaction net rules)
+        let graph_rules = session.compiled_rules.get("NoGraph").unwrap();
+        assert!(graph_rules.is_empty(), "laws should not compile to graph rules");
+    }
+
+    #[test]
+    fn law_survives_import() {
+        let source = r#"
+        [System S
+          [@syntax [sort T] [op f]]
+          [@binding implicit]
+          [@check rewriting equality-saturation]
+        ]
+        [Theory Base :in S
+          [@law comm [f ?x ?y] === [f ?y ?x]]
+        ]
+        [Theory Ext :in S
+          [import Base]
+        ]
+        "#;
+
+        let sexps = parser::parse(source).unwrap();
+        let mut session = Session::new();
+        for sexp in &sexps {
+            session.process(sexp).unwrap();
+        }
+
+        // Imported rules should preserve bidirectional flag
+        let rules = session.rules.get("Ext").unwrap();
+        assert!(!rules.is_empty());
+        assert!(rules[0].bidirectional, "imported law should stay bidirectional");
+    }
+
+    #[test]
+    fn eval_simplify_end_to_end() {
+        let source = r#"
+        [System S
+          [@syntax [sort Nat] [op z] [op s] [op add]]
+          [@binding implicit]
+          [@check rewriting equality-saturation]
+        ]
+        [Theory T :in S
+          [@rule add-z [add z ?n] ==> ?n]
+          [@rule add-s [add [s ?n] ?m] ==> [s [add ?n ?m]]]
+        ]
+        [Proofs P :in T
+          [eval-simplify result [add [s z] [s z]]]
+        ]
+        "#;
+
+        let sexps = parser::parse(source).unwrap();
+        let mut session = Session::new();
+        for sexp in &sexps {
+            session.process(sexp).unwrap();
+        }
+
+        assert!(session.output.iter().any(|s| s.contains("[SIMPLIFY] result =")));
     }
 }

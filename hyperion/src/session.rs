@@ -500,7 +500,7 @@ impl HyperionSession {
             morphism_types.insert(m.name.clone(), (m.domain.clone(), m.codomain.clone()));
         }
 
-        // Parse @rule declarations from the theory body
+        // Parse @rule and @law declarations from the theory body
         let mut rules = Vec::new();
         for item in &items[2..] {
             if let Some(inner) = item.as_list() {
@@ -508,11 +508,11 @@ impl HyperionSession {
                     continue;
                 }
                 let head = inner[0].as_atom().unwrap_or("");
-                if head == "@rule" && inner.len() >= 5 {
-                    // [@rule name lhs ==> rhs]
+                if (head == "@rule" || head == "@law") && inner.len() >= 5 {
+                    // [@rule name lhs ==> rhs] or [@law name lhs === rhs]
                     let rule_name = inner[1].as_atom().unwrap_or("").to_string();
                     let lhs = inner[2].clone();
-                    // inner[3] should be "==>"
+                    // inner[3] should be "==>" or "==="
                     let rhs = inner[4].clone();
                     rules.push(VonNeumannRule {
                         name: rule_name,
@@ -573,16 +573,19 @@ impl HyperionSession {
             }
         }
 
-        // Capture @rule declarations for functor verification + resource checking
+        // Capture @rule and @law declarations for functor verification + resource checking
         let mut named_rules: Vec<(Option<String>, Sexp, Sexp)> = Vec::new();
         for item in &items[2..] {
             if let Some(inner) = item.as_list() {
                 let head = inner.first().and_then(|s| s.as_atom()).unwrap_or("");
-                if head == "@rule" {
-                    // Find ==> separator to handle both named and unnamed rules:
+                if head == "@rule" || head == "@law" {
+                    // Find ==> or === separator to handle both named and unnamed rules/laws:
                     //   [@rule lhs ==> rhs]         (unnamed, 4 elements)
                     //   [@rule name lhs ==> rhs]    (named, 5 elements)
-                    if let Some(sep_pos) = inner.iter().position(|s| s.as_atom() == Some("==>")) {
+                    //   [@law  lhs === rhs]          (unnamed, 4 elements)
+                    //   [@law  name lhs === rhs]     (named, 5 elements)
+                    let sep = if head == "@law" { "===" } else { "==>" };
+                    if let Some(sep_pos) = inner.iter().position(|s| s.as_atom() == Some(sep)) {
                         if sep_pos >= 2 && sep_pos + 1 < inner.len() {
                             let rule_name = if sep_pos == 3 {
                                 inner[1].as_atom().map(|s| s.to_string())
@@ -884,6 +887,13 @@ impl HyperionSession {
     }
 
     /// Generate Apeiron @rule declarations for path algebra.
+    ///
+    /// All rules are directed (normalization-oriented):
+    /// - concat(refl(a), p) ==> p
+    /// - concat(p, refl(a)) ==> p
+    /// - inv(refl(a)) ==> refl(a)
+    /// - concat(concat(p,q), r) ==> concat(p, concat(q,r))  [right-associative normal form]
+    /// - ap(f, refl(a)) ==> refl(app(f, a))  [if Evaluator present]
     fn path_type_rules(refl: &str, concat: &str, inv: &str, ap: &str, eval_name: Option<&str>) -> Vec<Sexp> {
         let sp = Span::default();
 
@@ -913,19 +923,19 @@ impl HyperionSession {
         };
 
         let mut rules = vec![
-            // concat(refl(a), p) ==> p
+            // concat(refl(a), p) ==> p  [left unit — directed simplification]
             mk_rule(
                 mk_concat(mk_refl(meta_a()), meta_p()),
                 meta_p()),
-            // concat(p, refl(a)) ==> p
+            // concat(p, refl(a)) ==> p  [right unit — directed simplification]
             mk_rule(
                 mk_concat(meta_p(), mk_refl(meta_a())),
                 meta_p()),
-            // inv(refl(a)) ==> refl(a)
+            // inv(refl(a)) ==> refl(a)  [inverse of identity — directed]
             mk_rule(
                 mk_inv(mk_refl(meta_a())),
                 mk_refl(meta_a())),
-            // concat(concat(p,q), r) ==> concat(p, concat(q,r))
+            // concat(concat(p,q), r) ==> concat(p, concat(q,r))  [right-associative normal form]
             mk_rule(
                 mk_concat(mk_concat(meta_p(), meta_q()), meta_r()),
                 mk_concat(meta_p(), mk_concat(meta_q(), meta_r()))),
