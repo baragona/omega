@@ -2536,6 +2536,13 @@ fn equational_algebra_example() {
 }
 
 #[test]
+fn transport_discovery_example() {
+    // The Final Boss: e-graph discovery → VerifyFunctor (5 rules) → Import transport →
+    // directed verification + physics gap (assert-neq)
+    run_file("examples/transport-discovery.hyp");
+}
+
+#[test]
 fn egraph_transport_example() {
     run_file("examples/egraph-transport.hyp");
 }
