@@ -211,6 +211,34 @@ pub fn extract_simplest(expr: &Sexp, rules: &[RewriteRule]) -> Sexp {
     recexpr_to_sexp(&best)
 }
 
+/// Check if a Sexp tree contains a specific atom anywhere.
+fn contains_atom(sexp: &Sexp, name: &str) -> bool {
+    match sexp {
+        Sexp::Atom(s, _) => s == name,
+        Sexp::List(items, _) => items.iter().any(|item| contains_atom(item, name)),
+    }
+}
+
+/// Filter rules: remove any rule where a barrier op appears
+/// asymmetrically (on one side but not the other).
+///
+/// This blocks rules like `[box ?x] === ?x` (box on LHS only) but allows
+/// `[box [box ?x]] === [box ?x]` (box on both sides).
+pub fn filter_barrier_rules(rules: &[RewriteRule], barrier_ops: &[String]) -> Vec<RewriteRule> {
+    if barrier_ops.is_empty() {
+        return rules.to_vec();
+    }
+    rules
+        .iter()
+        .filter(|rule| {
+            barrier_ops.iter().all(|op| {
+                contains_atom(&rule.lhs, op) == contains_atom(&rule.rhs, op)
+            })
+        })
+        .cloned()
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -374,5 +402,32 @@ mod tests {
         let expr = list(vec![atom("add"), atom("z"), list(vec![atom("s"), atom("z")])]);
         let result = extract_simplest(&expr, &rules);
         assert_eq!(format!("{}", result), "[s z]");
+    }
+
+    #[test]
+    fn filter_barrier_rules_blocks_asymmetric() {
+        // [box ?x] === ?x — box on LHS only → should be filtered
+        let rules = vec![law("collapse", "[box ?x]", "?x")];
+        let filtered = filter_barrier_rules(&rules, &["box".to_string()]);
+        assert_eq!(filtered.len(), 0);
+    }
+
+    #[test]
+    fn filter_barrier_rules_allows_symmetric() {
+        // [box [box ?x]] === [box ?x] — box on both sides → should be kept
+        let rules = vec![law("idem", "[box [box ?x]]", "[box ?x]")];
+        let filtered = filter_barrier_rules(&rules, &["box".to_string()]);
+        assert_eq!(filtered.len(), 1);
+    }
+
+    #[test]
+    fn filter_barrier_rules_no_ops() {
+        // Empty barrier_ops → nothing filtered
+        let rules = vec![
+            law("collapse", "[box ?x]", "?x"),
+            rule("r1", "[f ?x]", "?x"),
+        ];
+        let filtered = filter_barrier_rules(&rules, &[]);
+        assert_eq!(filtered.len(), 2);
     }
 }

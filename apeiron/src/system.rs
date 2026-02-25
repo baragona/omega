@@ -79,6 +79,9 @@ pub struct SystemConfig {
     pub check_modes: HashSet<CheckMode>,
     /// Name of the signature this system was built from (if any).
     pub signature_name: Option<String>,
+    /// Operators that are scope-significant (e.g. modal operators like `box`).
+    /// Rules where a barrier op appears asymmetrically are excluded from e-graph.
+    pub barrier_ops: Vec<String>,
 }
 
 /// A rewrite rule: lhs ==> rhs (directed) or lhs === rhs (bidirectional law).
@@ -292,6 +295,7 @@ impl Session {
             binding: BindingMode::Implicit,
             check_modes: HashSet::new(),
             signature_name: None,
+            barrier_ops: Vec::new(),
         };
 
         // Check for :signature SigName in header items (before block parsing)
@@ -332,6 +336,13 @@ impl Session {
                     "@syntax" => parse_syntax_block(&block[1..], &mut config)?,
                     "@binding" => parse_binding_block(&block[1..], &mut config)?,
                     "@check" => parse_check_block(&block[1..], &mut config)?,
+                    "@barrier-ops" => {
+                        for op in &block[1..] {
+                            if let Some(name) = op.as_atom() {
+                                config.barrier_ops.push(name.to_string());
+                            }
+                        }
+                    }
                     _ => {
                         return Err(ApeironError::InvalidConfig {
                             block: "System".into(),
@@ -1878,7 +1889,8 @@ impl Session {
         // Step 3: e-graph extraction for simplest form
         let readback_sexp = rewrite::term_to_sexp(&term);
         let theory_rules = self.rules.get(theory_name).cloned().unwrap_or_default();
-        let simplified = egraph::extract_simplest(&readback_sexp, &theory_rules);
+        let filtered = egraph::filter_barrier_rules(&theory_rules, &config.barrier_ops);
+        let simplified = egraph::extract_simplest(&readback_sexp, &filtered);
 
         self.output.push(format!(
             "[SIMPLIFY] {} = {} ({} interactions)",
@@ -1954,7 +1966,8 @@ impl Session {
             let rhs_readback = rewrite::term_to_sexp(&rhs_term);
 
             let theory_rules = self.rules.get(theory_name).cloned().unwrap_or_default();
-            let result = egraph::check_equal_egraph(&lhs_readback, &rhs_readback, &theory_rules);
+            let filtered = egraph::filter_barrier_rules(&theory_rules, &config.barrier_ops);
+            let result = egraph::check_equal_egraph(&lhs_readback, &rhs_readback, &filtered);
 
             if result == egraph::EGraphResult::Equal {
                 self.output
@@ -3298,5 +3311,24 @@ mod tests {
         }
 
         assert!(session.output.iter().any(|s| s.contains("[SIMPLIFY] result =")));
+    }
+
+    #[test]
+    fn barrier_ops_parsed() {
+        let source = r#"
+        [System Test
+          [@syntax [sort Term] [op box]]
+          [@binding implicit]
+          [@check rewriting equality-saturation]
+          [@barrier-ops box]
+        ]
+        "#;
+        let sexps = parser::parse(source).unwrap();
+        let mut session = Session::new();
+        for sexp in &sexps {
+            session.process(sexp).unwrap();
+        }
+        let config = session.systems.get("Test").unwrap();
+        assert_eq!(config.barrier_ops, vec!["box".to_string()]);
     }
 }

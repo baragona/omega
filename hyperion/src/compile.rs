@@ -205,6 +205,9 @@ fn check_modes(sub: &SubstrateDef) -> Vec<&'static str> {
         EqualityMode::AlphaEquivalence => vec!["beta-reduction"],
         EqualityMode::Observational => vec!["rewriting", "beta-reduction"],
         EqualityMode::TopologicalHomotopy => vec!["rewriting", "beta-reduction", "eta"],
+        EqualityMode::EqualitySaturation => {
+            vec!["rewriting", "beta-reduction", "equality-saturation"]
+        }
     }
 }
 
@@ -387,6 +390,19 @@ pub fn emit_system_sexp(
         check_items.push(Sexp::Atom(mode.into(), sp));
     }
     system_items.push(Sexp::List(check_items, sp));
+
+    // [@barrier-ops ...] block — inform Apeiron which ops are scope-significant
+    let modal_ops: Vec<&str> = cat.structure.iter().filter_map(|s| match s {
+        CategoricalStructure::ModalOperator { name } => Some(name.as_str()),
+        _ => None,
+    }).collect();
+    if !modal_ops.is_empty() && sub.barrier == BarrierMode::ContextualMembranes {
+        let mut barrier_items = vec![Sexp::Atom("@barrier-ops".into(), sp)];
+        for op in &modal_ops {
+            barrier_items.push(Sexp::Atom((*op).to_string(), sp));
+        }
+        system_items.push(Sexp::List(barrier_items, sp));
+    }
 
     Sexp::List(system_items, sp)
 }

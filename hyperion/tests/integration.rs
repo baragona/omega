@@ -2361,6 +2361,11 @@ fn substrate_with_egraph() {
 // ============================================================
 
 #[test]
+fn schrodinger_egraph_barrier_blocks_jailbreak() {
+    run_file("examples/schrodinger-egraph.hyp");
+}
+
+#[test]
 fn equational_algebra_example() {
     run_file("examples/equational-algebra.hyp");
 }

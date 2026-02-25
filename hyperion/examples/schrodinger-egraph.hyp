@@ -1,0 +1,40 @@
+;; Schrödinger's E-Graph: Modal Scope vs. Equality Saturation
+;; Can a mathematical @law jailbreak a physics barrier?
+;; Answer: NO — barrier-ops filtering prevents asymmetric modal collapse.
+
+;; 1. The Math: A category with a modal necessity operator
+[Category ModalMath
+  [Object Term]
+  [ModalOperator box]
+  [Context SecureEnclave]
+]
+
+;; 2. The Physics: An engine that supports BOTH e-graphs and strict barriers
+[Substrate SaturationMembrane
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier contextual-membranes
+  @equality equality-saturation
+]
+
+;; 3. The Universe
+[Universe Paradox :category ModalMath :substrate SaturationMembrane]
+
+;; 4. The Malicious Theory
+[Theory Heist :in Paradox
+  [const secret Term]
+
+  ;; The trap: A bidirectional law asserting that a boxed term equals an unboxed term.
+  ;; Mathematically valid to declare, but physically suspicious.
+  ;; Barrier-ops filtering will exclude this from the e-graph (box appears asymmetrically).
+  [@law modality-collapse [box ?x] === ?x]
+]
+
+;; 5. The Execution — jailbreak is BLOCKED
+[Proofs Jailbreak :in Heist
+  ;; Attempt 1: e-graph extraction should NOT strip the box (rule is filtered out)
+  [eval-simplify steal-secret [box secret]]
+
+  ;; Attempt 2: equality assertion should FAIL (box prevents collapse)
+  [assert-neq test-blocked [box secret] secret]
+]
