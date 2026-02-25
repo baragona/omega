@@ -573,35 +573,13 @@ impl HyperionSession {
             }
         }
 
-        // Capture @rule and @law declarations for functor verification + resource checking
-        let mut named_rules: Vec<(Option<String>, Sexp, Sexp)> = Vec::new();
-        for item in &items[2..] {
-            if let Some(inner) = item.as_list() {
-                let head = inner.first().and_then(|s| s.as_atom()).unwrap_or("");
-                if head == "@rule" || head == "@law" {
-                    // Find ==> or === separator to handle both named and unnamed rules/laws:
-                    //   [@rule lhs ==> rhs]         (unnamed, 4 elements)
-                    //   [@rule name lhs ==> rhs]    (named, 5 elements)
-                    //   [@law  lhs === rhs]          (unnamed, 4 elements)
-                    //   [@law  name lhs === rhs]     (named, 5 elements)
-                    let sep = if head == "@law" { "===" } else { "==>" };
-                    if let Some(sep_pos) = inner.iter().position(|s| s.as_atom() == Some(sep)) {
-                        if sep_pos >= 2 && sep_pos + 1 < inner.len() {
-                            let rule_name = if sep_pos == 3 {
-                                inner[1].as_atom().map(|s| s.to_string())
-                            } else {
-                                None
-                            };
-                            let lhs = inner[sep_pos - 1].clone();
-                            let rhs = inner[sep_pos + 1].clone();
-                            named_rules.push((rule_name, lhs, rhs));
-                        }
-                    }
-                }
-            }
-        }
+        // Capture user-declared @rule and @law declarations for functor verification + resource checking
+        let named_rules = extract_rule_declarations(&items[2..]);
 
-        // Resource enforcement: check rules against substrate's resource mode
+        // Resource enforcement: check user-declared rules against substrate's resource mode.
+        // Note: auto-injected rules (PathType, Preorder) are framework infrastructure and are
+        // exempt from resource checking — PathType unit laws inherently drop variables
+        // (concat(refl(?a), ?p) ==> ?p), which is by design, not a user error.
         if let Some(uni_name) = &universe_name {
             if let Some(compiled) = self.universes.get(uni_name) {
                 if let Some(sub) = self.substrates.get(&compiled.substrate_name) {
@@ -894,6 +872,7 @@ impl HyperionSession {
     /// - inv(refl(a)) ==> refl(a)
     /// - concat(concat(p,q), r) ==> concat(p, concat(q,r))  [right-associative normal form]
     /// - ap(f, refl(a)) ==> refl(app(f, a))  [if Evaluator present]
+    /// - ap(f, concat(p,q)) ==> concat(ap(f,p), ap(f,q))  [if Evaluator present]
     fn path_type_rules(refl: &str, concat: &str, inv: &str, ap: &str, eval_name: Option<&str>) -> Vec<Sexp> {
         let sp = Span::default();
 
@@ -946,6 +925,14 @@ impl HyperionSession {
             rules.push(mk_rule(
                 Sexp::List(vec![Sexp::Atom(ap.into(), sp), meta_f(), mk_refl(meta_a())], sp),
                 mk_refl(Sexp::List(vec![Sexp::Atom(app.into(), sp), meta_f(), meta_a()], sp)),
+            ));
+            // ap(f, concat(p, q)) ==> concat(ap(f, p), ap(f, q)) — functoriality of ap over concat
+            let mk_ap = |f: Sexp, x: Sexp| -> Sexp {
+                Sexp::List(vec![Sexp::Atom(ap.into(), sp), f, x], sp)
+            };
+            rules.push(mk_rule(
+                mk_ap(meta_f(), mk_concat(meta_p(), meta_q())),
+                mk_concat(mk_ap(meta_f(), meta_p()), mk_ap(meta_f(), meta_q())),
             ));
         }
 
@@ -1098,6 +1085,28 @@ impl HyperionSession {
             .cloned()
             .collect();
 
+        // Resource enforcement: check source rules (mapped) against target substrate's resource mode.
+        // A rule valid in optimal-sharing (e.g. [f ?x] ==> [g ?x ?x]) may violate the target's
+        // strictly-linear or affine constraints.
+        if let Some(target_uni_name) = self.theory_universes.get(&target_theory) {
+            if let Some(compiled) = self.universes.get(target_uni_name) {
+                if let Some(sub) = self.substrates.get(&compiled.substrate_name) {
+                    let mapped_rules: Vec<(Option<String>, Sexp, Sexp)> = source_rules
+                        .iter()
+                        .enumerate()
+                        .map(|(i, (lhs, rhs))| {
+                            let mapped_lhs = Self::apply_op_map(lhs, &op_map);
+                            let mapped_rhs = Self::apply_op_map(rhs, &op_map);
+                            (Some(format!("functor-mapped-rule-{}", i)), mapped_lhs, mapped_rhs)
+                        })
+                        .collect();
+                    self.check_resource_rules(&mapped_rules, &sub.resource_mode, &format!(
+                        "VerifyFunctor({} -> {})", source_theory, target_theory
+                    ))?;
+                }
+            }
+        }
+
         // Generate assert-eq proofs in target theory
         let sp = Span::default();
         let proofs_name = format!("__verify_{}_{}", functor_name, target_theory);
@@ -1195,6 +1204,33 @@ impl HyperionSession {
     fn drain_apeiron_output(&mut self) {
         self.output.append(&mut self.apeiron.output);
     }
+}
+
+/// Extract @rule and @law declarations from theory body items.
+/// Returns (optional_name, lhs, rhs) for each rule/law found.
+fn extract_rule_declarations(items: &[Sexp]) -> Vec<(Option<String>, Sexp, Sexp)> {
+    let mut rules = Vec::new();
+    for item in items {
+        if let Some(inner) = item.as_list() {
+            let head = inner.first().and_then(|s| s.as_atom()).unwrap_or("");
+            if head == "@rule" || head == "@law" {
+                let sep = if head == "@law" { "===" } else { "==>" };
+                if let Some(sep_pos) = inner.iter().position(|s| s.as_atom() == Some(sep)) {
+                    if sep_pos >= 2 && sep_pos + 1 < inner.len() {
+                        let rule_name = if sep_pos == 3 {
+                            inner[1].as_atom().map(|s| s.to_string())
+                        } else {
+                            None
+                        };
+                        let lhs = inner[sep_pos - 1].clone();
+                        let rhs = inner[sep_pos + 1].clone();
+                        rules.push((rule_name, lhs, rhs));
+                    }
+                }
+            }
+        }
+    }
+    rules
 }
 
 /// Collect all ?meta variable names from a Sexp tree.

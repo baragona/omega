@@ -1399,6 +1399,7 @@ fn path_type_auto_injects_rules() {
             [assert-eq assoc [concat [concat p q] r] [concat p [concat q r]]]
             [assert-eq inv-refl [inv [refl a]] [refl a]]
             [assert-eq ap-refl [ap f [refl a]] [refl [app f a]]]
+            [assert-eq ap-concat [ap f [concat p q]] [concat [ap f p] [ap f q]]]
         ]
     "#;
     process_all(&mut session, input).unwrap();
@@ -1655,6 +1656,170 @@ fn verify_functor_applies_op_map() {
     process_all(&mut session, input).unwrap();
     let msg = session.output.iter().find(|s| s.contains("[VERIFY-FUNCTOR]")).unwrap();
     assert!(msg.contains("2 rules verified"), "Got: {}", msg);
+}
+
+#[test]
+fn verify_functor_resource_leak_rejected() {
+    // Source in optimal-sharing has a duplicating rule [dup ?x] ==> [tensor ?x ?x].
+    // Target in strictly-linear has the same rule text — but VerifyFunctor must reject
+    // because the mapped source rule violates the target's resource mode.
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category C
+            [Object T]
+            [Morphism dup :domain [T] :codomain T]
+            [Morphism tensor :domain [T T] :codomain T]
+            [Morphism id :domain [T] :codomain T]
+        ]
+        [Substrate Sharing
+            @engine interaction-graph
+            @resource-mode optimal-sharing
+            @barrier transparent
+            @equality rewrite-equivalence
+        ]
+        [Substrate Linear
+            @engine interaction-graph
+            @resource-mode strictly-linear
+            @barrier transparent
+            @equality rewrite-equivalence
+        ]
+        [Universe USrc :category C :substrate Sharing]
+        [Universe UTgt :category C :substrate Linear]
+        [Functor F :from Sharing :to Linear]
+        [Theory Source :in USrc :no-laws
+            [@rule [dup ?x] ==> [tensor ?x ?x]]
+        ]
+        [Theory Target :in UTgt :no-laws
+            [@rule [id ?x] ==> ?x]
+        ]
+        [VerifyFunctor F :source Source :target Target]
+    "#;
+    let err = process_all(&mut session, input).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("resource violation"), "Expected resource violation, got: {}", msg);
+    assert!(msg.contains("strictly-linear"), "Should mention strictly-linear, got: {}", msg);
+}
+
+#[test]
+fn verify_functor_resource_affine_rejects_dup() {
+    // Source in optimal-sharing duplicates; target is affine — should reject
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category C
+            [Object T]
+            [Morphism dup :domain [T] :codomain T]
+            [Morphism tensor :domain [T T] :codomain T]
+            [Morphism id :domain [T] :codomain T]
+        ]
+        [Substrate Sharing
+            @engine interaction-graph
+            @resource-mode optimal-sharing
+            @barrier transparent
+            @equality rewrite-equivalence
+        ]
+        [Substrate Aff
+            @engine interaction-graph
+            @resource-mode affine
+            @barrier transparent
+            @equality rewrite-equivalence
+        ]
+        [Universe USrc :category C :substrate Sharing]
+        [Universe UTgt :category C :substrate Aff]
+        [Functor F :from Sharing :to Aff]
+        [Theory Source :in USrc :no-laws
+            [@rule [dup ?x] ==> [tensor ?x ?x]]
+        ]
+        [Theory Target :in UTgt :no-laws
+            [@rule [id ?x] ==> ?x]
+        ]
+        [VerifyFunctor F :source Source :target Target]
+    "#;
+    let err = process_all(&mut session, input).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("resource violation"), "Expected resource violation, got: {}", msg);
+    assert!(msg.contains("affine"), "Should mention affine, got: {}", msg);
+}
+
+// ============================================================
+// Eckmann-Hilton: 2-Categorical Interchange from 1D Path Algebra
+// ============================================================
+
+#[test]
+fn eckmann_hilton_example() {
+    // Parts 1-5: refl interchange, ap-concat distributivity, naturality gap (assert-neq),
+    // true Eckmann-Hilton via e-graph (assert-eq + eval-simplify), and physics dependence
+    // (assert-neq: same laws, directed substrate, discovery blocked)
+    run_file("examples/eckmann-hilton.hyp");
+}
+
+// ============================================================
+// Ouroboros: Strictly-Linear Meta-Universes
+// ============================================================
+
+#[test]
+fn ouroboros_drop_framework_rejected() {
+    // In a strictly-linear meta-universe, dropping a framework (?C) is forbidden.
+    // [compose-cat ?C ?D] ==> ?D drops ?C — must fail.
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category MetaCat
+            [Object Cat]
+            [Morphism functor :domain [Cat Cat] :codomain Cat]
+            [Morphism compose-cat :domain [Cat Cat] :codomain Cat]
+        ]
+        [Substrate LinearMetaPhysics
+            @engine interaction-graph
+            @resource-mode strictly-linear
+            @barrier transparent
+            @equality topological-homotopy
+        ]
+        [Universe LinearMetaWorld :category MetaCat :substrate LinearMetaPhysics]
+        [Theory MetaDrop :in LinearMetaWorld :no-laws
+            [@rule drop-framework [compose-cat ?C ?D] ==> ?D]
+        ]
+    "#;
+    let err = process_all(&mut session, input).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("resource violation"), "Expected resource violation, got: {}", msg);
+    assert!(msg.contains("strictly-linear requires exactly 1 use"), "Got: {}", msg);
+}
+
+#[test]
+fn ouroboros_clone_framework_rejected() {
+    // In a strictly-linear meta-universe, duplicating a framework (?C) is forbidden.
+    // [functor ?C ?D] ==> [compose-cat ?C [functor ?C ?D]] duplicates ?C — must fail.
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category MetaCat
+            [Object Cat]
+            [Morphism functor :domain [Cat Cat] :codomain Cat]
+            [Morphism compose-cat :domain [Cat Cat] :codomain Cat]
+        ]
+        [Substrate LinearMetaPhysics
+            @engine interaction-graph
+            @resource-mode strictly-linear
+            @barrier transparent
+            @equality topological-homotopy
+        ]
+        [Universe LinearMetaWorld :category MetaCat :substrate LinearMetaPhysics]
+        [Theory MetaClone :in LinearMetaWorld :no-laws
+            [@rule clone-framework [functor ?C ?D] ==> [compose-cat ?C [functor ?C ?D]]]
+        ]
+    "#;
+    let err = process_all(&mut session, input).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("resource violation"), "Expected resource violation, got: {}", msg);
+    assert!(msg.contains("strictly-linear requires exactly 1 use"), "Got: {}", msg);
+}
+
+#[test]
+fn ouroboros_linear_meta_rule_accepted() {
+    run_file("examples/ouroboros-linear.hyp");
+}
+
+#[test]
+fn verify_functor_resource_linear_to_linear_ok() {
+    run_file("examples/verify-functor-resource.hyp");
 }
 
 #[test]
@@ -1942,7 +2107,7 @@ fn lf3_grand_tour_example() {
 
 #[test]
 fn lf3_grand_tour_part_a_law_counts() {
-    // Part A: CCC(3) + Monoidal(6) + PathType+Eval(5) = 14 witness tests
+    // Part A: CCC(3) + Monoidal(6) + PathType+Eval(6) = 15 witness tests
     let mut session = HyperionSession::new();
     let input = r#"
         [Category StageHoTT
@@ -1967,8 +2132,8 @@ fn lf3_grand_tour_part_a_law_counts() {
     "#;
     process_all(&mut session, input).expect("Part A laws should pass");
     let output = session.output.join("\n");
-    assert!(output.contains("14 witness tests"),
-        "CCC+Monoidal+PathType(+Eval) should be 14 tests: {}", output);
+    assert!(output.contains("15 witness tests"),
+        "CCC+Monoidal+PathType(+Eval) should be 15 tests: {}", output);
 }
 
 #[test]

@@ -7,7 +7,7 @@
 ;;       with extra affine-only rules, VerifyFunctor, NatTrans, Adjunction, and transport.
 ;;
 ;; Headline results:
-;;   - (A) Law verification: CCC(3) + Monoidal(6) + PathType(+Eval)(5) = 14 witness tests
+;;   - (A) Law verification: CCC(3) + Monoidal(6) + PathType(+Eval)(6) = 15 witness tests
 ;;   - (B) Law verification: Monoidal(6) + PathType(no Eval)(4)        = 10 witness tests
 ;;   - VerifyFunctor: 8 rules (A: monoidal 3 + glue 4 + dup 1)
 ;;                  + 6 rules (B: monoidal 3 + box-idem + box-tensor + tensor-refl)
@@ -49,7 +49,7 @@
   [Context WorldA]
   [Context WorldB]
 
-  ;; HoTT paths (with Evaluator present => 5 auto-injected path rules incl ap-refl)
+  ;; HoTT paths (with Evaluator present => 6 auto-injected path rules incl ap-refl, ap-concat)
   [PathType :refl refl :concat concat :inv inv :ap ap]
 
   ;; Duplication (non-linear — legal on optimal-sharing, not strictly-linear)
@@ -134,14 +134,15 @@
   ;; Monoidal normalization chain: tensor(unit, tensor(a, unit)) -> a
   [assert-eq mon-norm [tensor unit [tensor a unit]] a]
 
-  ;; PathType auto-injected rules (with Evaluator => ap-refl exists)
-  ;; Full coverage: left-unit, right-unit, inv-refl, associativity, ap-refl
+  ;; PathType auto-injected rules (with Evaluator => ap-refl + ap-concat exist)
+  ;; Full coverage: left-unit, right-unit, inv-refl, associativity, ap-refl, ap-concat
   [assert-eq path-lunit [concat [refl a] [refl b]] [refl b]]
   [assert-eq path-runit [concat [refl a] [refl a]] [refl a]]
   [assert-eq ap-refl-ok [ap f [refl a]] [refl [app f a]]]
   [assert-eq inv-refl   [inv [refl a]]  [refl a]]
   [assert-eq assoc-ok   [concat [concat [refl a] [refl a]] [refl a]]
                         [concat [refl a] [concat [refl a] [refl a]]]]
+  [assert-eq ap-concat  [ap f [concat p q]] [concat [ap f p] [ap f q]]]
 
   ;; Cross-structure: Modal preserves refl (user rule)
   [assert-eq box-refl [box [refl a]] [refl [box a]]]
@@ -386,8 +387,8 @@
 ;;
 ;; Part A (StageHoTT):
 ;;   - CCC + SymmetricMonoidal + Modal + PathType(+Evaluator) all compile together
-;;   - 14 categorical law witness tests pass (both source and target substrates)
-;;   - 16 user assertions pass (beta, monoidal, all 5 path laws, glue, eta, barrier)
+;;   - 15 categorical law witness tests pass (both source and target substrates)
+;;   - 17 user assertions pass (beta, monoidal, all 6 path laws, glue, eta, barrier)
 ;;   - Eta-contraction: [lam x [app f x]] = f on homotopy, != f on hash
 ;;   - Eta transport: transported etaTerm = [lam x [app f x]] (positive), != f (negative)
 ;;   - Barrier scoping: blocked/allowed pair — assert-neq vs with-scope assert-eq

@@ -1,0 +1,326 @@
+;; eckmann-hilton.hyp
+;; ==================
+;; Eckmann-Hilton interchange law from auto-injected PathType rules.
+;;
+;; The interchange law of 2-category theory states that horizontal and vertical
+;; composition of natural transformations must commute:
+;;   concat(ap(γ, α), ap(δ, β)) == ap(concat(γ, δ), concat(α, β))
+;;
+;; Part 1: For identity 2-cells (refl paths), this is derivable purely from
+;;   the 6 auto-injected PathType rules — no manual axioms needed.
+;;
+;; Part 2: The 6th rule (ap-concat) distributes ap over concat for abstract paths:
+;;   ap(f, concat(p, q)) == concat(ap(f, p), ap(f, q))
+;;
+;; Part 3: The full interchange with abstract paths does NOT hold from 6 rules alone.
+;;   The gap: naturality of whiskering (ap-concat backwards) is needed but rules
+;;   are directed. assert-neq confirms the gap.
+;;
+;; Part 4: The true Eckmann-Hilton — introduce horizontal composition (hcomp) as a
+;;   new operator with 5 independent primitive laws (interchange + 4 unit laws), then
+;;   force the e-graph to autonomously DISCOVER that vertical composition (concat) is
+;;   commutative. The e-graph must find a ~7-step proof path — no tautology, no hints.
+;;
+;; Part 5: Physics Dependence — the SAME 5 laws in a directed (rewrite-equivalence)
+;;   substrate fail to prove either consequence. The e-graph discovery in Part 4 is
+;;   genuine: it emerges from equality-saturation physics, not from hardcoded behavior.
+;;   assert-neq confirms both coincidence and commutativity are UNPROVABLE when the
+;;   substrate can only compute forward.
+;;
+;; Together, these five parts prove four architectural claims:
+;;   (A) Auto-injection works: framework-frameworking derives 2-cat identities from 1-cat rules
+;;   (B) The abstraction is honest: directed computation correctly fails when bidirectional
+;;       reasoning is needed, proving the substrate physics don't "cheat"
+;;   (C) Physics swapping enables discovery: the e-graph autonomously constructs a multi-step
+;;       algebraic proof of commutativity from independent primitives
+;;   (D) Substrate dependence is real: identical laws produce different provability depending
+;;       on the substrate's equality physics — the substrate isn't decoration, it's load-bearing
+;;
+;; Run:
+;;   hyperion check examples/eckmann-hilton.hyp
+
+;; ============================================================
+;; Shared category/substrate/universe
+;; ============================================================
+
+[Category MetaCat
+    [Object Cat]
+    [Morphism functor :domain [Cat Cat] :codomain Cat]
+    [Morphism app_cat :domain [Cat Cat] :codomain Cat]
+    [Morphism hcomp :domain [Cat Cat] :codomain Cat]
+    [Exponential lam_cat :object Cat]
+    [Evaluator app_cat]
+    [PathType :refl refl_cat :concat concat_cat :inv inv_cat :ap ap_cat]
+]
+[Substrate MetaHoTT
+    @engine interaction-graph
+    @resource-mode optimal-sharing
+    @barrier transparent
+    @equality topological-homotopy
+]
+[Universe MetaUniverse :category MetaCat :substrate MetaHoTT]
+
+;; ============================================================
+;; Part 1: Interchange for identity 2-cells (refl paths)
+;; ============================================================
+
+[Theory Interchange :in MetaUniverse :no-laws
+    ;; Objects (categories)
+    [const A Cat]
+    [const B Cat]
+    [const C Cat]
+
+    ;; Functors: F,G : A→B and H,K : B→C
+    [const F Cat]
+    [const G Cat]
+    [const H Cat]
+    [const K Cat]
+]
+
+[Proofs EckmannHiltonCheck :in Interchange
+    ;; The interchange law for identity 2-cells (refl paths).
+    ;; Vertical composition = concat_cat, Horizontal = ap_cat.
+    ;;
+    ;; LHS: concat(ap(refl(H), refl(F)), ap(refl(K), refl(G)))
+    ;;   → ap-refl x2 → concat(refl(...), refl(...)) → left-unit → refl(app_cat(refl(K), G))
+    ;;
+    ;; RHS: ap(concat(refl(H), refl(K)), concat(refl(F), refl(G)))
+    ;;   → left-unit x2 → ap(refl(K), refl(G)) → ap-refl → refl(app_cat(refl(K), G))
+    [assert-eq interchange
+        [concat_cat [ap_cat [refl_cat H] [refl_cat F]] [ap_cat [refl_cat K] [refl_cat G]]]
+        [ap_cat [concat_cat [refl_cat H] [refl_cat K]] [concat_cat [refl_cat F] [refl_cat G]]]
+    ]
+
+    ;; Bonus: horizontal composition of identity is identity
+    ;; ap(refl(H), refl(F)) == refl(app_cat(refl(H), F))
+    [assert-eq horizontal-id
+        [ap_cat [refl_cat H] [refl_cat F]]
+        [refl_cat [app_cat [refl_cat H] F]]
+    ]
+
+    ;; Bonus: vertical composition of identities is identity
+    ;; concat(refl(F), refl(G)) == refl(G)  (by left-unit)
+    [assert-eq vertical-id
+        [concat_cat [refl_cat F] [refl_cat G]]
+        [refl_cat G]
+    ]
+]
+
+;; ============================================================
+;; Part 2: ap-concat distributivity with abstract paths
+;; ============================================================
+
+[Theory ApConcatTest :in MetaUniverse :no-laws
+    [const f Cat]
+    [const p Cat]
+    [const q Cat]
+    [const r Cat]
+]
+
+[Proofs ApConcatChecks :in ApConcatTest
+    ;; Basic distributivity with abstract paths
+    [assert-eq ap-distributes
+        [ap_cat f [concat_cat p q]]
+        [concat_cat [ap_cat f p] [ap_cat f q]]
+    ]
+
+    ;; Nested: ap(f, concat(p, concat(q, r)))
+    ;; → concat(ap(f,p), ap(f, concat(q,r)))
+    ;; → concat(ap(f,p), concat(ap(f,q), ap(f,r)))
+    [assert-eq ap-distributes-nested
+        [ap_cat f [concat_cat p [concat_cat q r]]]
+        [concat_cat [ap_cat f p] [concat_cat [ap_cat f q] [ap_cat f r]]]
+    ]
+
+    ;; Associativity interacts with ap-concat:
+    ;; ap(f, concat(concat(p,q), r))
+    ;; → assoc → ap(f, concat(p, concat(q,r)))
+    ;; → ap-concat → concat(ap(f,p), ap(f, concat(q,r)))
+    ;; → ap-concat → concat(ap(f,p), concat(ap(f,q), ap(f,r)))
+    [assert-eq ap-after-assoc
+        [ap_cat f [concat_cat [concat_cat p q] r]]
+        [concat_cat [ap_cat f p] [concat_cat [ap_cat f q] [ap_cat f r]]]
+    ]
+]
+
+;; ============================================================
+;; Part 3: Abstract interchange gap (assert-neq)
+;; ============================================================
+
+[Theory InterchangeGap :in MetaUniverse :no-laws
+    [const A2 Cat] [const B2 Cat] [const C2 Cat]
+    [const F2 Cat] [const G2 Cat]
+    [const H2 Cat] [const K2 Cat]
+    ;; Abstract 2-cells (paths)
+    [const alpha Cat]    ;; α : F → G
+    [const beta Cat]     ;; β : G → G'
+    [const gamma Cat]    ;; γ : H → K
+    [const delta Cat]    ;; δ : K → K'
+]
+
+[Proofs GapCheck :in InterchangeGap
+    ;; This SHOULD FAIL — the two sides reduce to different normal forms
+    ;; LHS: concat(ap(gamma, alpha), ap(delta, beta))  — stuck
+    ;; RHS: ap(concat(gamma,delta), concat(alpha,beta))
+    ;;   → concat(ap(concat(gamma,delta), alpha), ap(concat(gamma,delta), beta)) — different!
+    [assert-neq interchange-gap
+        [concat_cat [ap_cat gamma alpha] [ap_cat delta beta]]
+        [ap_cat [concat_cat gamma delta] [concat_cat alpha beta]]
+    ]
+]
+
+;; ============================================================
+;; Part 4: The True Eckmann-Hilton — E-Graph Automated Discovery
+;; ============================================================
+;;
+;; The classic Eckmann-Hilton argument: given two binary operations (vertical
+;; concat, horizontal hcomp) sharing a unit (refl) and satisfying interchange,
+;; the two operations coincide and are commutative.
+;;
+;; We do NOT feed the e-graph the final theorem. Instead, we give it five
+;; independent primitive laws and force it to DISCOVER two consequences:
+;;   (i)  concat and hcomp coincide: concat(α,β) = hcomp(α,β)
+;;   (ii) vertical composition is commutative: concat(α,β) = concat(β,α)
+;;
+;; The proof path (let r = refl_cat(base_obj)):
+;;
+;;   concat(α, β)
+;;     = concat(hcomp(α, r), hcomp(r, β))           [hcomp unit laws, reversed]
+;;     = hcomp(concat(α, r), concat(r, β))           [interchange, reversed]
+;;     = hcomp(α, β)                                  [concat unit laws, forward]
+;;     = hcomp(concat(r, α), concat(β, r))           [concat unit laws, reversed]
+;;     = concat(hcomp(r, β), hcomp(α, r))            [interchange, forward]
+;;     = concat(β, α)                                  [hcomp unit laws, forward]
+;;
+;; The e-graph must traverse ~7 rewrite steps, using laws in BOTH directions,
+;; to close the equivalence class. The unit element is Hyperion's native
+;; refl_cat — not a generic constant — so the e-graph fuses user @law
+;; declarations with compiler-generated PathType infrastructure.
+
+[Substrate MetaEGraph
+    @engine interaction-graph
+    @resource-mode optimal-sharing
+    @barrier transparent
+    @equality equality-saturation
+]
+
+[Universe MetaEqUniverse :category MetaCat :substrate MetaEGraph]
+
+[Theory EckmannHilton :in MetaEqUniverse :no-laws
+    ;; The base object — its identity path refl_cat(base_obj) serves as the
+    ;; shared unit for BOTH operations. By using Hyperion's native refl_cat
+    ;; (not a generic constant), the e-graph fuses user-defined @law declarations
+    ;; with the compiler's auto-generated PathType infrastructure.
+    [const base_obj Cat]
+
+    ;; Abstract 2-cells — elements of Ω²(base_obj), the double loop space.
+    ;; In HoTT: α, β : refl(base_obj) = refl(base_obj)  (paths between identity paths).
+    ;; The Eckmann-Hilton argument shows that Ω² is always commutative: any two
+    ;; 2-loops can be composed in either order with the same result.
+    [const alpha Cat]
+    [const beta Cat]
+
+    ;; Horizontal composition: a NEW operator, not reducible to concat.
+    ;; In a 2-category, this is the second composition operation on 2-cells.
+    ;; We provide only its algebraic laws — the e-graph must reason structurally.
+
+    ;; Law 1: Interchange — the fundamental 2-categorical coherence axiom.
+    ;; "Vertical-then-horizontal = horizontal-then-vertical"
+    [@law interchange
+        [hcomp [concat_cat ?a ?b] [concat_cat ?c ?d]]
+        ===
+        [concat_cat [hcomp ?a ?c] [hcomp ?b ?d]]
+    ]
+
+    ;; Laws 2-3: Unit laws for hcomp (refl is the horizontal identity)
+    [@law hcomp-left-id  [hcomp [refl_cat base_obj] ?p] === ?p]
+    [@law hcomp-right-id [hcomp ?p [refl_cat base_obj]] === ?p]
+
+    ;; Laws 4-5: Unit laws for concat (refl is also the vertical identity)
+    ;; These MUST be @law (bidirectional) — the auto-injected @rules are
+    ;; forward-only, but the proof requires INSERTING units (reverse direction).
+    [@law concat-left-id  [concat_cat [refl_cat base_obj] ?p] === ?p]
+    [@law concat-right-id [concat_cat ?p [refl_cat base_obj]] === ?p]
+]
+
+[Proofs EckmannHiltonCheck :in EckmannHilton
+    ;; Consequence 1: The two operations COINCIDE.
+    ;; The e-graph discovers that vertical and horizontal composition are the
+    ;; same operation — the intermediate step of the Eckmann-Hilton argument.
+    [assert-eq eckmann-hilton-coincide
+        [concat_cat alpha beta]
+        [hcomp alpha beta]
+    ]
+
+    ;; Consequence 2: Vertical composition is COMMUTATIVE.
+    ;; The e-graph must autonomously discover the full 7-step proof path through
+    ;; the hcomp intermediate, using interchange + unit laws bidirectionally.
+    ;; No human hint, no shortcut — pure equational saturation.
+    [assert-eq eckmann-hilton-commutes
+        [concat_cat alpha beta]
+        [concat_cat beta alpha]
+    ]
+
+    ;; E-graph extraction: the simplest representative of concat(α, β) in the
+    ;; equivalence class. The e-graph merges concat and hcomp into one class —
+    ;; eval-simplify pulls out the smallest term.
+    [eval-simplify extract-witness [concat_cat alpha beta]]
+]
+
+;; ============================================================
+;; Part 5: Physics Dependence — Directed Substrate Blocks Discovery
+;; ============================================================
+;;
+;; The SAME 5 laws, the SAME category, the SAME constants — but now the substrate
+;; uses rewrite-equivalence instead of equality-saturation. In rewrite-equivalence
+;; mode, @law declarations are compiled as forward-only directed rules (just like
+;; @rule). The e-graph's bidirectional reasoning is unavailable.
+;;
+;; Result: both theorems from Part 4 become UNPROVABLE. The terms
+;;   concat(α,β) and hcomp(α,β)
+;; are stuck (no rule head matches), so they remain structurally distinct.
+;;
+;; This proves claim (D): substrate equality physics isn't decoration — it
+;; determines what theorems are discoverable from the same set of laws.
+
+[Substrate MetaDirected
+    @engine interaction-graph
+    @resource-mode optimal-sharing
+    @barrier transparent
+    @equality rewrite-equivalence
+]
+
+[Universe MetaDirectedUniverse :category MetaCat :substrate MetaDirected]
+
+[Theory EckmannHiltonDirected :in MetaDirectedUniverse :no-laws
+    [const base_obj Cat]
+    [const alpha Cat]
+    [const beta Cat]
+
+    ;; IDENTICAL laws — same 5 declarations as Part 4
+    [@law interchange
+        [hcomp [concat_cat ?a ?b] [concat_cat ?c ?d]]
+        ===
+        [concat_cat [hcomp ?a ?c] [hcomp ?b ?d]]
+    ]
+    [@law hcomp-left-id  [hcomp [refl_cat base_obj] ?p] === ?p]
+    [@law hcomp-right-id [hcomp ?p [refl_cat base_obj]] === ?p]
+    [@law concat-left-id  [concat_cat [refl_cat base_obj] ?p] === ?p]
+    [@law concat-right-id [concat_cat ?p [refl_cat base_obj]] === ?p]
+]
+
+[Proofs DirectedFailure :in EckmannHiltonDirected
+    ;; In directed physics, concat(α,β) and hcomp(α,β) are stuck terms with
+    ;; different head constructors. No reduction path connects them.
+    [assert-neq coincide-blocked
+        [concat_cat alpha beta]
+        [hcomp alpha beta]
+    ]
+
+    ;; Commutativity is equally unreachable — concat(α,β) ≠ concat(β,α) because
+    ;; no forward rule can swap the arguments of a stuck binary application.
+    [assert-neq commutes-blocked
+        [concat_cat alpha beta]
+        [concat_cat beta alpha]
+    ]
+]

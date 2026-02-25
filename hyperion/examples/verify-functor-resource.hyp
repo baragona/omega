@@ -1,0 +1,40 @@
+;; verify-functor-resource.hyp
+;; ============================
+;; Tests that VerifyFunctor correctly handles resource-aware functors.
+;;
+;; A linear rule (each meta used once) is valid in both source and target
+;; when both substrates are strictly-linear. VerifyFunctor should accept.
+;;
+;; The error cases (sharing→linear duplication leak, sharing→affine duplication)
+;; are tested in integration.rs since they require checking specific error messages.
+;;
+;; Run:
+;;   hyperion check examples/verify-functor-resource.hyp
+
+[Category C
+    [Object T]
+    [Morphism f :domain [T] :codomain T]
+    [Morphism g :domain [T] :codomain T]
+]
+[Substrate LinA
+    @engine interaction-graph
+    @resource-mode strictly-linear
+    @barrier transparent
+    @equality rewrite-equivalence
+]
+[Substrate LinB
+    @engine interaction-graph
+    @resource-mode strictly-linear
+    @barrier transparent
+    @equality topological-hash
+]
+[Universe USrc :category C :substrate LinA]
+[Universe UTgt :category C :substrate LinB]
+[Functor F :from LinA :to LinB]
+[Theory Source :in USrc :no-laws
+    [@rule [f ?x] ==> [g ?x]]
+]
+[Theory Target :in UTgt :no-laws
+    [@rule [f ?x] ==> [g ?x]]
+]
+[VerifyFunctor F :source Source :target Target]

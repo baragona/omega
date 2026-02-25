@@ -62,6 +62,13 @@ pub fn generate_laws(cat: &CategoryDef) -> Vec<CategoricalLaw> {
         }
     }
 
+    // Preorder laws (if present)
+    for s in &cat.structure {
+        if let CategoricalStructure::Preorder { relation } = s {
+            laws.extend(preorder_laws(relation));
+        }
+    }
+
     laws
 }
 
@@ -281,9 +288,46 @@ fn path_type_laws(refl: &str, concat: &str, inv: &str, ap: &str, eval_name: Opti
             lhs: Sexp::List(vec![Sexp::Atom(ap.into(), sp), f(), mk_refl(a())], sp),
             rhs: mk_refl(Sexp::List(vec![Sexp::Atom(app.into(), sp), f(), a()], sp)),
         });
+        // ap(f, concat(p, q)) = concat(ap(f, p), ap(f, q)) — functoriality of ap over concat
+        let mk_ap = |f: Sexp, x: Sexp| -> Sexp {
+            Sexp::List(vec![Sexp::Atom(ap.into(), sp), f, x], sp)
+        };
+        laws.push(CategoricalLaw {
+            name: "path-ap-concat".into(),
+            lhs: mk_ap(f(), mk_concat(p(), q())),
+            rhs: mk_concat(mk_ap(f(), p()), mk_ap(f(), q())),
+        });
     }
 
     laws
+}
+
+/// Preorder laws: reflexivity.
+fn preorder_laws(relation: &str) -> Vec<CategoricalLaw> {
+    let sp = Span::default();
+
+    let a = || Sexp::Atom("__law_a".into(), sp);
+    let b = || Sexp::Atom("__law_b".into(), sp);
+    let tr = || Sexp::Atom("true".into(), sp);
+
+    let mk_rel = |x: Sexp, y: Sexp| -> Sexp {
+        Sexp::List(vec![Sexp::Atom(relation.into(), sp), x, y], sp)
+    };
+
+    vec![
+        // Reflexivity: rel(a, a) = true
+        CategoricalLaw {
+            name: "preorder-refl".into(),
+            lhs: mk_rel(a(), a()),
+            rhs: tr(),
+        },
+        // Reflexivity on structured witness: rel(rel(a,b), rel(a,b)) = true
+        CategoricalLaw {
+            name: "preorder-refl-structured".into(),
+            lhs: mk_rel(mk_rel(a(), b()), mk_rel(a(), b())),
+            rhs: tr(),
+        },
+    ]
 }
 
 /// Build a [Proofs] Sexp that checks all laws for a theory.

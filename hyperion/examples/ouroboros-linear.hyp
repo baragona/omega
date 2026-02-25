@@ -1,0 +1,32 @@
+;; ouroboros-linear.hyp
+;; ====================
+;; The Ouroboros test: categories as physical objects in a strictly-linear substrate.
+;;
+;; When a meta-universe uses strictly-linear resource mode, rules at the meta-level
+;; must obey linearity — every meta-variable used on the LHS must appear exactly once
+;; on the RHS. This means you can't drop or duplicate *entire frameworks*.
+;;
+;; This file tests that a well-formed linear meta-rule (swap) is accepted.
+;; The error cases (drop/clone) are tested in integration.rs since they
+;; require checking specific error messages.
+;;
+;; Run:
+;;   hyperion check examples/ouroboros-linear.hyp
+
+[Category MetaCat
+    [Object Cat]
+    [Morphism functor :domain [Cat Cat] :codomain Cat]
+    [Morphism compose-cat :domain [Cat Cat] :codomain Cat]
+]
+[Substrate LinearMetaPhysics
+    @engine interaction-graph
+    @resource-mode strictly-linear
+    @barrier transparent
+    @equality topological-homotopy
+]
+[Universe LinearMetaWorld :category MetaCat :substrate LinearMetaPhysics]
+
+;; A linear rule: each meta used exactly once on both sides. Accepted.
+[Theory MetaLinear :in LinearMetaWorld :no-laws
+    [@rule swap [compose-cat ?C ?D] ==> [compose-cat ?D ?C]]
+]
