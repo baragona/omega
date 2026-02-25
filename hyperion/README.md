@@ -8,6 +8,40 @@ The core insight: not every mathematical structure can run on every computationa
 
 But Hyperion's real power is *self-application*. Categories and substrates are just data. Nothing stops you from defining a category whose objects are themselves categories, whose morphisms are functors, and whose paths are natural isomorphisms --- and then running it on a substrate. The framework frameworks itself, all the way up.
 
+## Why Hyperion?
+
+Apeiron gave us the ultimate freedom to define our math, but it still made one massive assumption: it forced all of that math to run on one specific type of "computer" --- the Interaction Net. It was a logical framework framework, but it was stuck in a single physical reality.
+
+Hyperion asks: *what if the "physics" of the system could be just as customizable as the math?*
+
+To understand Hyperion, think of it like designing a video game. Apeiron let you invent the rules of the game (the math), but forced you to play it on a specific console (the Interaction Net). Hyperion takes a step further back and says, "Let's abstract the console, too."
+
+Hyperion splits the world into two distinct pieces:
+
+- **The Category (The Math):** This is the pure logic. What are the rules? What do the objects look like? Are we doing standard algebra, or weird modal logic with parallel universes?
+- **The Substrate (The Physics):** This is the engine that actually executes the math. Are we running this on a highly parallel graph (like Apeiron's Interaction Nets)? Are we running it sequentially on a standard computer chip? Are resources infinitely copyable, or are they strictly linear (meaning once you use a variable, it's gone forever)?
+
+Hyperion acts as the ultimate matchmaker. You hand it your Math and your Physics, and it checks to see if they are actually compatible. For example, if your math requires infinite parallel processing, but you try to run it on a strictly sequential physics engine, Hyperion will stop you and say, "This math physically cannot exist in this universe."
+
+If they are compatible, Hyperion compiles them together into a working system called a **Universe**.
+
+But here is where it gets truly wild --- the reason we can call it a "logical framework framework framework" (LF^3).
+
+Because everything in Hyperion is just data, nothing stops you from using Hyperion to define a math system whose only job is to talk about *other math systems*. It is frameworks all the way up.
+
+Even better, because you have separated the math from the physics, you can use **Functors** (translators) to bridge entirely different computational realities. You can have a super-advanced, complex physics engine autonomously discover a brilliant mathematical proof, and then transport that exact proof over to a much simpler, basic physics engine just to mechanically verify it. The knowledge survives the jump across different universes.
+
+So, to trace the whole journey:
+
+| System | Question it answers |
+|---|---|
+| **Lean/Coq** | How do we write proofs on this specific, complex mathematical foundation? |
+| **Omega** | How do we build a simpler, generic foundation to write proofs on? |
+| **Apeiron** | How do we let users build their own foundations, running on a shared engine? |
+| **Hyperion** | How do we let users define the laws of physics that govern the engines that run the foundations? |
+
+It strips everything away until all you are left with is the pure relationship between what is logically true, and what is physically computable.
+
 ## The Three Layers
 
 ```
@@ -362,6 +396,43 @@ The `eval-simplify` command finds the simplest equivalent expression via `egg::E
 
 See `equational-algebra.hyp` and `egraph-transport.hyp` for full examples.
 
+### Autonomous Proof Discovery
+
+In an `equality-saturation` substrate, the e-graph doesn't just verify user-stated equalities --- it *discovers* consequences autonomously. Given a set of independent `@law` declarations, the e-graph saturates the equivalence classes and can close non-obvious multi-step proof paths that no human hinted at.
+
+The Eckmann-Hilton argument demonstrates this. Five independent primitive laws (interchange + 4 unit laws) are declared for two binary operations (`concat` for vertical composition, `hcomp` for horizontal). From these alone, the e-graph autonomously discovers:
+
+1. **Coincidence**: `concat(α, β) = hcomp(α, β)` --- the two operations are the same
+2. **Commutativity**: `concat(α, β) = concat(β, α)` --- vertical composition commutes
+
+The proof path requires ~7 rewrite steps using laws in *both* directions (inserting units via reverse application, then eliminating via forward). No tautology, no shortcut --- pure equational saturation over independent axioms.
+
+```
+[Theory EckmannHilton :in MetaEqUniverse :no-laws
+    [const base_obj Cat]
+    [const alpha Cat]
+    [const beta Cat]
+
+    [@law interchange
+        [hcomp [concat_cat ?a ?b] [concat_cat ?c ?d]]
+        === [concat_cat [hcomp ?a ?c] [hcomp ?b ?d]]]
+    [@law hcomp-left-id  [hcomp [refl_cat base_obj] ?p] === ?p]
+    [@law hcomp-right-id [hcomp ?p [refl_cat base_obj]] === ?p]
+    [@law concat-left-id  [concat_cat [refl_cat base_obj] ?p] === ?p]
+    [@law concat-right-id [concat_cat ?p [refl_cat base_obj]] === ?p]
+]
+
+[Proofs EckmannHiltonCheck :in EckmannHilton
+    ;; The e-graph discovers both consequences from the 5 primitives
+    [assert-eq eckmann-hilton-coincide [concat_cat alpha beta] [hcomp alpha beta]]
+    [assert-eq eckmann-hilton-commutes [concat_cat alpha beta] [concat_cat beta alpha]]
+]
+```
+
+Crucially, the *same* five laws in a `rewrite-equivalence` substrate fail to prove either consequence. Directed normalization can only apply rules forward, and neither `concat(α, β)` nor `hcomp(α, β)` matches any rule head --- they're stuck terms. This proves that the discovery is genuine: it emerges from the e-graph's bidirectional saturation physics, not from the law content alone.
+
+See `eckmann-hilton.hyp` for the full 5-part demonstration.
+
 ## Cross-Substrate Functors
 
 The same mathematical category can be compiled into different substrates. A **Functor** transports terms between them:
@@ -389,6 +460,45 @@ The same mathematical category can be compiled into different substrates. A **Fu
 ```
 
 The functor normalizes `plus(s(s(z)), s(z))` to `s(s(s(z)))` on the compute substrate, then transports the normal form to the oracle substrate where it can be checked structurally.
+
+### Epistemic Transport Across Physics Boundaries
+
+Functors enable a powerful pattern: **knowledge generated by advanced physics can be serialized and verified by weaker physics**. An `equality-saturation` substrate can autonomously discover theorems (via bidirectional `@law` reasoning), then a functor transports the computed results to a `rewrite-equivalence` substrate where they are mechanically verified using only forward rules.
+
+```
+;; E-graph world discovers theorems via bidirectional @law declarations
+[Theory Discovery :in EGraphWorld :no-laws
+    [@law interchange [hcomp [concat_cat ?a ?b] [concat_cat ?c ?d]]
+                  === [concat_cat [hcomp ?a ?c] [hcomp ?b ?d]]]
+    ;; ... 4 more laws ...
+    [def compound [hcomp [concat_cat alpha [refl_cat base_obj]]
+                         [concat_cat [refl_cat base_obj] beta]]]
+]
+
+;; Directed world receives transported normal forms via functor
+[Theory Received :in DirectedWorld :no-laws
+    [@rule interchange [hcomp [concat_cat ?a ?b] [concat_cat ?c ?d]]
+                   ==> [concat_cat [hcomp ?a ?c] [hcomp ?b ?d]]]
+    ;; ... 4 more rules ...
+    [Import compound-t [InsightTransport compound]]  ;; Transported!
+]
+
+[VerifyFunctor InsightTransport :source Discovery :target Received]
+
+[Proofs TransportVerification :in Received
+    ;; Transported result verified: compound normalized to hcomp(alpha, beta)
+    [assert-eq transport-compound compound-t [hcomp alpha beta]]
+
+    ;; The physics gap: directed world CANNOT discover the coincidence
+    [assert-neq gap-coincide [concat_cat alpha beta] [hcomp alpha beta]]
+]
+```
+
+The `Import` command normalizes the source expression on its native substrate, then ships the normal form across the functor. `VerifyFunctor` confirms that all source laws are preserved in the target. The directed world can then mechanically verify the transported results --- but it *cannot independently discover* the theorems that the e-graph found, because its forward-only rules lack the bidirectional reasoning power.
+
+This proves: discovery flows one way (advanced physics → serialization → verification), and the physics gap is real.
+
+See `transport-discovery.hyp` for the full pipeline.
 
 ### Verifying Equational Theory Preservation
 
@@ -493,6 +603,8 @@ Nothing in Hyperion restricts what your objects and morphisms *mean*. You can de
 ```
 
 PathType auto-injects path rules at the meta-level too. Paths between functors are natural isomorphisms. Paths between paths between functors are modifications. The ascent doesn't stop --- you can define categories of meta-categories, and so on.
+
+Adding `[Morphism hcomp :domain [Cat Cat] :codomain Cat]` to the meta-category introduces horizontal composition of 2-cells, modeling a **2-category** where objects are categories, 1-morphisms are functors, and 2-morphisms are natural transformations. PathType provides vertical composition (`concat`) and reflexivity (`refl`), while `hcomp` provides horizontal composition. With the interchange law relating the two compositions, this is the structure needed for the Eckmann-Hilton argument at the meta-level.
 
 See `wild-linear-meta.hyp` for a full example combining meta-categories with linear resource logic, preorders, adjunctions, and cross-substrate functors at multiple levels.
 
@@ -756,6 +868,12 @@ User theories can also declare `@law` equational laws (bidirectional in e-graph)
 | `equational-algebra.hyp` | `@law` vs `@rule` + `eval-simplify` + theory composition with law propagation |
 | `egraph-transport.hyp` | `@law` preservation through cross-substrate functors + PathType + e-graph |
 | `peano-vn.hyp` | Peano arithmetic compiled to Rust via Von Neumann backend |
+| `eckmann-hilton.hyp` | 5-part Eckmann-Hilton: auto-injected PathType interchange, ap-concat distributivity, naturality gap, e-graph autonomous discovery (coincidence + commutativity from 5 laws), physics dependence (same laws fail in directed substrate) |
+| `transport-discovery.hyp` | Meta-categorical transport across physics boundaries: e-graph discovers theorems, VerifyFunctor confirms 5 law preservations, Import transports normal forms to directed substrate, mechanical verification + physics gap (assert-neq) |
+| `lf3-grand-tour.hyp` | Comprehensive showcase: CCC + PathType + Monoidal + Modal + Preorder + resources + barriers in one file |
+| `ouroboros-linear.hyp` | Self-application under linear resource constraints |
+| `schrodinger-egraph.hyp` | E-graph meets modal barriers --- scope isolation stress test |
+| `verify-functor-resource.hyp` | Resource-aware VerifyFunctor (linear-to-linear transport) |
 | `prelude-demo.hyp` | Using prelude categories and substrates |
 
 ## Architecture
@@ -779,9 +897,9 @@ hyperion/
       emit.rs        Rust AST -> source files
     main.rs          CLI (check + kompile subcommands)
   prelude.hyp        Standard prelude (categories + substrates)
-  examples/          15 example files
+  examples/          21 example files
   tests/
-    integration.rs   80 integration tests
+    integration.rs   107 integration tests
 ```
 
 Hyperion depends on [Apeiron](../apeiron/) for term rewriting, beta reduction, and oracle checking. The Von Neumann backend is the only path that bypasses Apeiron entirely.
@@ -803,7 +921,7 @@ hyperion kompile <file.hyp> --theory <name> -o <output_dir/>
 
 ## Tests
 
-125 tests (27 unit + 98 integration), covering:
+134 tests (27 unit + 107 integration), covering:
 
 - Category/substrate/universe parsing and validation
 - All compatibility rejection rules (PathType with/without Evaluator, modal, tensor, VN)
@@ -817,7 +935,9 @@ hyperion kompile <file.hyp> --theory <name> -o <output_dir/>
 - SymmetricMonoidal compound syntax
 - Meta-coherence: self-application + cross-substrate transport + falsification
 - `@law` vs `@rule` distinction, `eval-simplify`, and law propagation through imports
-- All 15 example files
+- Autonomous e-graph discovery (Eckmann-Hilton coincidence + commutativity from independent axioms)
+- Cross-physics epistemic transport (e-graph → functor → directed verification + physics gap)
+- All 21 example files
 
 ```bash
 cargo test
@@ -825,10 +945,12 @@ cargo test
 
 ## Design Philosophy
 
-Hyperion takes three positions:
+Hyperion takes four positions:
 
 **Math and physics are orthogonal.** The same lambda calculus can run on interaction graphs, term trees, or von Neumann machines. The same monoidal structure can live on linear or affine substrates. Hyperion enforces the necessary constraints but otherwise stays out of the way.
 
 **Honesty over ceremony.** Law verification tests on witness atoms and reports the count. It doesn't claim universal truth. VerifyFunctor checks rule preservation concretely. Fuel exhaustion is inconclusive, not failure. The system tells you exactly what it checked and what it couldn't.
 
 **Self-application is the test.** If Hyperion can't framework itself --- if you can't define a category of categories and reason about functors between functors --- then the abstraction leaks. The examples prove it doesn't: `wild-linear-meta.hyp` has meta-categories with PathType at the meta-level, and it all just works.
+
+**Physics determines provability.** Identical mathematical content produces different provability depending on the substrate's equality physics. The same five equational laws declared as `@law` in an `equality-saturation` substrate enable the e-graph to autonomously discover that vertical composition is commutative (the Eckmann-Hilton argument). The same five laws in a `rewrite-equivalence` substrate are compiled as forward-only rules, and both consequences are unprovable --- `assert-neq` confirms the gap. The substrate isn't decoration; it's load-bearing. This is why Hyperion exists: to make the relationship between mathematical structure and computational physics explicit, enforced, and exploitable.
