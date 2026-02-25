@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use apeiron::parser::{Sexp, Span};
@@ -560,6 +560,9 @@ impl HyperionSession {
         let theory_name = items.get(1).and_then(|s| s.as_atom()).unwrap_or("");
         let universe_name = self.extract_in_target(items);
 
+        // Check for :no-laws flag (per-theory law skip)
+        let no_laws = items.iter().any(|s| s.is_atom(":no-laws"));
+
         if let Some(uni_name) = &universe_name {
             self.theory_universes
                 .insert(theory_name.to_string(), uni_name.clone());
@@ -570,36 +573,135 @@ impl HyperionSession {
             }
         }
 
-        // Capture @rule declarations for functor verification
-        let mut rules = Vec::new();
+        // Capture @rule declarations for functor verification + resource checking
+        let mut named_rules: Vec<(Option<String>, Sexp, Sexp)> = Vec::new();
         for item in &items[2..] {
             if let Some(inner) = item.as_list() {
-                if inner.len() >= 4 {
-                    let head = inner[0].as_atom().unwrap_or("");
-                    if head == "@rule" {
-                        // [@rule lhs ==> rhs]
-                        let lhs = inner[1].clone();
-                        let rhs = inner[3].clone();
-                        rules.push((lhs, rhs));
+                let head = inner.first().and_then(|s| s.as_atom()).unwrap_or("");
+                if head == "@rule" {
+                    // Find ==> separator to handle both named and unnamed rules:
+                    //   [@rule lhs ==> rhs]         (unnamed, 4 elements)
+                    //   [@rule name lhs ==> rhs]    (named, 5 elements)
+                    if let Some(sep_pos) = inner.iter().position(|s| s.as_atom() == Some("==>")) {
+                        if sep_pos >= 2 && sep_pos + 1 < inner.len() {
+                            let rule_name = if sep_pos == 3 {
+                                inner[1].as_atom().map(|s| s.to_string())
+                            } else {
+                                None
+                            };
+                            let lhs = inner[sep_pos - 1].clone();
+                            let rhs = inner[sep_pos + 1].clone();
+                            named_rules.push((rule_name, lhs, rhs));
+                        }
                     }
                 }
             }
         }
-        if !rules.is_empty() {
+
+        // Resource enforcement: check rules against substrate's resource mode
+        if let Some(uni_name) = &universe_name {
+            if let Some(compiled) = self.universes.get(uni_name) {
+                if let Some(sub) = self.substrates.get(&compiled.substrate_name) {
+                    self.check_resource_rules(&named_rules, &sub.resource_mode, theory_name)?;
+                }
+            }
+        }
+
+        // Store rules for functor verification (without names)
+        if !named_rules.is_empty() {
+            let rules: Vec<(Sexp, Sexp)> = named_rules
+                .iter()
+                .map(|(_, lhs, rhs)| (lhs.clone(), rhs.clone()))
+                .collect();
             self.theory_rules.insert(theory_name.to_string(), rules);
         }
 
-        let rewritten = self.rewrite_for_apeiron(sexp, universe_name.as_deref())?;
+        // Strip :no-laws before passing to Apeiron
+        let sexp_for_apeiron = if no_laws {
+            let filtered: Vec<Sexp> = items.iter()
+                .filter(|s| !s.is_atom(":no-laws"))
+                .cloned()
+                .collect();
+            Sexp::List(filtered, sexp.span())
+        } else {
+            sexp.clone()
+        };
+
+        let rewritten = self.rewrite_for_apeiron(&sexp_for_apeiron, universe_name.as_deref())?;
         self.apeiron.process(&rewritten)?;
         self.drain_apeiron_output();
 
         // Categorical law verification: after theory registration, check category laws
-        if !self.skip_laws {
+        if !self.skip_laws && !no_laws {
             if let Some(uni_name) = &universe_name {
                 self.check_categorical_laws(theory_name, uni_name)?;
             }
         }
 
+        Ok(())
+    }
+
+    /// Check resource mode constraints on @rule declarations.
+    /// For strictly-linear: each LHS meta must appear exactly once in RHS.
+    /// For affine: each LHS meta must appear at most once in RHS.
+    /// For all modes: RHS metas must be bound in LHS.
+    fn check_resource_rules(
+        &self,
+        rules: &[(Option<String>, Sexp, Sexp)],
+        mode: &substrate::ResourceMode,
+        theory_name: &str,
+    ) -> Result<()> {
+        if matches!(
+            mode,
+            substrate::ResourceMode::OptimalSharing
+                | substrate::ResourceMode::DeepCopy
+                | substrate::ResourceMode::Relevant
+        ) {
+            return Ok(());
+        }
+        for (rule_name, lhs, rhs) in rules {
+            let lhs_metas = collect_metas(lhs);
+            let rhs_counts = count_metas(rhs);
+
+            // 1. Unbound RHS metas
+            for meta in rhs_counts.keys() {
+                if !lhs_metas.contains(meta) {
+                    return Err(HyperionError::ResourceViolation {
+                        theory: theory_name.to_string(),
+                        rule_name: rule_name.clone(),
+                        detail: format!("unbound meta ?{} in RHS", meta),
+                    });
+                }
+            }
+
+            // 2. Resource constraints
+            for meta in &lhs_metas {
+                let count = rhs_counts.get(meta.as_str()).copied().unwrap_or(0);
+                match mode {
+                    substrate::ResourceMode::StrictlyLinear if count != 1 => {
+                        return Err(HyperionError::ResourceViolation {
+                            theory: theory_name.to_string(),
+                            rule_name: rule_name.clone(),
+                            detail: format!(
+                                "strictly-linear requires exactly 1 use of ?{} in RHS, got {}",
+                                meta, count
+                            ),
+                        });
+                    }
+                    substrate::ResourceMode::Affine if count > 1 => {
+                        return Err(HyperionError::ResourceViolation {
+                            theory: theory_name.to_string(),
+                            rule_name: rule_name.clone(),
+                            detail: format!(
+                                "affine requires at most 1 use of ?{} in RHS, got {}",
+                                meta, count
+                            ),
+                        });
+                    }
+                    _ => {}
+                }
+            }
+        }
         Ok(())
     }
 
@@ -732,11 +834,33 @@ impl HyperionSession {
             i += 1;
         }
 
-        // For Theory blocks in PathType universes: inject path algebra @rule declarations
+        // For Theory blocks: inject auto-rules and scope declarations from categorical structures
         let is_theory = items.first().and_then(|s| s.as_atom()).map(|a| a == "Theory").unwrap_or(false);
         if is_theory {
             if let Some(cat) = category_name.as_deref().and_then(|n| self.categories.get(n)) {
+                let sp = Span::default();
+                let mut injected_scopes: HashSet<String> = HashSet::new();
+
                 for s in &cat.structure {
+                    // Inject [Scope name] for Context declarations (barriers)
+                    if let crate::category::CategoricalStructure::ContextDecl { name } = s {
+                        if injected_scopes.insert(name.clone()) {
+                            // Insert scope declarations before rules (at position after header items)
+                            // Find insertion point: after Theory name and :in target
+                            let insert_pos = new_items.len();
+                            new_items.insert(
+                                insert_pos,
+                                Sexp::List(
+                                    vec![
+                                        Sexp::Atom("Scope".into(), sp),
+                                        Sexp::Atom(name.clone(), sp),
+                                    ],
+                                    sp,
+                                ),
+                            );
+                        }
+                    }
+
                     if let crate::category::CategoricalStructure::PathType { refl, concat, inv, ap } = s {
                         let eval_name = cat.structure.iter().find_map(|s2| {
                             if let crate::category::CategoricalStructure::Evaluator { name } = s2 {
@@ -746,6 +870,10 @@ impl HyperionSession {
                             }
                         });
                         let rules = Self::path_type_rules(refl, concat, inv, ap, eval_name);
+                        new_items.extend(rules);
+                    }
+                    if let crate::category::CategoricalStructure::Preorder { relation } = s {
+                        let rules = Self::preorder_rules(relation);
                         new_items.extend(rules);
                     }
                 }
@@ -812,6 +940,33 @@ impl HyperionSession {
         }
 
         rules
+    }
+
+    /// Generate preorder rewrite rules for auto-injection into theories.
+    fn preorder_rules(relation: &str) -> Vec<Sexp> {
+        let sp = Span::default();
+
+        let mk_rule = |lhs: Sexp, rhs: Sexp| -> Sexp {
+            Sexp::List(vec![
+                Sexp::Atom("@rule".into(), sp),
+                lhs,
+                Sexp::Atom("==>".into(), sp),
+                rhs,
+            ], sp)
+        };
+
+        let meta_a = || Sexp::Atom("?a".into(), sp);
+        let mk_rel = |x: Sexp, y: Sexp| -> Sexp {
+            Sexp::List(vec![Sexp::Atom(relation.into(), sp), x, y], sp)
+        };
+
+        vec![
+            // rel(a, a) ==> true (reflexivity)
+            mk_rule(
+                mk_rel(meta_a(), meta_a()),
+                Sexp::Atom("true".into(), sp),
+            ),
+        ]
     }
 
     /// Rewrite a single body item, looking for `[Import x [FunctorName expr ...]]`.
@@ -946,12 +1101,18 @@ impl HyperionSession {
         for (idx, (lhs, rhs)) in source_rules.iter().enumerate() {
             let mapped_lhs = Self::apply_op_map(lhs, &op_map);
             let mapped_rhs = Self::apply_op_map(rhs, &op_map);
+            // Replace ?-prefixed meta-variables with concrete witness atoms.
+            // Meta-variables in rewrite rules (like ?r) cause dup nodes in
+            // interaction nets when non-linear (appearing multiple times).
+            // Concrete atoms avoid this and properly test the equational theory.
+            let concrete_lhs = Self::concretize_metas(&mapped_lhs);
+            let concrete_rhs = Self::concretize_metas(&mapped_rhs);
             proof_items.push(Sexp::List(
                 vec![
                     Sexp::Atom("assert-eq".into(), sp),
                     Sexp::Atom(format!("verify-rule-{}", idx), sp),
-                    mapped_lhs,
-                    mapped_rhs,
+                    concrete_lhs,
+                    concrete_rhs,
                 ],
                 sp,
             ));
@@ -1002,9 +1163,71 @@ impl HyperionSession {
         }
     }
 
+    /// Replace ?-prefixed meta-variables with concrete witness atoms (__vf_name).
+    /// This avoids dup nodes in interaction nets for non-linear rules.
+    fn concretize_metas(sexp: &Sexp) -> Sexp {
+        match sexp {
+            Sexp::Atom(name, sp) => {
+                if let Some(stripped) = name.strip_prefix('?') {
+                    Sexp::Atom(format!("__vf_{}", stripped), *sp)
+                } else {
+                    sexp.clone()
+                }
+            }
+            Sexp::List(items, sp) => {
+                let mapped: Vec<Sexp> = items.iter().map(Self::concretize_metas).collect();
+                Sexp::List(mapped, *sp)
+            }
+        }
+    }
+
     /// Drain Apeiron output into our output buffer.
     fn drain_apeiron_output(&mut self) {
         self.output.append(&mut self.apeiron.output);
+    }
+}
+
+/// Collect all ?meta variable names from a Sexp tree.
+fn collect_metas(sexp: &Sexp) -> HashSet<String> {
+    let mut result = HashSet::new();
+    collect_metas_inner(sexp, &mut result);
+    result
+}
+
+fn collect_metas_inner(sexp: &Sexp, result: &mut HashSet<String>) {
+    match sexp {
+        Sexp::Atom(name, _) => {
+            if let Some(stripped) = name.strip_prefix('?') {
+                result.insert(stripped.to_string());
+            }
+        }
+        Sexp::List(items, _) => {
+            for item in items {
+                collect_metas_inner(item, result);
+            }
+        }
+    }
+}
+
+/// Count occurrences of each ?meta variable in a Sexp tree.
+fn count_metas(sexp: &Sexp) -> HashMap<String, usize> {
+    let mut result = HashMap::new();
+    count_metas_inner(sexp, &mut result);
+    result
+}
+
+fn count_metas_inner(sexp: &Sexp, result: &mut HashMap<String, usize>) {
+    match sexp {
+        Sexp::Atom(name, _) => {
+            if let Some(stripped) = name.strip_prefix('?') {
+                *result.entry(stripped.to_string()).or_insert(0) += 1;
+            }
+        }
+        Sexp::List(items, _) => {
+            for item in items {
+                count_metas_inner(item, result);
+            }
+        }
     }
 }
 

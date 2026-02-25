@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use crate::arena::Arena;
 use crate::builder::{self, BuildEnv};
 use crate::error::{ApeironError, Result};
+use crate::eta;
 use crate::hash;
 use crate::judgment::{self, DerivRule, JudgmentDecl};
 use crate::morphism::{self, AutoMorphism};
@@ -39,6 +40,8 @@ pub enum CheckMode {
     Reversible,
     /// Multiple rules may match; non-deterministic selection.
     ConfluentRace,
+    /// Eta-contraction: (lam x (app f x)) = f
+    Eta,
 }
 
 /// An operator declared in @syntax.
@@ -1720,6 +1723,31 @@ impl Session {
         if lhs_hash == rhs_hash {
             self.output.push(format!("[ASSERT] {} passed", name));
             Ok(())
+        } else if config.check_modes.contains(&CheckMode::Eta) {
+            // Eta fallback: run eta-contraction on both sides and re-hash
+            eta::eta_contract(&mut self.arena, lhs_ptr);
+            eta::eta_contract(&mut self.arena, rhs_ptr);
+
+            // Re-resolve pointers (root ports may have changed)
+            let lhs_port2 = self.arena.port(lhs_root, 1);
+            let rhs_port2 = self.arena.port(rhs_root, 1);
+            let lhs_ptr2 = if lhs_port2.is_connected() { lhs_port2.target } else { lhs_root };
+            let rhs_ptr2 = if rhs_port2.is_connected() { rhs_port2.target } else { rhs_root };
+
+            let lhs_hash2 = hash::topological_hash_mode(&self.arena, lhs_ptr2, canonical);
+            let rhs_hash2 = hash::topological_hash_mode(&self.arena, rhs_ptr2, canonical);
+
+            if lhs_hash2 == rhs_hash2 {
+                self.output.push(format!("[ASSERT] {} passed (eta)", name));
+                Ok(())
+            } else {
+                let lhs_term = readback::readback(&self.arena, lhs_ptr2);
+                let rhs_term = readback::readback(&self.arena, rhs_ptr2);
+                Err(ApeironError::AssertionFailed {
+                    name,
+                    detail: format!("{} != {}", lhs_term, rhs_term),
+                })
+            }
         } else {
             let lhs_term = readback::readback(&self.arena, lhs_ptr);
             let rhs_term = readback::readback(&self.arena, rhs_ptr);
@@ -1786,6 +1814,31 @@ impl Session {
         if lhs_hash != rhs_hash {
             self.output.push(format!("[ASSERT] {} passed (neq)", name));
             Ok(())
+        } else if config.check_modes.contains(&CheckMode::Eta) {
+            // Eta fallback for neq: run eta-contraction and re-check
+            // If still equal after eta → truly equal → neq fails
+            eta::eta_contract(&mut self.arena, lhs_ptr);
+            eta::eta_contract(&mut self.arena, rhs_ptr);
+
+            let lhs_port2 = self.arena.port(lhs_root, 1);
+            let rhs_port2 = self.arena.port(rhs_root, 1);
+            let lhs_ptr2 = if lhs_port2.is_connected() { lhs_port2.target } else { lhs_root };
+            let rhs_ptr2 = if rhs_port2.is_connected() { rhs_port2.target } else { rhs_root };
+
+            let lhs_hash2 = hash::topological_hash_mode(&self.arena, lhs_ptr2, canonical);
+            let rhs_hash2 = hash::topological_hash_mode(&self.arena, rhs_ptr2, canonical);
+
+            if lhs_hash2 != rhs_hash2 {
+                self.output.push(format!("[ASSERT] {} passed (neq, eta)", name));
+                Ok(())
+            } else {
+                let lhs_term = readback::readback(&self.arena, lhs_ptr2);
+                let rhs_term = readback::readback(&self.arena, rhs_ptr2);
+                Err(ApeironError::AssertionFailed {
+                    name,
+                    detail: format!("expected != but {} == {} (after eta)", lhs_term, rhs_term),
+                })
+            }
         } else {
             let lhs_term = readback::readback(&self.arena, lhs_ptr);
             let rhs_term = readback::readback(&self.arena, rhs_ptr);
@@ -2536,6 +2589,7 @@ fn parse_check_block(items: &[Sexp], config: &mut SystemConfig) -> Result<()> {
             "pattern-unification" => CheckMode::PatternUnification,
             "reversible" => CheckMode::Reversible,
             "confluent-race" | "race" => CheckMode::ConfluentRace,
+            "eta" | "eta-contraction" => CheckMode::Eta,
             _ => {
                 return Err(ApeironError::InvalidConfig {
                     block: "@check".into(),

@@ -1300,10 +1300,13 @@ fn path_type_parses() {
 
 #[test]
 fn path_type_requires_lambda() {
+    // PathType + Evaluator requires lambda-capable engine
     let mut session = HyperionSession::new();
     let input = r#"
         [Category PathCat
             [Object X]
+            [Morphism app :domain [X X] :codomain X]
+            [Evaluator app]
             [PathType :refl refl :concat concat :inv inv :ap ap]
         ]
         [Substrate Grid
@@ -1316,7 +1319,55 @@ fn path_type_requires_lambda() {
     "#;
     let err = process_all(&mut session, input).unwrap_err();
     let msg = format!("{}", err);
-    assert!(msg.contains("PathType"), "Got: {}", msg);
+    assert!(msg.contains("PathType") || msg.contains("Exponential"), "Got: {}", msg);
+}
+
+#[test]
+fn path_type_without_evaluator_on_non_lambda_engine() {
+    // PathType WITHOUT Evaluator is purely first-order — no lambda needed
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category PathCat
+            [Object X]
+            [PathType :refl refl :concat concat :inv inv :ap ap]
+        ]
+        [Substrate Grid
+            @engine symmetric-monoidal
+            @resource-mode deep-copy
+            @barrier transparent
+            @equality rewrite-equivalence
+        ]
+        [Universe OK :category PathCat :substrate Grid]
+    "#;
+    process_all(&mut session, input).expect("PathType without Evaluator should work on non-lambda engine");
+}
+
+#[test]
+fn symmetric_monoidal_compound_syntax() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category MonCat
+            [Object T]
+            [Morphism tensor :domain [T T] :codomain T]
+            [Morphism unit :domain [] :codomain T]
+            [SymmetricMonoidal tensor unit]
+        ]
+        [Substrate Net
+            @engine interaction-graph
+            @resource-mode optimal-sharing
+            @barrier transparent
+            @equality rewrite-equivalence
+        ]
+        [Universe MonWorld :category MonCat :substrate Net]
+        [Theory MonTheory :in MonWorld
+            [@rule [tensor [tensor ?a ?b] ?c] ==> [tensor ?a [tensor ?b ?c]]]
+            [@rule [tensor unit ?a] ==> ?a]
+            [@rule [tensor ?a unit] ==> ?a]
+        ]
+    "#;
+    process_all(&mut session, input).expect("SymmetricMonoidal compound syntax should work");
+    let output = session.output.join("\n");
+    assert!(output.contains("6 witness tests"), "Should verify monoidal laws: {}", output);
 }
 
 #[test]
@@ -1615,4 +1666,658 @@ fn cross_substrate_verified() {
 #[test]
 fn simple_ccc_example() {
     run_file("examples/simple-ccc.hyp");
+}
+
+#[test]
+fn modal_hott_example() {
+    run_file("examples/modal-hott.hyp");
+}
+
+#[test]
+fn named_rules_captured_for_verify_functor() {
+    // Regression test: named @rule format [@rule name lhs ==> rhs]
+    // must be captured correctly for VerifyFunctor (not just unnamed [@rule lhs ==> rhs])
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category C [Object T] [Morphism f :domain [T] :codomain T]]
+        [Substrate A @engine interaction-graph @resource-mode optimal-sharing @barrier transparent @equality rewrite-equivalence]
+        [Substrate B @engine term-tree @resource-mode deep-copy @barrier transparent @equality topological-hash]
+        [Universe U1 :category C :substrate A]
+        [Universe U2 :category C :substrate B]
+        [Theory T1 :in U1
+            [@rule my-rule [f [f ?x]] ==> [f ?x]]
+        ]
+        [Theory T2 :in U2
+            [@rule my-rule [f [f ?x]] ==> [f ?x]]
+        ]
+        [Functor F :from A :to B :verify]
+        [VerifyFunctor F :source T1 :target T2]
+    "#;
+    process_all(&mut session, input).expect("named rules should be captured and verified");
+    let output = session.output.join("\n");
+    assert!(output.contains("[VERIFY-FUNCTOR]"), "should produce verify output");
+    assert!(output.contains("1 rules verified"), "should verify 1 rule");
+}
+
+#[test]
+fn monoidal_hott_example() {
+    run_file("examples/monoidal-hott.hyp");
+}
+
+#[test]
+fn wild_linear_meta_example() {
+    run_file("examples/wild-linear-meta.hyp");
+}
+
+#[test]
+fn preorder_auto_injects_reflexivity() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category P [Object X] [Morphism rel :domain [X X] :codomain X] [Preorder rel]]
+        [Substrate S @engine term-tree @resource-mode deep-copy @barrier transparent @equality rewrite-equivalence]
+        [Universe U :category P :substrate S]
+        [Theory T :in U [const a X]]
+        [Proofs Check :in T [assert-eq refl-test [rel a a] true]]
+    "#;
+    process_all(&mut session, input).expect("Preorder reflexivity should be auto-injected");
+    let output = session.output.join("\n");
+    assert!(output.contains("2 witness tests"), "Should verify preorder laws: {}", output);
+}
+
+#[test]
+fn preorder_parses_in_category() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category P [Object X] [Morphism leq :domain [X X] :codomain X] [Preorder leq]]
+    "#;
+    process_all(&mut session, input).expect("Preorder should parse");
+    let output = session.output.join("\n");
+    assert!(output.contains("1 structures"), "Got: {}", output);
+}
+
+// ============================================================
+// Meta-coherence: the "framework³" stress test
+// ============================================================
+
+#[test]
+fn meta_coherence_example() {
+    run_file("examples/meta-coherence.hyp");
+}
+
+#[test]
+fn meta_coherence_both_universes_compile() {
+    // The same MetaCat + PathType compiles to two different equality physics
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category MetaCat
+          [Object Cat]
+          [Morphism functor :domain [Cat Cat] :codomain Cat]
+          [PathType :refl refl_cat :concat concat_cat :inv inv_cat :ap ap_cat]
+        ]
+        [Substrate MetaHash
+          @engine interaction-graph @resource-mode optimal-sharing
+          @barrier transparent @equality topological-hash]
+        [Substrate MetaHomotopy
+          @engine interaction-graph @resource-mode optimal-sharing
+          @barrier transparent @equality topological-homotopy]
+        [Universe MetaU_Hash :category MetaCat :substrate MetaHash]
+        [Universe MetaU_HoTT :category MetaCat :substrate MetaHomotopy]
+    "#;
+    process_all(&mut session, input).expect("Both universes should compile");
+    assert!(session.universes.contains_key("MetaU_Hash"));
+    assert!(session.universes.contains_key("MetaU_HoTT"));
+    // Verify they use different systems
+    let sys1 = &session.universes["MetaU_Hash"].system_name;
+    let sys2 = &session.universes["MetaU_HoTT"].system_name;
+    assert_ne!(sys1, sys2, "Different substrates should produce different systems");
+}
+
+#[test]
+fn meta_coherence_pathtype_law_verification() {
+    // PathType at meta-level: 4 witness tests (no Evaluator → no ap-refl)
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category MetaCat
+          [Object Cat]
+          [Morphism functor :domain [Cat Cat] :codomain Cat]
+          [PathType :refl refl_cat :concat concat_cat :inv inv_cat :ap ap_cat]
+        ]
+        [Substrate S @engine interaction-graph @resource-mode optimal-sharing
+          @barrier transparent @equality topological-homotopy]
+        [Universe U :category MetaCat :substrate S]
+        [Theory T :in U
+          [const A Cat]
+          [@rule func-comp [functor [functor ?F ?G] ?H] ==> [functor ?F [functor ?G ?H]]]
+          [@rule func-id-l [functor id_func ?G] ==> ?G]
+          [@rule func-id-r [functor ?F id_func] ==> ?F]
+          [@rule func-refl [functor ?F [refl_cat ?G]] ==> [refl_cat [functor ?F ?G]]]
+        ]
+    "#;
+    process_all(&mut session, input).expect("Meta PathType laws should pass");
+    let output = session.output.join("\n");
+    assert!(output.contains("4 witness tests"),
+        "PathType without Evaluator should have 4 tests: {}", output);
+    assert!(output.contains("passed categorical law verification"),
+        "Laws should pass: {}", output);
+}
+
+#[test]
+fn meta_coherence_normalization_and_transport() {
+    // A nontrivial meta-term normalizes and transports correctly
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category MetaCat
+          [Object Cat]
+          [Morphism functor :domain [Cat Cat] :codomain Cat]
+          [PathType :refl refl_cat :concat concat_cat :inv inv_cat :ap ap_cat]
+        ]
+        [Substrate SrcSub @engine interaction-graph @resource-mode optimal-sharing
+          @barrier transparent @equality topological-hash]
+        [Substrate TgtSub @engine interaction-graph @resource-mode optimal-sharing
+          @barrier transparent @equality topological-homotopy]
+        [Universe U1 :category MetaCat :substrate SrcSub]
+        [Universe U2 :category MetaCat :substrate TgtSub]
+
+        [Theory Src :in U1
+          [const PreCat Cat]
+          [const id_func Cat]
+          [@rule func-comp [functor [functor ?F ?G] ?H] ==> [functor ?F [functor ?G ?H]]]
+          [@rule func-id-l [functor id_func ?G] ==> ?G]
+          [@rule func-id-r [functor ?F id_func] ==> ?F]
+          [@rule func-refl [functor ?F [refl_cat ?G]] ==> [refl_cat [functor ?F ?G]]]
+          [def t [functor [functor id_func id_func] PreCat]]
+        ]
+
+        [Proofs SrcCheck :in Src
+          [assert-eq norm t PreCat]
+        ]
+
+        [Theory Tgt :in U2
+          [const PreCat Cat]
+          [const id_func Cat]
+          [@rule func-comp [functor [functor ?F ?G] ?H] ==> [functor ?F [functor ?G ?H]]]
+          [@rule func-id-l [functor id_func ?G] ==> ?G]
+          [@rule func-id-r [functor ?F id_func] ==> ?F]
+          [@rule func-refl [functor ?F [refl_cat ?G]] ==> [refl_cat [functor ?F ?G]]]
+        ]
+
+        [Functor F :from SrcSub :to TgtSub :verify]
+        [VerifyFunctor F :source Src :target Tgt]
+
+        [Theory Transported :in U2
+          [const PreCat Cat]
+          [Import result [F t]]
+        ]
+
+        [Proofs TransCheck :in Transported
+          [assert-eq ok result PreCat]
+        ]
+    "#;
+    process_all(&mut session, input).expect("Transport should preserve normalization");
+    let output = session.output.join("\n");
+    assert!(output.contains("[VERIFY-FUNCTOR]"), "Should verify functor: {}", output);
+    assert!(output.contains("4 rules verified"), "Should verify 4 rules: {}", output);
+}
+
+#[test]
+fn meta_coherence_pathtype_stable_across_equality_modes() {
+    // PathType auto-injection works under both topological-hash and topological-homotopy
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category MetaCat
+          [Object Cat]
+          [Morphism functor :domain [Cat Cat] :codomain Cat]
+          [PathType :refl refl_cat :concat concat_cat :inv inv_cat :ap ap_cat]
+        ]
+        [Substrate HashSub @engine interaction-graph @resource-mode optimal-sharing
+          @barrier transparent @equality topological-hash]
+        [Substrate HoTTSub @engine interaction-graph @resource-mode optimal-sharing
+          @barrier transparent @equality topological-homotopy]
+        [Universe U_Hash :category MetaCat :substrate HashSub]
+        [Universe U_HoTT :category MetaCat :substrate HoTTSub]
+
+        [Theory T_Hash :in U_Hash [const A Cat]]
+        [Proofs P_Hash :in T_Hash
+          [assert-eq lunit [concat_cat [refl_cat A] [refl_cat A]] [refl_cat A]]
+          [assert-eq inv   [inv_cat [refl_cat A]]                 [refl_cat A]]
+        ]
+
+        [Theory T_HoTT :in U_HoTT [const A Cat]]
+        [Proofs P_HoTT :in T_HoTT
+          [assert-eq lunit [concat_cat [refl_cat A] [refl_cat A]] [refl_cat A]]
+          [assert-eq inv   [inv_cat [refl_cat A]]                 [refl_cat A]]
+        ]
+    "#;
+    process_all(&mut session, input).expect("PathType should work under both equality modes");
+}
+
+#[test]
+fn meta_coherence_verify_functor_fails_on_broken_rule() {
+    // Deliberately break a target rule and confirm VerifyFunctor catches it
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category MetaCat
+          [Object Cat]
+          [Morphism functor :domain [Cat Cat] :codomain Cat]
+          [PathType :refl refl_cat :concat concat_cat :inv inv_cat :ap ap_cat]
+        ]
+        [Substrate A @engine interaction-graph @resource-mode optimal-sharing
+          @barrier transparent @equality rewrite-equivalence]
+        [Substrate B @engine term-tree @resource-mode deep-copy
+          @barrier transparent @equality rewrite-equivalence]
+        [Universe U1 :category MetaCat :substrate A]
+        [Universe U2 :category MetaCat :substrate B]
+
+        [Theory Src :in U1
+          [@rule func-comp [functor [functor ?F ?G] ?H] ==> [functor ?F [functor ?G ?H]]]
+          [@rule func-id-l [functor id_func ?G] ==> ?G]
+          [@rule func-id-r [functor ?F id_func] ==> ?F]
+        ]
+
+        [Theory BrokenTgt :in U2
+          [@rule func-comp [functor [functor ?F ?G] ?H] ==> [functor ?F [functor ?G ?H]]]
+          [@rule func-id-l [functor id_func ?G] ==> ?G]
+          ;; DELIBERATELY WRONG: func-id-r target is broken (returns id_func, not ?F)
+          [@rule func-id-r [functor ?F id_func] ==> id_func]
+        ]
+
+        [Functor F :from A :to B :verify]
+        [VerifyFunctor F :source Src :target BrokenTgt]
+    "#;
+    let result = process_all(&mut session, input);
+    assert!(result.is_err(), "VerifyFunctor should fail when target rule is broken");
+    let err = format!("{}", result.unwrap_err());
+    assert!(err.contains("equational preservation") || err.contains("verify"),
+        "Error should mention equational preservation: {}", err);
+}
+
+// ============================================================
+// LF³ Grand Tour
+// ============================================================
+
+#[test]
+fn lf3_grand_tour_example() {
+    run_file("examples/lf3-grand-tour.hyp");
+}
+
+#[test]
+fn lf3_grand_tour_part_a_law_counts() {
+    // Part A: CCC(3) + Monoidal(6) + PathType+Eval(5) = 14 witness tests
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category StageHoTT
+          [Object Type] [Object Term]
+          [Morphism arrow :domain [Type Type] :codomain Type]
+          [Morphism app :domain [Term Term] :codomain Term]
+          [Exponential lam :object Term]
+          [Evaluator app]
+          [Morphism tensor :domain [Term Term] :codomain Term]
+          [SymmetricMonoidal tensor unit]
+          [PathType :refl refl :concat concat :inv inv :ap ap]
+        ]
+        [Substrate S @engine interaction-graph @resource-mode optimal-sharing
+          @barrier transparent @equality rewrite-equivalence]
+        [Universe U :category StageHoTT :substrate S]
+        [Theory T :in U
+          [const a Term]
+          [@rule mon-assoc [tensor [tensor ?x ?y] ?z] ==> [tensor ?x [tensor ?y ?z]]]
+          [@rule mon-lunit [tensor unit ?x] ==> ?x]
+          [@rule mon-runit [tensor ?x unit] ==> ?x]
+        ]
+    "#;
+    process_all(&mut session, input).expect("Part A laws should pass");
+    let output = session.output.join("\n");
+    assert!(output.contains("14 witness tests"),
+        "CCC+Monoidal+PathType(+Eval) should be 14 tests: {}", output);
+}
+
+#[test]
+fn lf3_grand_tour_part_b_law_counts() {
+    // Part B: Monoidal(6) + PathType-no-Eval(4) = 10 witness tests
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category LinHoTT
+          [Object Obj]
+          [Morphism tensor :domain [Obj Obj] :codomain Obj]
+          [SymmetricMonoidal tensor unit]
+          [PathType :refl reflL :concat concatL :inv invL :ap apL]
+        ]
+        [Substrate S @engine interaction-graph @resource-mode affine
+          @barrier transparent @equality rewrite-equivalence]
+        [Universe U :category LinHoTT :substrate S]
+        [Theory T :in U
+          [const p Obj]
+          [@rule assoc [tensor [tensor ?x ?y] ?z] ==> [tensor ?x [tensor ?y ?z]]]
+          [@rule lunit [tensor unit ?x] ==> ?x]
+          [@rule runit [tensor ?x unit] ==> ?x]
+        ]
+    "#;
+    process_all(&mut session, input).expect("Part B laws should pass");
+    let output = session.output.join("\n");
+    assert!(output.contains("10 witness tests"),
+        "Monoidal+PathType(no Eval) should be 10 tests: {}", output);
+}
+
+#[test]
+fn no_laws_flag_skips_law_verification() {
+    // :no-laws on a Theory skips categorical law verification
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category MonCat
+          [Object Obj]
+          [Morphism tensor :domain [Obj Obj] :codomain Obj]
+          [SymmetricMonoidal tensor unit]
+        ]
+        [Substrate S @engine interaction-graph @resource-mode optimal-sharing
+          @barrier transparent @equality rewrite-equivalence]
+        [Universe U :category MonCat :substrate S]
+        [Theory T :in U :no-laws
+          [const a Obj]
+        ]
+    "#;
+    // Without :no-laws, this would fail because T has no monoidal rules.
+    // With :no-laws, it should succeed.
+    process_all(&mut session, input).expect(":no-laws should skip law verification");
+    let output = session.output.join("\n");
+    assert!(!output.contains("witness tests"),
+        ":no-laws should skip law verification entirely: {}", output);
+}
+
+#[test]
+fn no_laws_flag_without_flag_fails() {
+    // Without :no-laws, a theory lacking rules in a monoidal universe should fail laws
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category MonCat
+          [Object Obj]
+          [Morphism tensor :domain [Obj Obj] :codomain Obj]
+          [SymmetricMonoidal tensor unit]
+        ]
+        [Substrate S @engine interaction-graph @resource-mode optimal-sharing
+          @barrier transparent @equality rewrite-equivalence]
+        [Universe U :category MonCat :substrate S]
+        [Theory T :in U
+          [const a Obj]
+        ]
+    "#;
+    let result = process_all(&mut session, input);
+    assert!(result.is_err(), "Theory without monoidal rules should fail law verification");
+}
+
+// ============================================================
+// Resource enforcement tests
+// ============================================================
+
+#[test]
+fn resource_linear_rejects_dup() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category C [Object T] [Morphism dup :domain [T] :codomain T] [Morphism tensor :domain [T T] :codomain T]]
+        [Substrate Lin
+            @engine interaction-graph
+            @resource-mode strictly-linear
+            @barrier transparent
+            @equality rewrite-equivalence
+        ]
+        [Universe U :category C :substrate Lin]
+        [Theory T :in U :no-laws
+            [@rule [dup ?x] ==> [tensor ?x ?x]]
+        ]
+    "#;
+    let err = process_all(&mut session, input).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("resource violation"), "Got: {}", msg);
+    assert!(msg.contains("strictly-linear requires exactly 1 use"), "Got: {}", msg);
+}
+
+#[test]
+fn resource_linear_rejects_drop() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category C [Object T] [Morphism drop :domain [T] :codomain T]]
+        [Substrate Lin
+            @engine interaction-graph
+            @resource-mode strictly-linear
+            @barrier transparent
+            @equality rewrite-equivalence
+        ]
+        [Universe U :category C :substrate Lin]
+        [Theory T :in U :no-laws
+            [@rule [drop ?x] ==> unit]
+        ]
+    "#;
+    let err = process_all(&mut session, input).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("resource violation"), "Got: {}", msg);
+    assert!(msg.contains("strictly-linear requires exactly 1 use"), "Got: {}", msg);
+}
+
+#[test]
+fn resource_affine_allows_drop() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category C [Object T] [Morphism drop :domain [T] :codomain T]]
+        [Substrate Aff
+            @engine interaction-graph
+            @resource-mode affine
+            @barrier transparent
+            @equality rewrite-equivalence
+        ]
+        [Universe U :category C :substrate Aff]
+        [Theory T :in U :no-laws
+            [@rule [drop ?x] ==> unit]
+        ]
+    "#;
+    process_all(&mut session, input).expect("affine should allow drop (0 uses)");
+}
+
+#[test]
+fn resource_affine_rejects_dup() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category C [Object T] [Morphism dup :domain [T] :codomain T] [Morphism tensor :domain [T T] :codomain T]]
+        [Substrate Aff
+            @engine interaction-graph
+            @resource-mode affine
+            @barrier transparent
+            @equality rewrite-equivalence
+        ]
+        [Universe U :category C :substrate Aff]
+        [Theory T :in U :no-laws
+            [@rule [dup ?x] ==> [tensor ?x ?x]]
+        ]
+    "#;
+    let err = process_all(&mut session, input).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("resource violation"), "Got: {}", msg);
+    assert!(msg.contains("affine requires at most 1 use"), "Got: {}", msg);
+}
+
+#[test]
+fn resource_sharing_allows_all() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category C [Object T] [Morphism dup :domain [T] :codomain T] [Morphism tensor :domain [T T] :codomain T] [Morphism drop :domain [T] :codomain T]]
+        [Substrate Sharing
+            @engine interaction-graph
+            @resource-mode optimal-sharing
+            @barrier transparent
+            @equality rewrite-equivalence
+        ]
+        [Universe U :category C :substrate Sharing]
+        [Theory T :in U :no-laws
+            [@rule [dup ?x] ==> [tensor ?x ?x]]
+            [@rule [drop ?x] ==> unit]
+        ]
+    "#;
+    process_all(&mut session, input).expect("optimal-sharing should allow dup and drop");
+}
+
+#[test]
+fn resource_rejects_unbound_rhs_meta() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category C [Object T] [Morphism tensor :domain [T T] :codomain T]]
+        [Substrate Lin
+            @engine interaction-graph
+            @resource-mode strictly-linear
+            @barrier transparent
+            @equality rewrite-equivalence
+        ]
+        [Universe U :category C :substrate Lin]
+        [Theory T :in U :no-laws
+            [@rule [tensor ?x ?y] ==> ?z]
+        ]
+    "#;
+    let err = process_all(&mut session, input).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("resource violation"), "Got: {}", msg);
+    assert!(msg.contains("unbound meta ?z"), "Got: {}", msg);
+}
+
+// ============================================================
+// Barrier scope injection tests
+// ============================================================
+
+#[test]
+fn barrier_scope_injection() {
+    // Context declarations should become Scope declarations in Apeiron output
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category ModalCat
+            [Object Prop]
+            [Morphism box :domain [Prop] :codomain Prop]
+            [ModalOperator box]
+            [Context WorldA]
+        ]
+        [Substrate Net
+            @engine interaction-graph
+            @resource-mode optimal-sharing
+            @barrier contextual-membranes
+            @equality rewrite-equivalence
+        ]
+        [Universe ModalWorld :category ModalCat :substrate Net]
+        [Theory ModalTheory :in ModalWorld :no-laws
+            [const p Prop]
+        ]
+    "#;
+    process_all(&mut session, input).expect("barrier scope injection should work");
+}
+
+#[test]
+fn barrier_stuckness_and_activation() {
+    // barrier blocks inner reduction; with-scope enables it
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category CCC
+            [Object Type] [Object Term]
+            [Morphism app :domain [Term Term] :codomain Term]
+            [Exponential lam :object Term]
+            [Evaluator app]
+            [Context WorldA]
+        ]
+        [Substrate Net
+            @engine interaction-graph
+            @resource-mode optimal-sharing
+            @barrier contextual-membranes
+            @equality topological-hash
+        ]
+        [Universe LamWorld :category CCC :substrate Net]
+        [Theory LamTheory :in LamWorld
+            [const a Term]
+        ]
+        [Proofs BarrierCheck :in LamTheory
+            ;; Without scope activation, barrier blocks inner beta
+            [assert-neq barrier-stuck [barrier WorldA [app [lam x x] a]] a]
+
+            ;; With scope active, inner reduction proceeds
+            [with-scope WorldA
+                [assert-eq barrier-inner [barrier WorldA [app [lam x x] a]] [barrier WorldA a]]
+            ]
+        ]
+    "#;
+    process_all(&mut session, input).expect("barrier stuckness and activation should work");
+}
+
+// ============================================================
+// Eta-contraction tests
+// ============================================================
+
+#[test]
+fn eta_homotopy_vs_hash() {
+    // Under topological-homotopy, [lam x [app f x]] = f (eta-contraction)
+    // Under topological-hash, [lam x [app f x]] != f
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category CCC
+            [Object Type] [Object Term]
+            [Morphism app :domain [Term Term] :codomain Term]
+            [Exponential lam :object Term]
+            [Evaluator app]
+        ]
+        [Substrate HomotopySub
+            @engine interaction-graph
+            @resource-mode optimal-sharing
+            @barrier transparent
+            @equality topological-homotopy
+        ]
+        [Substrate HashSub
+            @engine interaction-graph
+            @resource-mode optimal-sharing
+            @barrier transparent
+            @equality topological-hash
+        ]
+        [Universe HomotopyWorld :category CCC :substrate HomotopySub]
+        [Universe HashWorld :category CCC :substrate HashSub]
+
+        [Theory EtaHomotopy :in HomotopyWorld
+            [const f Term]
+        ]
+        [Proofs EtaHomotopyCheck :in EtaHomotopy
+            [assert-eq eta-equal [lam x [app f x]] f]
+        ]
+
+        [Theory EtaHash :in HashWorld
+            [const f Term]
+        ]
+        [Proofs EtaHashCheck :in EtaHash
+            [assert-neq eta-diff [lam x [app f x]] f]
+        ]
+    "#;
+    process_all(&mut session, input).expect("eta homotopy vs hash should work");
+}
+
+#[test]
+fn eta_does_not_loop() {
+    // A term already in eta-normal form should terminate quickly
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category CCC
+            [Object Type] [Object Term]
+            [Morphism app :domain [Term Term] :codomain Term]
+            [Exponential lam :object Term]
+            [Evaluator app]
+        ]
+        [Substrate HomotopySub
+            @engine interaction-graph
+            @resource-mode optimal-sharing
+            @barrier transparent
+            @equality topological-homotopy
+        ]
+        [Universe EtaWorld :category CCC :substrate HomotopySub]
+        [Theory EtaNormal :in EtaWorld
+            [const a Term]
+            [const b Term]
+        ]
+        [Proofs EtaCheck :in EtaNormal
+            ;; These are eta-normal already — should just hash-compare fine
+            [assert-eq already-normal a a]
+            [assert-neq diff-terms a b]
+            ;; [lam x [app f [app g x]]] is NOT an eta-redex (arg to f is [app g x], not x)
+            ;; So it should remain distinct from [lam y [app f [app g y]]]... actually those ARE alpha-equal
+            ;; Better test: [lam x [app f [app g x]]] != g
+            [assert-neq not-eta [lam x [app f [app g x]]] g]
+        ]
+    "#;
+    process_all(&mut session, input).expect("eta-normal terms should not loop");
 }

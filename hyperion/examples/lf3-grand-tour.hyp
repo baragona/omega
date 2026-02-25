@@ -1,0 +1,366 @@
+;; lf3-grand-tour.hyp
+;; ==================
+;; A flagship "LF^3" demo that exercises:
+;;   (A) A "maximal" universe: CCC + SymmetricMonoidal + Modal + PathType(+Evaluator)
+;;       compiled to two different substrates, with VerifyFunctor + transported normalization.
+;;   (B) A resource-sensitive tower: strictly-linear → affine,
+;;       with extra affine-only rules, VerifyFunctor, NatTrans, Adjunction, and transport.
+;;
+;; Headline results:
+;;   - (A) Law verification: CCC(3) + Monoidal(6) + PathType(+Eval)(5) = 14 witness tests
+;;   - (B) Law verification: Monoidal(6) + PathType(no Eval)(4)        = 10 witness tests
+;;   - VerifyFunctor: 8 rules (A) + 6 rules (B) verified across substrates
+;;
+;; Run:
+;;   hyperion check lf3-grand-tour.hyp -v
+;;
+;; All three substrate-level features are now enforced at runtime:
+;;   - Resource modes: strictly-linear/affine constraints are checked on @rule
+;;     declarations (meta-variable usage validated against substrate resource mode).
+;;   - Barrier modes: [Context WorldA] injects real Apeiron [Scope WorldA]
+;;     declarations. [barrier WorldA expr] blocks reduction; [with-scope WorldA]
+;;     dissolves barriers. Observable via assert-eq/assert-neq.
+;;   - Equality modes: topological-homotopy enables eta-contraction as an
+;;     additional equality heuristic. (lam x (app f x)) = f under homotopy,
+;;     but NOT under topological-hash. Observable via assert-eq vs assert-neq.
+
+;; ============================================================
+;; (A) STAGED HoTT LAMBDA + PARALLELISM + MODALITY, CROSS-SUBSTRATE
+;; ============================================================
+
+;; A1. Category: CCC + SymmetricMonoidal + Modal + PathType (with Evaluator)
+[Category StageHoTT
+  [Object Type]
+  [Object Term]
+
+  ;; CCC-ish core
+  [Morphism arrow :domain [Type Type] :codomain Type]
+  [Morphism app   :domain [Term Term] :codomain Term]
+  [Exponential lam :object Term]
+  [Evaluator app]
+
+  ;; Parallel composition
+  [Morphism tensor :domain [Term Term] :codomain Term]
+  [SymmetricMonoidal tensor unit]
+
+  ;; Modal scoping
+  [ModalOperator box]
+  [Context WorldA]
+  [Context WorldB]
+
+  ;; HoTT paths (with Evaluator present => 5 auto-injected path rules incl ap-refl)
+  [PathType :refl refl :concat concat :inv inv :ap ap]
+
+  ;; Duplication (non-linear — legal on optimal-sharing, not strictly-linear)
+  [Morphism dup :domain [Term] :codomain Term]
+]
+
+;; A2. Two substrates: different barrier + equality configurations
+;;     These generate genuinely different Apeiron system configs
+;;     (binding=Contextual vs binding=Implicit, check modes differ).
+[Substrate ComputeNet
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier contextual-membranes
+  @equality topological-homotopy
+]
+
+[Substrate SealedOracle
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier cryptographic
+  @equality topological-hash
+]
+
+;; A3. Two universes from the same category
+[Universe StageCompute :category StageHoTT :substrate ComputeNet]
+[Universe StageOracle  :category StageHoTT :substrate SealedOracle]
+
+;; A4. Source theory (compute): monoidal laws + cross-structure "glue" rules + demo terms
+[Theory StageSource :in StageCompute
+  [const a Term]
+  [const b Term]
+  [const f Term]
+
+  ;; REQUIRED monoidal laws (user-provided; law checker verifies these)
+  [@rule mon-assoc [tensor [tensor ?x ?y] ?z] ==> [tensor ?x [tensor ?y ?z]]]
+  [@rule mon-lunit [tensor unit ?x]          ==> ?x]
+  [@rule mon-runit [tensor ?x unit]          ==> ?x]
+
+  ;; "Glue" rules: show PathType/Modal/Monoidal interact (all terminating)
+  [@rule tensor-refl [tensor [refl ?x] [refl ?y]] ==> [refl [tensor ?x ?y]]]
+  [@rule box-path    [box [refl ?x]]              ==> [refl [box ?x]]]
+  [@rule box-idem    [box [box ?x]]               ==> [box ?x]]
+  [@rule box-tensor  [box [tensor ?x ?y]]         ==> [tensor [box ?x] [box ?y]]]
+
+  ;; Non-linear rule (permitted by optimal-sharing): duplicating a variable
+  [@rule dup-rule [dup ?x] ==> [tensor ?x ?x]]
+
+  ;; Demo terms:
+  [def id      [lam x x]]
+  [def beta1   [app id a]]                                ;; -> a
+  [def beta2   [app [lam x [tensor x x]] a]]              ;; -> tensor(a,a)
+  [def par     [tensor [app id a] [app id a]]]            ;; -> tensor(a,a)
+  [def duped   [dup a]]                                   ;; -> tensor(a,a)
+
+  ;; A "mixed" path term: user glue rules + auto-injected PathType unit law
+  ;; concat( tensor(refl(a), refl(b)), refl(tensor(a,b)) )
+  ;;   -> concat( refl(tensor(a,b)), refl(tensor(a,b)) )  [tensor-refl]
+  ;;   -> refl(tensor(a,b))                                [path-left-unit]
+  [def path_mix [concat [tensor [refl a] [refl b]] [refl [tensor a b]]]]
+]
+
+;; A5. Source proofs: beta, monoidal, PathType(ap-refl), and cross-structure interactions
+[Proofs StageSourceChecks :in StageSource
+  ;; CCC beta reduction (Apeiron engine evaluates lambda application)
+  [assert-eq beta-id    beta1 a]
+
+  ;; CCC + Monoidal + nonlinearity
+  [assert-eq beta-tensor beta2 [tensor a a]]
+  [assert-eq par-tensor  par   [tensor a a]]
+  [assert-eq dup-tensor  duped [tensor a a]]
+
+  ;; Monoidal normalization chain: tensor(unit, tensor(a, unit)) -> a
+  [assert-eq mon-norm [tensor unit [tensor a unit]] a]
+
+  ;; PathType auto-injected rules (with Evaluator => ap-refl exists)
+  [assert-eq ap-refl-ok [ap f [refl a]] [refl [app f a]]]
+  [assert-eq inv-refl   [inv [refl a]]  [refl a]]
+  [assert-eq assoc-ok   [concat [concat [refl a] [refl a]] [refl a]]
+                        [concat [refl a] [concat [refl a] [refl a]]]]
+
+  ;; Cross-structure: Modal preserves refl (user rule)
+  [assert-eq box-refl [box [refl a]] [refl [box a]]]
+
+  ;; Cross-structure: tensor-refl + PathType unit law
+  [assert-eq path-mix-ok path_mix [refl [tensor a b]]]
+
+  ;; ---- ETA-CONTRACTION DEMO ----
+  ;; ComputeNet uses topological-homotopy → eta check mode enabled
+  ;; (lam x (app f x)) should equal f via eta-contraction
+  [assert-eq eta-equal [lam x [app f x]] f]
+
+  ;; ---- BARRIER SCOPING DEMO ----
+  ;; Context declarations inject real Apeiron [Scope] declarations.
+  ;; [barrier WorldA expr] wraps expr in a barrier — blocks inner reduction.
+  ;; beta-redex (app (lam x x) a) inside barrier is suspended (NOT reduced to a).
+  [assert-neq barrier-stuck [barrier WorldA [app [lam x x] a]] a]
+
+  ;; With scope active, inner beta-redex proceeds (builder doesn't suspend).
+  ;; The barrier wrapping is still present in hash but inner term reduces.
+  [with-scope WorldA
+    [assert-eq barrier-inner-reduces [barrier WorldA [app [lam x x] a]]
+                                     [barrier WorldA a]]
+  ]
+]
+
+;; A6. Target theory (oracle): same rules so VerifyFunctor can check preservation
+[Theory StageTarget :in StageOracle
+  [const a Term]
+  [const b Term]
+  [const f Term]
+
+  [@rule mon-assoc [tensor [tensor ?x ?y] ?z] ==> [tensor ?x [tensor ?y ?z]]]
+  [@rule mon-lunit [tensor unit ?x]          ==> ?x]
+  [@rule mon-runit [tensor ?x unit]          ==> ?x]
+  ;; ^^^ FALSIFICATION SWITCH: change mon-runit RHS to `unit` to see VerifyFunctor fail.
+  ;; Try: [@rule mon-runit [tensor ?x unit] ==> unit]
+
+  [@rule tensor-refl [tensor [refl ?x] [refl ?y]] ==> [refl [tensor ?x ?y]]]
+  [@rule box-path    [box [refl ?x]]              ==> [refl [box ?x]]]
+  [@rule box-idem    [box [box ?x]]               ==> [box ?x]]
+  [@rule box-tensor  [box [tensor ?x ?y]]         ==> [tensor [box ?x] [box ?y]]]
+
+  [@rule dup-rule [dup ?x] ==> [tensor ?x ?x]]
+]
+
+[Proofs StageTargetChecks :in StageTarget
+  [assert-eq target-beta [app [lam x x] a] a]
+  [assert-eq target-dup  [dup a] [tensor a a]]
+  [assert-eq target-ap   [ap f [refl a]] [refl [app f a]]]
+  [assert-eq target-path [concat [tensor [refl a] [refl b]] [refl [tensor a b]]]
+                        [refl [tensor a b]]]
+
+  ;; ---- ETA DIFFERENCE DEMO ----
+  ;; SealedOracle uses topological-hash → NO eta check mode
+  ;; The SAME term pair (lam x (app f x)) vs f gives DIFFERENT answers
+  ;; on different substrates. This is the "wow" moment.
+  [assert-neq eta-diff [lam x [app f x]] f]
+]
+
+;; A7. Functor + VerifyFunctor + transported normalization
+[Functor ComputeToOracle :from ComputeNet :to SealedOracle :verify]
+[VerifyFunctor ComputeToOracle :source StageSource :target StageTarget]
+
+;; Transport shell: imports normalized terms from source via functor.
+;; :no-laws skips categorical law verification (no user rules to verify against).
+[Theory StageTransported :in StageOracle :no-laws
+  [const a Term]
+  [Import transported-beta2 [ComputeToOracle beta2]]
+  [Import transported-duped [ComputeToOracle duped]]
+]
+
+[Proofs StageTransportChecks :in StageTransported
+  [assert-eq transported-beta2-ok transported-beta2 [tensor a a]]
+  [assert-eq transported-duped-ok transported-duped [tensor a a]]
+]
+
+;; ============================================================
+;; (B) RESOURCE TOWER: STRICTLY-LINEAR → AFFINE, WITH ADJUNCTION
+;; ============================================================
+
+;; B1. Category: Monoidal + Modal + PathType (no Evaluator => 4 injected path rules)
+[Category LinModalHoTT
+  [Object Obj]
+  [Morphism tensor :domain [Obj Obj] :codomain Obj]
+  [SymmetricMonoidal tensor unit]
+
+  [ModalOperator box]
+  [Context W]
+
+  [PathType :refl reflL :concat concatL :inv invL :ap apL]
+
+  ;; Discard operator — legal on affine, not strictly-linear
+  [Morphism drop :domain [Obj] :codomain Obj]
+]
+
+;; B2. Two substrates: strictly-linear vs affine
+;;     Resource mode constrains which rules make sense: drop is only
+;;     meaningful in affine mode (where resources can be discarded).
+[Substrate LinearGraph
+  @engine interaction-graph
+  @resource-mode strictly-linear
+  @barrier contextual-membranes
+  @equality rewrite-equivalence
+]
+
+[Substrate AffineGraph
+  @engine interaction-graph
+  @resource-mode affine
+  @barrier contextual-membranes
+  @equality rewrite-equivalence
+]
+
+;; B3. Universes
+[Universe LinU :category LinModalHoTT :substrate LinearGraph]
+[Universe AffU :category LinModalHoTT :substrate AffineGraph]
+
+;; B4. Linear theory: ONLY linear-safe rules (no discard, no duplicate)
+[Theory LinBase :in LinU
+  [const p Obj]
+  [const q Obj]
+
+  [@rule mon-assocL  [tensor [tensor ?x ?y] ?z] ==> [tensor ?x [tensor ?y ?z]]]
+  [@rule mon-lunitL  [tensor unit ?x]           ==> ?x]
+  [@rule mon-runitL  [tensor ?x unit]           ==> ?x]
+
+  [@rule box-idemL   [box [box ?x]]             ==> [box ?x]]
+  [@rule box-tensorL [box [tensor ?x ?y]]       ==> [tensor [box ?x] [box ?y]]]
+
+  [@rule tensor-reflL [tensor [reflL ?x] [reflL ?y]] ==> [reflL [tensor ?x ?y]]]
+
+  [def lin_term [tensor [box p] [box q]]]
+  [def lin_path [concatL [reflL p] [reflL p]]]
+]
+
+[Proofs LinChecks :in LinBase
+  [assert-eq lin-mono  [tensor unit [tensor p unit]] p]
+  [assert-eq lin-box   [box [box p]] [box p]]
+  [assert-eq lin-path1 lin_path [reflL p]]
+  [assert-eq lin-path2 [tensor [reflL p] [reflL q]] [reflL [tensor p q]]]
+]
+
+;; B5. Affine theory: same base rules + affine-only rules that use discard
+[Theory AffExt :in AffU
+  [const p Obj]
+  [const q Obj]
+
+  ;; Same base rules as LinBase (needed for VerifyFunctor)
+  [@rule mon-assocL  [tensor [tensor ?x ?y] ?z] ==> [tensor ?x [tensor ?y ?z]]]
+  [@rule mon-lunitL  [tensor unit ?x]           ==> ?x]
+  [@rule mon-runitL  [tensor ?x unit]           ==> ?x]
+
+  [@rule box-idemL   [box [box ?x]]             ==> [box ?x]]
+  [@rule box-tensorL [box [tensor ?x ?y]]       ==> [tensor [box ?x] [box ?y]]]
+  [@rule tensor-reflL [tensor [reflL ?x] [reflL ?y]] ==> [reflL [tensor ?x ?y]]]
+
+  ;; AFFINE-ONLY rules: discard is legal here (not in strictly-linear)
+  [@rule drop-discard [drop ?x] ==> unit]
+
+  ;; Nontrivial affine rule: drop the second resource in a pair
+  [@rule drop-snd [tensor ?x [drop ?y]] ==> ?x]
+
+  ;; Demo: chaining drop through tensor
+  ;; tensor(p, drop(q)) -> p   [drop-snd]
+  [def aff_keep_first [tensor p [drop q]]]
+
+  ;; tensor(drop(p), unit) -> tensor(unit, unit) -> unit
+  [def aff_discard_all [tensor [drop p] [drop q]]]
+]
+
+[Proofs AffChecks :in AffExt
+  ;; Basic discard
+  [assert-eq aff-drop [drop [tensor p q]] unit]
+
+  ;; Nontrivial: drop second resource, keep first
+  [assert-eq aff-keep aff_keep_first p]
+
+  ;; Double discard: both resources vanish
+  [assert-eq aff-discard-all aff_discard_all [tensor unit unit]]
+
+  ;; Path laws still hold in affine mode
+  [assert-eq aff-path [concatL [reflL p] [reflL p]] [reflL p]]
+]
+
+;; B6. Functors + VerifyFunctor + NatTrans + Adjunction + transport
+[Functor LinearToAffine  :from LinearGraph :to AffineGraph :verify]
+[Functor LinearToAffine2 :from LinearGraph :to AffineGraph]
+
+[NatTrans Promotion :from LinearToAffine :to LinearToAffine2
+  :component [Obj prom_obj]
+]
+
+[NatTrans Dereliction :from LinearToAffine :to LinearToAffine2
+  :component [Obj der_obj]
+]
+
+[Adjunction ResourceAdj :left LinearToAffine :right LinearToAffine2
+  :unit Promotion :counit Dereliction
+]
+
+[VerifyFunctor LinearToAffine :source LinBase :target AffExt]
+
+;; Transport shell: :no-laws because this is just an import receiver.
+[Theory LinToAffTransport :in AffU :no-laws
+  [const p Obj]
+  [const q Obj]
+  [Import transported-lin-term [LinearToAffine lin_term]]
+]
+
+[Proofs LinToAffTransportChecks :in LinToAffTransport
+  [assert-eq lin-to-aff-ok transported-lin-term [tensor [box p] [box q]]]
+]
+
+;; ============================================================
+;; Summary of what "pass" proves:
+;; ============================================================
+;;
+;; Part A (StageHoTT):
+;;   - CCC + SymmetricMonoidal + Modal + PathType(+Evaluator) all compile together
+;;   - 14 categorical law witness tests pass (both source and target substrates)
+;;   - 13 user assertions pass (beta, monoidal, path, cross-structure glue, eta, barrier)
+;;   - Eta-contraction: [lam x [app f x]] = f on homotopy, != f on hash (wow moment!)
+;;   - Barrier scoping: [barrier WorldA a] blocks without scope, dissolves with [with-scope]
+;;   - VerifyFunctor confirms 8 rules preserved across substrates
+;;   - 2 transported terms normalize correctly via functor
+;;
+;; Part B (LinModalHoTT):
+;;   - Monoidal + Modal + PathType compile on both strictly-linear and affine
+;;   - 10 categorical law witness tests pass (both LinBase and AffExt)
+;;   - Resource enforcement: strictly-linear/affine constraints validated on @rule metas
+;;   - Affine-only rules (drop-discard, drop-snd) work in AffExt but aren't in LinBase
+;;   - VerifyFunctor confirms 6 linear-safe rules preserved in affine target
+;;   - 1 transported term verified
+;;   - NatTrans + Adjunction scaffolding (Promotion/Dereliction)
+;;
+;; Falsification: change any target rule to see VerifyFunctor fail (see A6 comment).

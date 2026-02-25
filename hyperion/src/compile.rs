@@ -139,8 +139,9 @@ fn check_compatibility(cat: &CategoryDef, sub: &SubstrateDef) -> Result<()> {
         });
     }
 
-    // PathType requires lambda-capable engine (paths need higher-order structure for ap)
-    if cat.has_path_type() {
+    // PathType with Evaluator requires lambda-capable engine (ap-refl rule uses app).
+    // PathType without Evaluator is purely first-order (refl, concat, inv, ap are just constructors).
+    if cat.has_path_type() && cat.has_evaluator() {
         let supports_lambda = matches!(
             sub.engine,
             Engine::InteractionGraph | Engine::TermTree | Engine::AbstractMachine
@@ -150,7 +151,7 @@ fn check_compatibility(cat: &CategoryDef, sub: &SubstrateDef) -> Result<()> {
                 category: cat.name.clone(),
                 substrate: sub.name.clone(),
                 detail: format!(
-                    "Category '{}' requires PathType support, but Substrate '{}' uses {:?} engine which has no lambda abstraction",
+                    "Category '{}' requires PathType+Evaluator support, but Substrate '{}' uses {:?} engine which has no lambda abstraction",
                     cat.name, sub.name, sub.engine
                 ),
             });
@@ -203,7 +204,7 @@ fn check_modes(sub: &SubstrateDef) -> Vec<&'static str> {
         EqualityMode::Unification => vec!["pattern-unification"],
         EqualityMode::AlphaEquivalence => vec!["beta-reduction"],
         EqualityMode::Observational => vec!["rewriting", "beta-reduction"],
-        EqualityMode::TopologicalHomotopy => vec!["rewriting", "beta-reduction"],
+        EqualityMode::TopologicalHomotopy => vec!["rewriting", "beta-reduction", "eta"],
     }
 }
 
@@ -319,6 +320,27 @@ pub fn emit_system_sexp(
             }
             CategoricalStructure::ContextDecl { .. } => {
                 // Contexts become Scope declarations in Theory, not ops
+            }
+            CategoricalStructure::Preorder { relation: _ } => {
+                // Inject `true` op for reflexivity result (if not already present)
+                let true_name = "true";
+                let already = cat.morphisms.iter().any(|m| m.name == true_name)
+                    || syntax_items.iter().any(|s| {
+                        s.as_list()
+                            .and_then(|l| l.get(1))
+                            .and_then(|s| s.as_atom())
+                            .map(|a| a == true_name)
+                            .unwrap_or(false)
+                    });
+                if !already {
+                    syntax_items.push(Sexp::List(
+                        vec![
+                            Sexp::Atom("op".into(), sp),
+                            Sexp::Atom(true_name.into(), sp),
+                        ],
+                        sp,
+                    ));
+                }
             }
             CategoricalStructure::PathType { refl, concat, inv, ap } => {
                 // Inject path algebra ops (only if not already a morphism)

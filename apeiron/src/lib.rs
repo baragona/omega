@@ -12,3 +12,4 @@ pub mod rewrite;
 pub mod morphism;
 pub mod judgment;
 pub mod refute;
+pub mod eta;

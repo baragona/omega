@@ -20,6 +20,12 @@ pub enum HyperionError {
     LawViolation { theory: String, law: String, detail: String },
     /// Categorical law inconclusive: normalization ran out of fuel or timed out
     LawInconclusive { theory: String, law: String, detail: String },
+    /// Resource mode violation: rule violates substrate's resource constraints
+    ResourceViolation {
+        theory: String,
+        rule_name: Option<String>,
+        detail: String,
+    },
     /// Apeiron error pass-through
     ApeironError(apeiron::error::ApeironError),
 }
@@ -73,6 +79,21 @@ impl fmt::Display for HyperionError {
                     "categorical law INCONCLUSIVE in Theory '{}': law '{}' — {}",
                     theory, law, detail
                 )
+            }
+            HyperionError::ResourceViolation { theory, rule_name, detail } => {
+                if let Some(rn) = rule_name {
+                    write!(
+                        f,
+                        "resource violation in Theory '{}' (rule '{}'): {}",
+                        theory, rn, detail
+                    )
+                } else {
+                    write!(
+                        f,
+                        "resource violation in Theory '{}': {}",
+                        theory, detail
+                    )
+                }
             }
             HyperionError::ApeironError(e) => {
                 write!(f, "Apeiron error: {}", e)
