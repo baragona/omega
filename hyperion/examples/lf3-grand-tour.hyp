@@ -9,7 +9,8 @@
 ;; Headline results:
 ;;   - (A) Law verification: CCC(3) + Monoidal(6) + PathType(+Eval)(5) = 14 witness tests
 ;;   - (B) Law verification: Monoidal(6) + PathType(no Eval)(4)        = 10 witness tests
-;;   - VerifyFunctor: 8 rules (A) + 6 rules (B) verified across substrates
+;;   - VerifyFunctor: 8 rules (A: monoidal 3 + glue 4 + dup 1)
+;;                  + 6 rules (B: monoidal 3 + box-idem + box-tensor + tensor-refl)
 ;;
 ;; Run:
 ;;   hyperion check lf3-grand-tour.hyp -v
@@ -65,6 +66,10 @@
   @equality topological-homotopy
 ]
 
+;; SealedOracle: cryptographic barriers compile to binding=Implicit (not Contextual),
+;; so barrier/scope operations are structurally different from ComputeNet.
+;; The observable effect: ComputeNet can with-scope barriers; SealedOracle uses
+;; oracle-mode equality (hash comparison only, no rewriting or eta).
 [Substrate SealedOracle
   @engine interaction-graph
   @resource-mode optimal-sharing
@@ -130,6 +135,9 @@
   [assert-eq mon-norm [tensor unit [tensor a unit]] a]
 
   ;; PathType auto-injected rules (with Evaluator => ap-refl exists)
+  ;; Full coverage: left-unit, right-unit, inv-refl, associativity, ap-refl
+  [assert-eq path-lunit [concat [refl a] [refl b]] [refl b]]
+  [assert-eq path-runit [concat [refl a] [refl a]] [refl a]]
   [assert-eq ap-refl-ok [ap f [refl a]] [refl [app f a]]]
   [assert-eq inv-refl   [inv [refl a]]  [refl a]]
   [assert-eq assoc-ok   [concat [concat [refl a] [refl a]] [refl a]]
@@ -201,6 +209,8 @@
 
 ;; A7. Functor + VerifyFunctor + transported normalization
 [Functor ComputeToOracle :from ComputeNet :to SealedOracle :verify]
+
+;; VerifyFunctor checks 8 rules preserved: monoidal(3) + glue(4) + dup-rule(1)
 [VerifyFunctor ComputeToOracle :source StageSource :target StageTarget]
 
 ;; Transport shell: imports normalized terms from source via functor.
@@ -218,8 +228,11 @@
   [assert-eq transported-duped-ok transported-duped [tensor a a]]
 
   ;; Eta transport demo: etaTerm = (lam x (app f x)) was transported.
-  ;; The target substrate (SealedOracle) uses topological-hash (no eta).
-  ;; So the transported term is NOT equal to f — it stays eta-expanded.
+  ;; Transport runs physics + rewrite but NOT eta-contraction, so it arrives
+  ;; in the target universe structurally unchanged (still eta-expanded).
+  ;; Positive check: transported term IS the eta-expanded form.
+  [assert-eq transported-eta-is-etaTerm transported-eta [lam x [app f x]]]
+  ;; Negative check: on hash substrate (no eta), it is NOT equal to f.
   [assert-neq transported-eta-not-contracted transported-eta f]
 ]
 
@@ -353,6 +366,7 @@
   :unit Promotion :counit Dereliction
 ]
 
+;; VerifyFunctor checks 6 linear-safe rules: monoidal(3) + box-idemL + box-tensorL + tensor-reflL
 [VerifyFunctor LinearToAffine :source LinBase :target AffExt]
 
 ;; Transport shell: :no-laws because this is just an import receiver.
@@ -373,12 +387,12 @@
 ;; Part A (StageHoTT):
 ;;   - CCC + SymmetricMonoidal + Modal + PathType(+Evaluator) all compile together
 ;;   - 14 categorical law witness tests pass (both source and target substrates)
-;;   - 14 user assertions pass (beta, monoidal, path, cross-structure glue, eta, barrier)
+;;   - 16 user assertions pass (beta, monoidal, all 5 path laws, glue, eta, barrier)
 ;;   - Eta-contraction: [lam x [app f x]] = f on homotopy, != f on hash
-;;   - Eta transport: transported etaTerm stays eta-expanded (assert-neq on hash target)
+;;   - Eta transport: transported etaTerm = [lam x [app f x]] (positive), != f (negative)
 ;;   - Barrier scoping: blocked/allowed pair — assert-neq vs with-scope assert-eq
-;;   - VerifyFunctor confirms 8 rules preserved across substrates
-;;   - 3 transported terms verified (beta2, duped, etaTerm)
+;;   - VerifyFunctor confirms 8 rules preserved: monoidal(3) + glue(4) + dup(1)
+;;   - 3 transported terms verified (beta2, duped, etaTerm + positive/negative)
 ;;
 ;; Part B (LinModalHoTT):
 ;;   - Monoidal + Modal + PathType compile on both strictly-linear and affine
@@ -387,7 +401,7 @@
 ;;     (see LinBase comment for concrete rejected rule)
 ;;   - Affine-only rules (drop-discard, drop-snd) work in AffExt but aren't in LinBase
 ;;   - Double-discard normalizes all the way to unit (not just tensor(unit,unit))
-;;   - VerifyFunctor confirms 6 linear-safe rules preserved in affine target
+;;   - VerifyFunctor confirms 6 rules: monoidal(3) + box-idem + box-tensor + tensor-refl
 ;;   - 1 transported term verified
 ;;   - NatTrans + Adjunction scaffolding (Promotion/Dereliction)
 ;;
