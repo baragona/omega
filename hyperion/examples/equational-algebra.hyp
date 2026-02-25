@@ -1,0 +1,123 @@
+;; Equational Algebra with @law and eval-simplify
+;; ================================================
+;; Demonstrates the new @law vs @rule distinction and eval-simplify in Hyperion.
+;;
+;; Key concepts:
+;;   - @rule: directed computation rules (forward only in e-graph)
+;;   - @law:  equational laws (bidirectional in e-graph, NOT compiled to inet rules)
+;;   - eval-simplify: e-graph extraction finds simplest equivalent form
+;;   - @equality equality-saturation: enables e-graph fallback in assert-eq
+;;
+;; The example models a commutative monoid (natural number addition) where:
+;;   - Computation rules are directed: add(z,n) ==> n, add(s(n),m) ==> s(add(n,m))
+;;   - Commutativity is an equational law: add(x,y) === add(y,x)
+;;   - The e-graph proves commutativity without directed normalization
+;;   - eval-simplify finds canonical (simplest) forms via e-graph extraction
+
+;; 1. Category: Peano arithmetic as a first-order algebra
+[Category PeanoAlgebra
+  [Object Nat]
+  [Morphism z    :domain [] :codomain Nat]
+  [Morphism s    :domain [Nat] :codomain Nat]
+  [Morphism add  :domain [Nat Nat] :codomain Nat]
+  [Morphism mul  :domain [Nat Nat] :codomain Nat]
+]
+
+;; 2. Substrate: Equality saturation enables @law + eval-simplify
+[Substrate EGraphEngine
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality equality-saturation
+]
+
+;; 3. Universe
+[Universe AlgebraWorld :category PeanoAlgebra :substrate EGraphEngine]
+
+;; 4. Theory: Peano addition as a commutative monoid
+;;    - @rule for computation (directed)
+;;    - @law for algebraic properties (bidirectional)
+[Theory CommMonoid :in AlgebraWorld
+  ;; Directed computation rules
+  [@rule add-z [add z ?n] ==> ?n]
+  [@rule add-s [add [s ?n] ?m] ==> [s [add ?n ?m]]]
+
+  ;; Equational law: commutativity (bidirectional in e-graph)
+  ;; This is NOT a directed rewrite — both directions are needed
+  [@law add-comm [add ?x ?y] === [add ?y ?x]]
+]
+
+;; 5. Proofs: directed computation + equational reasoning + simplification
+[Proofs AlgebraCheck :in CommMonoid
+  ;; --- Directed computation (via inet normalization) ---
+
+  ;; 1+1 = 2
+  [assert-eq one-plus-one [add [s z] [s z]] [s [s z]]]
+
+  ;; 2+1 = 3
+  [assert-eq two-plus-one [add [s [s z]] [s z]] [s [s [s z]]]]
+
+  ;; --- Equational reasoning (via e-graph with @law) ---
+
+  ;; Commutativity: 1+2 = 2+1
+  ;; Both sides normalize to 3, but the e-graph proves the
+  ;; pre-normalized forms equivalent via add-comm bidirectionally
+  [assert-eq comm-test [add [s z] [s [s z]]] [add [s [s z]] [s z]]]
+
+  ;; --- E-graph extraction (eval-simplify) ---
+
+  ;; add(z, s(s(z))) simplifies to s(s(z)) — the z is eliminated
+  [eval-simplify simplify-zero [add z [s [s z]]]]
+
+  ;; add(s(z), s(z)) simplifies to s(s(z)) — fully computed
+  [eval-simplify simplify-sum [add [s z] [s z]]]
+]
+
+;; ===================================================================
+;; Theory Composition: @law propagation through imports
+;; ===================================================================
+
+;; 6. Multiplication theory extends the monoid
+[Theory CommRing :in AlgebraWorld
+  [import CommMonoid]
+
+  ;; More directed computation rules
+  [@rule mul-z [mul z ?n] ==> z]
+  [@rule mul-s [mul [s ?n] ?m] ==> [add ?m [mul ?n ?m]]]
+
+  ;; Multiplication is also commutative (equational law)
+  [@law mul-comm [mul ?x ?y] === [mul ?y ?x]]
+]
+
+;; 7. Proofs in the composed theory
+[Proofs RingCheck :in CommRing
+  ;; Imported computation rules still work
+  [assert-eq imported-add [add [s [s z]] [s z]] [s [s [s z]]]]
+
+  ;; Imported law survives composition: add-comm via e-graph
+  [assert-eq imported-comm [add [s z] [s [s z]]] [add [s [s z]] [s z]]]
+
+  ;; Local computation: 2*2 = 4
+  [assert-eq two-times-two [mul [s [s z]] [s [s z]]] [s [s [s [s z]]]]]
+
+  ;; Local law works: mul-comm via e-graph
+  [assert-eq mul-comm-test [mul [s z] [s [s z]]] [mul [s [s z]] [s z]]]
+
+  ;; E-graph extraction on composed theory
+  [eval-simplify simplify-product [mul [s z] [s [s z]]]]
+]
+
+;; ===================================================================
+;; Summary
+;; ===================================================================
+;;
+;; What this demonstrates:
+;;   1. @rule vs @law: Computation rules are forward-only; algebraic laws
+;;      are bidirectional. The e-graph handles commutativity that directed
+;;      normalization cannot.
+;;   2. eval-simplify: Uses egg::Extractor to find the smallest equivalent
+;;      expression after equality saturation.
+;;   3. Theory composition: @law declarations propagate through [import],
+;;      so CommRing inherits add-comm from CommMonoid.
+;;   4. @equality equality-saturation: This substrate mode enables the
+;;      e-graph fallback in assert-eq and powers eval-simplify.

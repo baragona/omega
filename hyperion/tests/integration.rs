@@ -2321,3 +2321,51 @@ fn eta_does_not_loop() {
     "#;
     process_all(&mut session, input).expect("eta-normal terms should not loop");
 }
+
+#[test]
+fn substrate_with_egraph() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category AlgCat
+            [Object S]
+            [Morphism f :domain [S S] :codomain S]
+            [Morphism g :domain [S S] :codomain S]
+        ]
+        [Substrate EGraphNet
+            @engine interaction-graph
+            @resource-mode optimal-sharing
+            @barrier transparent
+            @equality equality-saturation
+        ]
+        [Universe AlgUniverse :category AlgCat :substrate EGraphNet]
+    "#;
+    process_all(&mut session, input).expect("e-graph substrate should compile");
+
+    // Verify the compiled system has equality-saturation check mode
+    let all_output: Vec<String> = session
+        .output
+        .iter()
+        .chain(session.apeiron.output.iter())
+        .cloned()
+        .collect();
+    let output_str = all_output.join("\n");
+    assert!(
+        output_str.contains("EqualitySaturation"),
+        "compiled system should include EqualitySaturation check mode, got: {}",
+        output_str
+    );
+}
+
+// ============================================================
+// @law + eval-simplify example tests
+// ============================================================
+
+#[test]
+fn equational_algebra_example() {
+    run_file("examples/equational-algebra.hyp");
+}
+
+#[test]
+fn egraph_transport_example() {
+    run_file("examples/egraph-transport.hyp");
+}
