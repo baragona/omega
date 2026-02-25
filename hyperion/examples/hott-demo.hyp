@@ -1,0 +1,52 @@
+;; Homotopy Type Theory Demo
+;; Uses PathType categorical structure for auto-injected path algebra.
+;; In HoTT, equality is a space: there can be paths between paths.
+
+;; === Path Space Category ===
+;; PathType auto-injects refl, concat, inv, ap as ops + rewrite rules.
+
+[Category PathSpace
+  [Object Type]
+  [Object Term]
+  [Morphism app :domain [Term Term] :codomain Term]
+  [Exponential lam :object Term]
+  [Evaluator app]
+  [PathType :refl refl :concat concat :inv inv :ap ap]
+]
+
+;; HoTT substrate: lambda-capable + homotopy equality
+[Substrate HomotopyEngine
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality topological-homotopy
+]
+
+[Universe HoTTWorld :category PathSpace :substrate HomotopyEngine]
+
+;; Path algebra theory: EMPTY body — all rules are auto-injected by PathType!
+[Theory PathAlgebra :in HoTTWorld]
+
+;; Verify path algebra laws (rules came from PathType, not manual entry)
+[Proofs PathCheck :in PathAlgebra
+  ;; Reflexivity composed with any path is that path
+  [assert-eq left-unit [concat [refl a] p] p]
+  [assert-eq right-unit [concat p [refl a]] p]
+
+  ;; Associativity
+  [assert-eq assoc [concat [concat p q] r] [concat p [concat q r]]]
+
+  ;; Functorial action on refl
+  [assert-eq ap-refl [ap f [refl a]] [refl [app f a]]]
+
+  ;; Inverse of refl is refl
+  [assert-eq inv-refl [concat [refl a] [inv [refl a]]] [refl a]]
+
+  ;; 2-path: a path between paths (higher dimensional)
+  ;; concat(concat(refl(a), refl(a)), refl(a)) = concat(refl(a), concat(refl(a), refl(a)))
+  ;; This simplifies via associativity
+  [assert-eq two-path
+    [concat [concat [refl a] [refl a]] [refl a]]
+    [concat [refl a] [concat [refl a] [refl a]]]
+  ]
+]

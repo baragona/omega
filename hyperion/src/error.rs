@@ -1,0 +1,90 @@
+use std::fmt;
+
+#[derive(Debug, Clone)]
+pub enum HyperionError {
+    /// Unknown top-level block
+    UnknownBlock { name: String },
+    /// Parse error in a declaration
+    ParseError { block: String, detail: String },
+    /// Duplicate name
+    DuplicateName { kind: String, name: String },
+    /// Reference to undefined name
+    Undefined { kind: String, name: String },
+    /// Category/Substrate incompatibility
+    Incompatible { category: String, substrate: String, detail: String },
+    /// Functor has no matching universe pairs
+    NoMatchingUniverses { functor: String, source: String, target: String },
+    /// Prelude loading error
+    PreludeError { detail: String },
+    /// Categorical law violation: theory fails to satisfy category axioms
+    LawViolation { theory: String, law: String, detail: String },
+    /// Categorical law inconclusive: normalization ran out of fuel or timed out
+    LawInconclusive { theory: String, law: String, detail: String },
+    /// Apeiron error pass-through
+    ApeironError(apeiron::error::ApeironError),
+}
+
+impl fmt::Display for HyperionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            HyperionError::UnknownBlock { name } => {
+                write!(f, "unknown top-level block: {}", name)
+            }
+            HyperionError::ParseError { block, detail } => {
+                write!(f, "parse error in {}: {}", block, detail)
+            }
+            HyperionError::DuplicateName { kind, name } => {
+                write!(f, "duplicate {} name: {}", kind, name)
+            }
+            HyperionError::Undefined { kind, name } => {
+                write!(f, "undefined {}: {}", kind, name)
+            }
+            HyperionError::Incompatible {
+                category,
+                substrate,
+                detail,
+            } => {
+                write!(
+                    f,
+                    "Category '{}' incompatible with Substrate '{}': {}",
+                    category, substrate, detail
+                )
+            }
+            HyperionError::NoMatchingUniverses { functor, source, target } => {
+                write!(
+                    f,
+                    "Functor '{}' from '{}' to '{}' has no matching universe pairs (no categories shared between substrates)",
+                    functor, source, target
+                )
+            }
+            HyperionError::PreludeError { detail } => {
+                write!(f, "prelude error: {}", detail)
+            }
+            HyperionError::LawViolation { theory, law, detail } => {
+                write!(
+                    f,
+                    "categorical law violation in Theory '{}': law '{}' failed — {}",
+                    theory, law, detail
+                )
+            }
+            HyperionError::LawInconclusive { theory, law, detail } => {
+                write!(
+                    f,
+                    "categorical law INCONCLUSIVE in Theory '{}': law '{}' — {}",
+                    theory, law, detail
+                )
+            }
+            HyperionError::ApeironError(e) => {
+                write!(f, "Apeiron error: {}", e)
+            }
+        }
+    }
+}
+
+impl From<apeiron::error::ApeironError> for HyperionError {
+    fn from(e: apeiron::error::ApeironError) -> Self {
+        HyperionError::ApeironError(e)
+    }
+}
+
+pub type Result<T> = std::result::Result<T, HyperionError>;

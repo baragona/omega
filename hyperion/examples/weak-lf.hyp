@@ -1,0 +1,74 @@
+;; Hyperion Example: Weak Logical Framework
+;; CartesianClosed category on InteractionNet substrate.
+;; Demonstrates: lambda/app compilation via Universe, theory + proofs pass-through.
+
+;; =================================================================
+;; Step 1: Define the mathematical structure (Category)
+;; =================================================================
+
+[Category CartesianClosed
+  ;; Objects: the sorts of our logic
+  [Object Type]
+  [Object Term]
+
+  ;; Morphisms: type-level and term-level operations
+  [Morphism arrow :domain [Type Type] :codomain Type]
+  [Morphism app :domain [Term Term] :codomain Term]
+
+  ;; CCC structure: exponential (lambda) + evaluator (application)
+  [Exponential lam :object Term]
+  [Evaluator app]
+]
+
+;; =================================================================
+;; Step 2: Define the computational physics (Substrate)
+;; =================================================================
+
+[Substrate InteractionNet
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality topological-hash
+]
+
+;; =================================================================
+;; Step 3: Compile Category into Substrate (Universe)
+;; =================================================================
+
+[Universe WeakLF :category CartesianClosed :substrate InteractionNet]
+
+;; =================================================================
+;; Step 4: Write theories and proofs (pass-through to Apeiron)
+;; =================================================================
+
+[Theory SimpleLogic :in WeakLF
+  [const nat Type]
+  [const z Term]
+  [const s Term]
+]
+
+[Proofs SimpleCheck :in SimpleLogic
+  ;; Beta reduction: (\x.x) z = z
+  [assert-eq id-test
+    [app [lam x x] z]
+    z
+  ]
+
+  ;; Constant function: (\x.z) y = z
+  [assert-eq const-test
+    [app [lam x z] y]
+    z
+  ]
+
+  ;; Nested: (\x.x) ((\y.y) z) = z
+  [assert-eq nested-id
+    [app [lam x x] [app [lam y y] z]]
+    z
+  ]
+
+  ;; Eval: non-linear variable (tests Dup nodes)
+  [eval dup-test [app [lam x [app x x]] z]]
+
+  ;; Church numeral one applied: (\f.\x. f x) s z = [s z]
+  [eval church-one [app [app [lam f [lam x [app f x]]] s] z]]
+]

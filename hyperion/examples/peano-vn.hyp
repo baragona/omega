@@ -1,0 +1,23 @@
+;; Peano arithmetic on Von Neumann substrate
+;; Compiles to Rust via `hyperion kompile`
+
+[Category FirstOrderArith
+  [Object Nat]
+  [Morphism z :domain [] :codomain Nat]
+  [Morphism s :domain [Nat] :codomain Nat]
+  [Morphism plus :domain [Nat Nat] :codomain Nat]
+]
+
+[Substrate VonNeumannMachine
+  @engine von-neumann
+  @resource-mode deep-copy
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Universe PeanoVN :category FirstOrderArith :substrate VonNeumannMachine]
+
+[Theory PeanoRules :in PeanoVN
+  [@rule plus-z [plus z ?n] ==> ?n]
+  [@rule plus-s [plus [s ?n] ?m] ==> [s [plus ?n ?m]]]
+]

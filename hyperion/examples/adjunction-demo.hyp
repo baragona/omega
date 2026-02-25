@@ -1,0 +1,50 @@
+;; Adjunction Demo: NatTrans and Adjunction
+
+[Category SimpleMath
+  [Object Nat]
+  [Morphism z :domain [] :codomain Nat]
+  [Morphism s :domain [Nat] :codomain Nat]
+  [Morphism plus :domain [Nat Nat] :codomain Nat]
+]
+
+[Substrate ComputeNet
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Substrate OracleNet
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality topological-hash
+]
+
+[Universe MathCompute :category SimpleMath :substrate ComputeNet]
+[Universe MathOracle :category SimpleMath :substrate OracleNet]
+
+;; Two parallel functors from ComputeNet to OracleNet
+[Functor F :from ComputeNet :to OracleNet]
+[Functor G :from ComputeNet :to OracleNet]
+
+;; Natural transformation between the two parallel functors
+[NatTrans eta :from F :to G
+  :component [Nat tau_nat]
+]
+
+;; Another natural transformation in the same direction
+[NatTrans eps :from F :to G
+  :component [Nat eps_nat]
+]
+
+;; Two more functors for the adjunction
+[Functor Left :from ComputeNet :to OracleNet]
+[Functor Right :from ComputeNet :to OracleNet]
+
+;; Unit and counit (both between Left and Right)
+[NatTrans unit :from Left :to Right :component [Nat unit_nat]]
+[NatTrans counit :from Left :to Right :component [Nat counit_nat]]
+
+;; Adjunction declaration
+[Adjunction FreeForget :left Left :right Right :unit unit :counit counit]

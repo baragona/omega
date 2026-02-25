@@ -1,0 +1,67 @@
+;; Categorical Law Verification Demo
+;; Hyperion auto-generates and verifies categorical laws when a Theory is loaded.
+;; SymmetricMonoidal: associativity + unit laws
+;; CartesianClosed: beta reduction law
+
+;; === A Symmetric Monoidal Category ===
+
+[Category MonoidalArith
+  [Object Nat]
+  [Morphism z :domain [] :codomain Nat]
+  [Morphism s :domain [Nat] :codomain Nat]
+  [Morphism plus :domain [Nat Nat] :codomain Nat]
+  [TensorProduct pair]
+  [Unit unit]
+]
+
+[Substrate ComputeNet
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Universe MonoidalWorld :category MonoidalArith :substrate ComputeNet]
+
+;; This theory must satisfy monoidal laws:
+;;   pair(pair(a,b),c) = pair(a,pair(b,c))   [associativity]
+;;   pair(unit,a) = a                         [left unit]
+;;   pair(a,unit) = a                         [right unit]
+;; These are verified using rewrite rules.
+[Theory MonoidalTheory :in MonoidalWorld
+  ;; Arithmetic rules
+  [@rule [plus z ?n] ==> ?n]
+  [@rule [plus [s ?n] ?m] ==> [s [plus ?n ?m]]]
+
+  ;; Monoidal structure rules (make the laws hold)
+  [@rule [pair [pair ?a ?b] ?c] ==> [pair ?a [pair ?b ?c]]]
+  [@rule [pair unit ?a] ==> ?a]
+  [@rule [pair ?a unit] ==> ?a]
+]
+
+;; Regular proofs still work
+[Proofs ArithCheck :in MonoidalTheory
+  [assert-eq one-plus-one [plus [s z] [s z]] [s [s z]]]
+]
+
+;; === A Cartesian Closed Category ===
+
+[Category CCC
+  [Object Type]
+  [Object Term]
+  [Morphism arrow :domain [Type Type] :codomain Type]
+  [Morphism app :domain [Term Term] :codomain Term]
+  [Exponential lam :object Term]
+  [Evaluator app]
+]
+
+[Universe LambdaWorld :category CCC :substrate ComputeNet]
+
+;; CCC beta law: app(lam(x,x), a) = a  [identity applied]
+;; Beta reduction is built into the engine, so this holds automatically.
+[Theory LambdaTheory :in LambdaWorld
+]
+
+[Proofs LambdaCheck :in LambdaTheory
+  [assert-eq identity [app [lam x x] [app [lam y y] z]] z]
+]

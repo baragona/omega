@@ -1,0 +1,47 @@
+;; Hyperion Standard Prelude
+;; Auto-loaded at session init (unless --no-prelude)
+
+[Category CartesianClosed
+  [Object Type] [Object Term]
+  [Morphism arrow :domain [Type Type] :codomain Type]
+  [Morphism app :domain [Term Term] :codomain Term]
+  [Exponential lam :object Term] [Evaluator app]
+]
+
+[Category SymmetricMonoidal
+  [Object Obj]
+  [TensorProduct tensor] [Unit unit]
+]
+
+[Category Preorder
+  [Object Elem]
+  [Morphism leq :domain [Elem Elem] :codomain Elem]
+]
+
+[Substrate ApeironStandard
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Substrate ApeironLinear
+  @engine interaction-graph
+  @resource-mode strictly-linear
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Substrate ApeironOracle
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality topological-hash
+]
+
+[Substrate ApeironTree
+  @engine term-tree
+  @resource-mode deep-copy
+  @barrier transparent
+  @equality rewrite-equivalence
+]

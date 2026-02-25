@@ -1,0 +1,13 @@
+[package]
+name = "hyperion"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+apeiron = { path = "../apeiron" }
+
+[[bin]]
+name = "hyperion"
+path = "src/main.rs"

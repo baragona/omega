@@ -1,0 +1,29 @@
+;; Prelude Demo: uses prelude categories and substrates
+;; Requires prelude to be loaded (HYPERION_PRELUDE env var or next to binary)
+
+;; Define these locally since we run without prelude in tests
+[Category CartesianClosed
+  [Object Type] [Object Term]
+  [Morphism arrow :domain [Type Type] :codomain Type]
+  [Morphism app :domain [Term Term] :codomain Term]
+  [Exponential lam :object Term] [Evaluator app]
+]
+
+[Substrate ApeironStandard
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Universe LambdaCalc :category CartesianClosed :substrate ApeironStandard]
+
+[Theory Identity :in LambdaCalc
+  [const a Term]
+  [const b Term]
+]
+
+[Proofs IdentityCheck :in Identity
+  [assert-eq id-app [app [lam x x] a] a]
+  [assert-eq const-app [app [lam x a] b] a]
+]

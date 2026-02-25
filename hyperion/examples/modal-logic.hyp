@@ -1,0 +1,60 @@
+;; Hyperion Example: Modal Logic
+;; ModalSpace category on CompartmentNet substrate.
+;; Demonstrates: modal operators, contextual membranes, barrier scopes.
+
+;; =================================================================
+;; Step 1: Category — Modal structure with named worlds
+;; =================================================================
+
+[Category ModalSpace
+  [Object Term]
+
+  ;; Modal operator: box (necessity)
+  [ModalOperator box]
+
+  ;; Named worlds for scope isolation
+  [Context WorldA]
+  [Context WorldB]
+]
+
+;; =================================================================
+;; Step 2: Substrate — Interaction graph with contextual membranes
+;; =================================================================
+
+[Substrate CompartmentNet
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier contextual-membranes
+  @equality rewrite-equivalence
+]
+
+;; =================================================================
+;; Step 3: Universe compilation
+;; =================================================================
+
+[Universe ModalWorld :category ModalSpace :substrate CompartmentNet]
+
+;; =================================================================
+;; Step 4: Theory with scope declarations
+;; =================================================================
+
+[Theory ModalLogic :in ModalWorld
+  ;; Declare scopes matching the Category's Context declarations
+  [Scope WorldA]
+  [Scope WorldB]
+]
+
+;; =================================================================
+;; Step 5: Proofs demonstrating barrier behavior
+;; =================================================================
+
+[Proofs ModalCheck :in ModalLogic
+  ;; A barriered function is STUCK when its scope is inactive.
+  ;; App cannot fire through the barrier.
+  [eval locked [app [barrier WorldA [lam x x]] y]]
+
+  ;; Unlock WorldA: barrier dissolves, beta fires, result is y.
+  [with-scope WorldA
+    [eval unlocked [app [barrier WorldA [lam x x]] y]]
+  ]
+]
