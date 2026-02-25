@@ -1611,3 +1611,8 @@ fn cross_substrate_verified() {
     // The updated cross-substrate.hyp includes VerifyFunctor
     run_file("examples/cross-substrate.hyp");
 }
+
+#[test]
+fn simple_ccc_example() {
+    run_file("examples/simple-ccc.hyp");
+}
