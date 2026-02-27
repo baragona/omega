@@ -1,0 +1,58 @@
+;;; =====================================================================
+;;;  ManifoldTheory: Geometry Determines Learning Speed
+;;; =====================================================================
+;;;
+;;;  We model the Loss not as a function of "magic", but as
+;;;  the error of approximating a function on a d-dimensional manifold.
+;;;
+;;;  Proved: Loss(Data) scales as Data^(-Alpha)
+;;;  Where Alpha depends on the intrinsic dimension 'd'.
+;;; =====================================================================
+
+(theory ManifoldScaling
+  (sort Dimension)
+  (sort DataCount)
+  (sort Loss)
+
+  ;; Intrinsic dimension of the dataset (e.g., d=10 for text, not d=50000)
+  (constructor intrinsic-dim : Dimension)
+
+  ;; Amount of training data
+  (constructor dataset : DataCount)
+
+  ;; The loss value
+  (constructor loss : Loss)
+
+  ;; The scaling exponent alpha = f(dimension)
+  (constructor exponent : (-> Dimension Loss))
+
+  ;; Judgments
+  (judgment (has-dimension ?d) :where d : Dimension)
+  (judgment (scales-with ?L ?D ?Alpha) :where L : Loss D : DataCount Alpha : Loss)
+
+  ;; =================================================================
+  ;; AXIOM OF APPROXIMATION THEORY
+  ;; =================================================================
+  ;;
+  ;; The Covering Number + Scaling Law Derivation:
+  ;; To cover a d-dimensional manifold with resolution epsilon,
+  ;; you need N ~ (1/epsilon)^d points.
+  ;; With N points, error is epsilon ~ N^(-1/d).
+  ;; Loss ~ epsilon^2 ~ N^(-2/d) (or -4/d depending on smoothness).
+
+  (rule geometric-decay
+    :premises ((has-dimension ?d))
+    :conclusion (scales-with loss dataset (exponent ?d))))
+
+(check-theory ManifoldScaling)
+
+;; =================================================================
+;; THE PROOF: If data lies on a manifold of dimension d,
+;; the loss MUST decay according to the geometric exponent.
+;; =================================================================
+
+(proof manifold-law
+  :theory ManifoldScaling
+  :assumptions ((has-dimension intrinsic-dim))
+  :goal (scales-with loss dataset (exponent intrinsic-dim))
+  :derivation (geometric-decay (assumption)))

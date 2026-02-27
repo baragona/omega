@@ -1,0 +1,791 @@
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  Rigorous Scaling Theory (v3)
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  A formalization of neural network scaling laws addressing
+;;;  SIX structural holes in the naive "Grand Unified" picture.
+;;;
+;;;  FIX 1 — THE ADDITIVE FALLACY:
+;;;    Loss ≠ L_N + L_D + L_C + E (independent sum).
+;;;    N and D are coupled via the Real Log Canonical Threshold (RLCT).
+;;;    balance-condition requires (coupling-is independent).
+;;;    rlct-coupled-scaling handles the singular-model case.
+;;;
+;;;  FIX 2 — THE CURSE OF DIMENSIONALITY CHEAT:
+;;;    If d = extrinsic (e.g., 3072 for CIFAR), D^(-1/3072) is flat.
+;;;    ALL scaling axioms route through (err-uses-dim T d), derivable
+;;;    ONLY via manifold-projection, which requires (learns-manifold T).
+;;;
+;;;  FIX 3 — THE PL-LANDSCAPE LEAP OF FAITH:
+;;;    SGD convergence at C^(-1) assumes Polyak-Łojasiewicz geometry.
+;;;    sgd-convergence requires (landscape-is pl-basin), which requires
+;;;    (width-exceeds-threshold N) via overparam-implies-pl.
+;;;    Edge-of-Stability convergence is formalized separately with
+;;;    the fractal basin assumption (eos-convergence).
+;;;
+;;;  FIX 4 — ASYMPTOTICS VS. FINITE REGIMES:
+;;;    Both weyl-lazy AND alignment-conjecture require
+;;;    (validity-is asymptotic). muP is defined at infinite width;
+;;;    finite-width corrections to alignment remain OPEN.
+;;;
+;;;  FIX 5 — PHASE TRANSITIONS (GROKKING):
+;;;    Power laws assume monotonic decay. RLCT λ(T) changes
+;;;    discontinuously at structural singularity boundaries.
+;;;    manifold-projection requires (phase-stable T), which gates
+;;;    ALL scaling laws through the universal bottleneck.
+;;;    Without phase stability, no scaling law can fire.
+;;;
+;;;  FIX 6 — STEPS VS. FLOPS:
+;;;    The theory treats C (compute) as independent of N and D.
+;;;    Physically, C ≈ 6ND (FLOPs = params × data × constant).
+;;;    compute-is-product documents this structural gap.
+;;;
+;;;  Status of each axiom:
+;;;    [THEOREM]    — provable from known mathematics
+;;;    [CONJECTURE] — empirically robust, proof is open
+;;;    [AXIOM]      — accepted as foundational
+;;;    [OPEN]       — unresolved; formalized as gating condition
+;;; ═══════════════════════════════════════════════════════════════════
+
+(theory RigorousScaling
+  ;; ── Sorts (12) ──
+  (sort Nat)            ;; Natural numbers (dimensions, smoothness, width)
+  (sort Exponent)       ;; Scaling exponents as fractions a/b
+  (sort Resource)       ;; N, D, C (documentation only)
+  (sort ErrorTerm)      ;; The four components of total loss
+  (sort Regime)         ;; Training regime (lazy/rich)
+  (sort Profile)        ;; How an error term scales
+  (sort Task)           ;; A learning task (carries geometry)
+  (sort DimKind)        ;; Intrinsic vs extrinsic dimension (Fix 2)
+  (sort Landscape)      ;; Optimizer geometry (Fix 3)
+  (sort CouplingMode)   ;; Error independence assumption (Fix 1)
+  (sort Validity)       ;; Asymptotic validity condition (Fix 4)
+  (sort Dynamics)       ;; Optimization dynamics (Fix 3b)
+
+  ;; ── Peano naturals ──
+  (constructor z : Nat)
+  (constructor s : (-> Nat Nat))
+
+  ;; ── Fraction exponents: frac(a, b) = a/b ──
+  (constructor frac : (-> Nat Nat Exponent))
+
+  ;; ── Resources (documentation constructors) ──
+  (constructor res-N : Resource)    ;; Model parameters
+  (constructor res-D : Resource)    ;; Training data
+  (constructor res-C : Resource)    ;; Compute (steps × params)
+
+  ;; ── Error terms ──
+  (constructor approx-err : ErrorTerm)   ;; L_N: approximation / capacity
+  (constructor estim-err  : ErrorTerm)   ;; L_D: estimation / statistical
+  (constructor optim-err  : ErrorTerm)   ;; L_C: optimization / convergence
+  (constructor entropy    : ErrorTerm)   ;; E: irreducible floor
+
+  ;; ── Regimes ──
+  (constructor lazy : Regime)    ;; NTK / kernel (weights frozen)
+  (constructor rich : Regime)    ;; Feature learning / muP (weights move)
+
+  ;; ── Scaling profiles ──
+  (constructor power-law : (-> Exponent Profile))   ;; err ~ R^(-exponent)
+  (constructor floor-profile : Profile)              ;; constant (doesn't decay)
+
+  ;; ── Dimension kinds (Fix 2) ──
+  (constructor intrinsic : DimKind)    ;; Data manifold dimension
+  (constructor extrinsic : DimKind)    ;; Ambient/embedding dimension
+
+  ;; ── Landscape geometry (Fix 3) ──
+  (constructor pl-basin          : Landscape)   ;; Polyak-Łojasiewicz: ‖∇L‖² ≥ μ(L - L*)
+  (constructor non-convex        : Landscape)   ;; Multiple local minima, saddle points
+  (constructor edge-of-stability : Landscape)   ;; LR > 2/λ_max, sharpness-aware regime
+
+  ;; ── Optimization dynamics (Fix 3b) ──
+  (constructor continuous-flow : Dynamics)   ;; ODE trajectory (η → 0 limit)
+  (constructor discrete-sgd    : Dynamics)   ;; Difference equation (large η)
+
+  ;; ── Coupling modes (Fix 1) ──
+  (constructor independent : CouplingMode)   ;; Errors decouple: Loss ≈ Σ L_i
+  (constructor coupled     : CouplingMode)   ;; N-D interaction via RLCT geometry
+
+  ;; ── Asymptotic validity (Fix 4) ──
+  (constructor asymptotic    : Validity)   ;; N → ∞ regime, Weyl/muP hold
+  (constructor finite-regime : Validity)   ;; Finite N, corrections needed
+
+  ;; ── RLCT: the singularity geometry invariant (Fix 1) ──
+  ;; In SLT, Loss ~ λ(T)/D. The RLCT λ replaces the naive parameter
+  ;; count N/2. For regular models, λ = N/2. For deep singular models,
+  ;; λ ≪ N/2 — the singularity compresses the effective dimension.
+  (constructor rlct : (-> Task Nat))
+
+  ;; ═══════════════════════════════════════════════════════════════
+  ;; JUDGMENTS (19)
+  ;; ═══════════════════════════════════════════════════════════════
+
+  ;; Task geometry
+  (judgment (has-dim ?T ?K ?d) :where T : Task K : DimKind d : Nat)
+  (judgment (has-smooth ?T ?s) :where T : Task s : Nat)
+
+  ;; Fix 2: Manifold hypothesis gate
+  (judgment (learns-manifold ?T) :where T : Task)
+  (judgment (err-uses-dim ?T ?d) :where T : Task d : Nat)
+
+  ;; Fix 5: Phase stability gate
+  (judgment (phase-stable ?T) :where T : Task)
+
+  ;; Configuration conditions
+  (judgment (regime-is ?R) :where R : Regime)
+  (judgment (landscape-is ?L) :where L : Landscape)
+  (judgment (coupling-is ?C) :where C : CouplingMode)
+  (judgment (validity-is ?V) :where V : Validity)
+  (judgment (width-exceeds-threshold ?N) :where N : Nat)
+
+  ;; Fix 3b: Dynamics condition
+  (judgment (dynamics-is ?D) :where D : Dynamics)
+  (judgment (fractal-basin-positive-measure ?T) :where T : Task)
+
+  ;; Fix 6: Compute-FLOPs relation (documentary)
+  ;; C ≈ 6ND: 1 step on N params over D data costs O(N) FLOPs.
+  ;; This judgment documents the structural gap: our theory treats
+  ;; res-C as independent, but physically C is a function of N × D.
+  (judgment (compute-is-product ?N ?D) :where N : Nat D : Nat)
+
+  ;; Scaling relationships
+  (judgment (err-scales ?E ?P) :where E : ErrorTerm P : Profile)
+  (judgment (faster-decay ?P1 ?P2) :where P1 : Profile P2 : Profile)
+  (judgment (dominates ?E1 ?E2) :where E1 : ErrorTerm E2 : ErrorTerm)
+  (judgment (balanced ?E1 ?E2) :where E1 : ErrorTerm E2 : ErrorTerm)
+  (judgment (limit-is ?E) :where E : ErrorTerm)
+
+  ;; Natural number ordering
+  (judgment (gt ?a ?b) :where a : Nat b : Nat)
+
+  ;; ═══════════════════════════════════════════════════════════════
+  ;; NATURAL NUMBER ORDERING
+  ;; ═══════════════════════════════════════════════════════════════
+  (rule gt-base
+    :conclusion (gt (s ?n) z))       ;; n+1 > 0
+
+  (rule gt-succ
+    :conclusion (gt (s ?n) ?n))      ;; n+1 > n
+
+  (rule gt-step
+    :premises ((gt ?a ?b))
+    :conclusion (gt (s ?a) (s ?b)))  ;; a > b → a+1 > b+1
+
+  ;; ═══════════════════════════════════════════════════════════════
+  ;; FIX 2 + FIX 5: MANIFOLD PROJECTION — the universal bottleneck
+  ;; ═══════════════════════════════════════════════════════════════
+  ;;
+  ;; ALL scaling axioms require (err-uses-dim ?T ?d).
+  ;; This can ONLY be derived through manifold-projection, which
+  ;; requires THREE conditions:
+  ;;   (a) the task has an intrinsic dimension d,
+  ;;   (b) the model learns the manifold structure, AND
+  ;;   (c) the training is in a stable phase (no grokking transition).
+  ;;
+  ;; Without ALL three, no scaling law can fire.
+  ;; This is the structural enforcement of Fixes 2 and 5.
+  ;;
+  ;; Status: (learns-manifold) [CONJECTURE], (phase-stable) [OPEN].
+
+  (rule manifold-projection
+    :premises ((has-dim ?T intrinsic ?d)
+               (learns-manifold ?T)
+               (phase-stable ?T))
+    :conclusion (err-uses-dim ?T ?d))
+
+  ;; ═══════════════════════════════════════════════════════════════
+  ;; AXIOM 1: Weyl's Law — Approximation error (L_N)
+  ;; ═══════════════════════════════════════════════════════════════
+  ;;
+  ;; In the lazy regime, NTK eigenvalues follow Weyl's Law:
+  ;;   L_N ~ N^(-s/d)
+  ;; where s = Sobolev smoothness, d = intrinsic manifold dimension.
+  ;;
+  ;; Gates: err-uses-dim (Fix 2+5), validity-is asymptotic (Fix 4).
+  ;;
+  ;; Status: [THEOREM] — proven for kernel methods (Weyl 1911).
+
+  (rule weyl-lazy
+    :premises ((regime-is lazy)
+               (err-uses-dim ?T ?d)
+               (has-smooth ?T ?s)
+               (validity-is asymptotic))
+    :conclusion (err-scales approx-err (power-law (frac ?s ?d))))
+
+  ;; ═══════════════════════════════════════════════════════════════
+  ;; THE ALIGNMENT CONJECTURE — Feature learning (L_N improved)
+  ;; ═══════════════════════════════════════════════════════════════
+  ;;
+  ;; In the rich (muP) regime, GD aligns the NTK eigenvectors with
+  ;; the data covariance matrix, increasing effective smoothness:
+  ;;   L_N ~ N^(-(s+1)/d)
+  ;;
+  ;; Fix 4: NOW requires (validity-is asymptotic). muP is strictly
+  ;; defined in the infinite-width limit. At finite widths, the
+  ;; eNTK only partially aligns — disrupted by 1/N variance.
+  ;; Proving finite-width alignment correction is a major open
+  ;; problem in Tensor Programs.
+  ;;
+  ;; Status: [CONJECTURE] — the central open problem.
+
+  (rule alignment-conjecture
+    :premises ((regime-is rich)
+               (err-uses-dim ?T ?d)
+               (has-smooth ?T ?s)
+               (validity-is asymptotic))
+    :conclusion (err-scales approx-err (power-law (frac (s ?s) ?d))))
+
+  ;; ═══════════════════════════════════════════════════════════════
+  ;; AXIOM 2: CLT — Estimation error (L_D)
+  ;; ═══════════════════════════════════════════════════════════════
+  ;;
+  ;; From CLT + covering number arguments: L_D ~ D^(-1/d).
+  ;; No asymptotic gate needed — CLT convergence rates are
+  ;; well-characterized (Berry-Esseen bounds).
+  ;;
+  ;; Status: [THEOREM] — standard statistical learning theory.
+
+  (rule clt-estimation
+    :premises ((err-uses-dim ?T ?d))
+    :conclusion (err-scales estim-err (power-law (frac (s z) ?d))))
+
+  ;; ═══════════════════════════════════════════════════════════════
+  ;; AXIOM 3a: SGD Convergence — PL regime
+  ;; ═══════════════════════════════════════════════════════════════
+  ;;
+  ;; Under PL conditions: L_C ~ Steps^(-1).
+  ;; Requires the landscape to be a PL-basin.
+  ;;
+  ;; Status: [THEOREM] for PL; [CONJECTURE] that deep nets are PL.
+
+  (rule sgd-convergence
+    :premises ((landscape-is pl-basin))
+    :conclusion (err-scales optim-err (power-law (frac (s z) (s z)))))
+
+  ;; ═══════════════════════════════════════════════════════════════
+  ;; FIX 3: OVERPARAMETERIZATION → PL BASIN
+  ;; ═══════════════════════════════════════════════════════════════
+  ;;
+  ;; When model width exceeds a critical threshold, the loss
+  ;; landscape becomes approximately PL.
+  ;; Known: 2-layer nets, N > poly(D) (Du et al. 2019).
+  ;; Open: deep nets, transformers, tight threshold f(D, depth).
+  ;;
+  ;; Status: [CONJECTURE] — empirical axiom.
+
+  (rule overparam-implies-pl
+    :premises ((width-exceeds-threshold ?N))
+    :conclusion (landscape-is pl-basin))
+
+  ;; ═══════════════════════════════════════════════════════════════
+  ;; FIX 3b: EDGE-OF-STABILITY CONVERGENCE
+  ;; ═══════════════════════════════════════════════════════════════
+  ;;
+  ;; At the Edge of Stability (EoS), the learning rate exceeds
+  ;; 2/λ_max and the iterates bounce off non-convex walls.
+  ;; Convergence still occurs empirically, but via DISCRETE dynamics
+  ;; (not continuous ODE flow).
+  ;;
+  ;; Proving EoS convergence requires showing that the fractal
+  ;; basin of attraction has positive Lebesgue measure — a
+  ;; measure-theoretic problem on the boundary of chaos.
+  ;;
+  ;; Status: [OPEN] — convergence on fractal boundaries.
+
+  (rule eos-convergence
+    :premises ((landscape-is edge-of-stability)
+               (dynamics-is discrete-sgd)
+               (fractal-basin-positive-measure ?T))
+    :conclusion (err-scales optim-err (power-law (frac (s z) (s z)))))
+
+  ;; ═══════════════════════════════════════════════════════════════
+  ;; FIX 1: RLCT COUPLED SCALING
+  ;; ═══════════════════════════════════════════════════════════════
+  ;;
+  ;; In Singular Learning Theory (Watanabe 2009):
+  ;;   Loss ~ λ(T) / D
+  ;; where λ = RLCT, a geometric invariant of the singularity.
+  ;; Regular models: λ = N/2. Deep singular models: λ ≪ N/2.
+  ;;
+  ;; The exponent is λ/1 w.r.t. D — still a power law, but
+  ;; the numerator is a geometric invariant, not the naive s.
+  ;;
+  ;; Status: RLCT existence [THEOREM] (Hironaka resolution).
+  ;;         Computation for specific architectures [OPEN].
+
+  (rule rlct-coupled-scaling
+    :premises ((coupling-is coupled)
+               (err-uses-dim ?T ?d))
+    :conclusion (err-scales approx-err (power-law (frac (rlct ?T) (s z)))))
+
+  ;; ═══════════════════════════════════════════════════════════════
+  ;; AXIOM 4: Entropy Floor
+  ;; ═══════════════════════════════════════════════════════════════
+  ;;
+  ;; Status: [AXIOM] — definitional (Bayes error / aleatoric uncertainty).
+
+  (rule entropy-is-floor
+    :conclusion (err-scales entropy floor-profile))
+
+  ;; ═══════════════════════════════════════════════════════════════
+  ;; PROFILE COMPARISON RULES
+  ;; ═══════════════════════════════════════════════════════════════
+
+  (rule faster-by-numerator
+    :premises ((gt ?a ?b))
+    :conclusion (faster-decay (power-law (frac ?a ?d)) (power-law (frac ?b ?d))))
+
+  (rule faster-by-denominator
+    :premises ((gt ?d2 ?d1))
+    :conclusion (faster-decay (power-law (frac ?s ?d1)) (power-law (frac ?s ?d2))))
+
+  (rule power-beats-floor
+    :conclusion (faster-decay (power-law ?e) floor-profile))
+
+  ;; ═══════════════════════════════════════════════════════════════
+  ;; DOMINANCE — Which error is the bottleneck?
+  ;; ═══════════════════════════════════════════════════════════════
+  ;;
+  ;; Dominance compares asymptotic rates. It does NOT require
+  ;; coupling independence — rate ordering is valid even when
+  ;; errors interact. What coupling affects is the PROFILES
+  ;; themselves (via RLCT), not the ordering between profiles.
+  ;;
+  ;; Note: during phase transitions (when phase-stable doesn't
+  ;; hold), monotonic decay can temporarily reverse. But this is
+  ;; gated by manifold-projection — no scaling can be derived
+  ;; during transitions, so dominance can't be concluded either.
+
+  (rule dominance-by-slower
+    :premises ((err-scales ?E1 ?P1)
+               (err-scales ?E2 ?P2)
+               (faster-decay ?P2 ?P1))
+    :conclusion (dominates ?E1 ?E2))
+
+  ;; ═══════════════════════════════════════════════════════════════
+  ;; CHINCHILLA BALANCE
+  ;; ═══════════════════════════════════════════════════════════════
+  ;;
+  ;; Fix 1: Requires (coupling-is independent). When N and D are
+  ;; coupled via RLCT, equal exponents ≠ optimal allocation.
+  ;; The interaction term breaks the balance argument.
+
+  (rule balance-condition
+    :premises ((err-scales ?E1 (power-law ?exp))
+               (err-scales ?E2 (power-law ?exp))
+               (coupling-is independent))
+    :conclusion (balanced ?E1 ?E2))
+
+  ;; ═══════════════════════════════════════════════════════════════
+  ;; INTELLIGENCE LIMIT
+  ;; ═══════════════════════════════════════════════════════════════
+
+  (rule limit-is-entropy
+    :premises ((err-scales entropy floor-profile))
+    :conclusion (limit-is entropy)))
+
+(check-theory RigorousScaling)
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;                    PART I: THE SAFE PHYSICS
+;;;  "Standard results — now with six explicit conditions"
+;;; ═══════════════════════════════════════════════════════════════════
+
+;; ─── Proof 1: Weyl's Law instance ───
+;; Lazy regime, intrinsic d=2, smoothness s=1:
+;;   L_N ~ N^(-1/2)
+;; Requires: regime, manifold projection (with manifold + phase gates),
+;; smoothness, and asymptotic validity.
+
+(proof weyl-law-instance
+  :theory RigorousScaling
+  :assumptions (
+    (regime-is lazy)
+    (has-dim ?T intrinsic (s (s z)))        ;; d_int = 2
+    (has-smooth ?T (s z))                   ;; s = 1
+    (learns-manifold ?T)                    ;; Fix 2: manifold hypothesis
+    (validity-is asymptotic)                ;; Fix 4: asymptotic regime
+    (phase-stable ?T))                      ;; Fix 5: no phase transition
+  :goal (err-scales approx-err (power-law (frac (s z) (s (s z)))))
+  :derivation
+    (weyl-lazy
+      (assumption 0)
+      (manifold-projection (assumption 1) (assumption 3) (assumption 5))
+      (assumption 2)
+      (assumption 4)))
+
+;; ─── Proof 2: CLT instance ───
+;; Estimation error on a 2D manifold: L_D ~ D^(-1/2).
+;; Must pass through manifold-projection (3 gates).
+
+(proof clt-instance
+  :theory RigorousScaling
+  :assumptions (
+    (has-dim ?T intrinsic (s (s z)))        ;; d_int = 2
+    (learns-manifold ?T)                    ;; Fix 2
+    (phase-stable ?T))                      ;; Fix 5
+  :goal (err-scales estim-err (power-law (frac (s z) (s (s z)))))
+  :derivation
+    (clt-estimation
+      (manifold-projection (assumption 0) (assumption 1) (assumption 2))))
+
+;; ─── Proof 3: SGD convergence via overparameterization ───
+;; L_C ~ Steps^(-1), only if model is wide enough for PL basin.
+;; Chain: width-exceeds-threshold → overparam-implies-pl → sgd-convergence.
+
+(proof sgd-with-pl
+  :theory RigorousScaling
+  :assumptions (
+    (width-exceeds-threshold (s z)))        ;; Fix 3: width sufficient
+  :goal (err-scales optim-err (power-law (frac (s z) (s z))))
+  :derivation
+    (sgd-convergence
+      (overparam-implies-pl (assumption))))
+
+;; ─── Proof 4: Entropy floor ───
+
+(proof entropy-constant
+  :theory RigorousScaling
+  :goal (err-scales entropy floor-profile)
+  :derivation (entropy-is-floor))
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;                    PART II: THE ALIGNMENT CONJECTURE
+;;;  "The central mystery of deep learning"
+;;; ═══════════════════════════════════════════════════════════════════
+
+;; ─── Proof 5: Alignment Conjecture instance ───
+;; Rich (muP) regime, d_int=2, s=1:
+;;   L_N ~ N^(-(s+1)/d) = N^(-2/2) = N^(-1)
+;; Fix 4: Now requires asymptotic validity — muP is defined at N→∞.
+
+(proof alignment-instance
+  :theory RigorousScaling
+  :assumptions (
+    (regime-is rich)
+    (has-dim ?T intrinsic (s (s z)))        ;; d_int = 2
+    (has-smooth ?T (s z))                   ;; s = 1
+    (learns-manifold ?T)                    ;; Fix 2
+    (validity-is asymptotic)                ;; Fix 4: muP is infinite-width
+    (phase-stable ?T))                      ;; Fix 5
+  :goal (err-scales approx-err (power-law (frac (s (s z)) (s (s z)))))
+  :derivation
+    (alignment-conjecture
+      (assumption 0)
+      (manifold-projection (assumption 1) (assumption 3) (assumption 5))
+      (assumption 2)
+      (assumption 4)))
+
+;; ─── Lemma 6: Feature learning ALWAYS beats the kernel ───
+;; Universal over all d and s: (s+1)/d decays faster than s/d.
+;; NOTE: This lemma takes (err-uses-dim) as a PREMISE — it doesn't
+;; derive it. So the manifold/phase gates are inherited by callers.
+
+(lemma rich-beats-lazy
+  :theory RigorousScaling
+  :premises (
+    (err-uses-dim ?T ?d)
+    (has-smooth ?T ?s))
+  :conclusion (faster-decay
+    (power-law (frac (s ?s) ?d))
+    (power-law (frac ?s ?d)))
+  :derivation
+    (faster-by-numerator (gt-succ)))
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;                    PART III: THE CHINCHILLA LAW
+;;;  "Why you shouldn't just make models bigger"
+;;; ═══════════════════════════════════════════════════════════════════
+
+;; ─── Proof 7: Chinchilla balance in lazy regime ───
+;; d_int=2, s=1: approx exponent = 1/2, estim exponent = 1/2.
+;; They MATCH → scale N and D together.
+;; Requires: coupling-is independent (Fix 1), asymptotic (Fix 4),
+;; manifold + phase stability (Fixes 2+5).
+
+(proof chinchilla-balance-lazy
+  :theory RigorousScaling
+  :assumptions (
+    (regime-is lazy)
+    (has-dim ?T intrinsic (s (s z)))        ;; d_int = 2
+    (has-smooth ?T (s z))                   ;; s = 1
+    (learns-manifold ?T)                    ;; Fix 2
+    (validity-is asymptotic)                ;; Fix 4
+    (coupling-is independent)               ;; Fix 1
+    (phase-stable ?T))                      ;; Fix 5
+  :goal (balanced approx-err estim-err)
+  :derivation
+    (balance-condition
+      (weyl-lazy
+        (assumption 0)
+        (manifold-projection (assumption 1) (assumption 3) (assumption 6))
+        (assumption 2)
+        (assumption 4))
+      (clt-estimation
+        (manifold-projection (assumption 1) (assumption 3) (assumption 6)))
+      (assumption 5)))
+
+;; ─── Proof 8: Chinchilla BREAKS in rich regime ───
+;; Approx = (s+1)/d = 2/2, Estim = 1/d = 1/2.
+;; 2/2 decays FASTER → estimation dominates → DATA-STARVED.
+
+(proof chinchilla-imbalance-rich
+  :theory RigorousScaling
+  :assumptions (
+    (regime-is rich)
+    (has-dim ?T intrinsic (s (s z)))        ;; d_int = 2
+    (has-smooth ?T (s z))                   ;; s = 1
+    (learns-manifold ?T)                    ;; Fix 2
+    (validity-is asymptotic)                ;; Fix 4: alignment needs this
+    (phase-stable ?T))                      ;; Fix 5
+  :goal (dominates estim-err approx-err)
+  :derivation
+    (dominance-by-slower
+      (clt-estimation
+        (manifold-projection (assumption 1) (assumption 3) (assumption 5)))
+      (alignment-conjecture
+        (assumption 0)
+        (manifold-projection (assumption 1) (assumption 3) (assumption 5))
+        (assumption 2)
+        (assumption 4))
+      (faster-by-numerator (gt-step (gt-base)))))
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;                    PART IV: THE PHASE DIAGRAM
+;;;  "Which resource is your bottleneck?"
+;;; ═══════════════════════════════════════════════════════════════════
+
+;; ─── Proof 9: High-d data → estimation bottleneck ───
+;; d_int=4: estim = 1/4, optim = 1/1.
+;; Optimization decays faster → estimation dominates → data-limited.
+
+(proof estim-dominates-optim
+  :theory RigorousScaling
+  :assumptions (
+    (has-dim ?T intrinsic (s (s (s (s z)))))   ;; d_int = 4
+    (learns-manifold ?T)                        ;; Fix 2
+    (width-exceeds-threshold (s z))             ;; Fix 3
+    (phase-stable ?T))                          ;; Fix 5
+  :goal (dominates estim-err optim-err)
+  :derivation
+    (dominance-by-slower
+      (clt-estimation
+        (manifold-projection (assumption 0) (assumption 1) (assumption 3)))
+      (sgd-convergence
+        (overparam-implies-pl (assumption 2)))
+      (faster-by-denominator (gt-step (gt-base)))))
+
+;; ─── Proof 10: Rich + low-d → optimization bottleneck ───
+;; d_int=1, s=1, rich: approx = 2/1, optim = 1/1.
+;; Approx decays faster → optimization is the bottleneck → COMPUTE limits.
+
+(proof optim-bottleneck-rich
+  :theory RigorousScaling
+  :assumptions (
+    (regime-is rich)
+    (has-dim ?T intrinsic (s z))            ;; d_int = 1
+    (has-smooth ?T (s z))                   ;; s = 1
+    (learns-manifold ?T)                    ;; Fix 2
+    (width-exceeds-threshold (s z))         ;; Fix 3
+    (validity-is asymptotic)                ;; Fix 4: alignment
+    (phase-stable ?T))                      ;; Fix 5
+  :goal (dominates optim-err approx-err)
+  :derivation
+    (dominance-by-slower
+      (sgd-convergence
+        (overparam-implies-pl (assumption 4)))
+      (alignment-conjecture
+        (assumption 0)
+        (manifold-projection (assumption 1) (assumption 3) (assumption 6))
+        (assumption 2)
+        (assumption 5))
+      (faster-by-numerator (gt-step (gt-base)))))
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;                    PART V: THE INTELLIGENCE LIMIT
+;;;  "What remains when all resources are infinite"
+;;; ═══════════════════════════════════════════════════════════════════
+
+;; ─── Proof 11: Entropy dominates every power-law error ───
+
+(proof entropy-dominates-approx
+  :theory RigorousScaling
+  :assumptions (
+    (regime-is lazy)
+    (has-dim ?T intrinsic (s (s z)))
+    (has-smooth ?T (s z))
+    (learns-manifold ?T)                    ;; Fix 2
+    (validity-is asymptotic)                ;; Fix 4
+    (phase-stable ?T))                      ;; Fix 5
+  :goal (dominates entropy approx-err)
+  :derivation
+    (dominance-by-slower
+      (entropy-is-floor)
+      (weyl-lazy
+        (assumption 0)
+        (manifold-projection (assumption 1) (assumption 3) (assumption 5))
+        (assumption 2)
+        (assumption 4))
+      (power-beats-floor)))
+
+;; ─── Proof 12: The Intelligence Limit ───
+
+(proof intelligence-limit
+  :theory RigorousScaling
+  :goal (limit-is entropy)
+  :derivation (limit-is-entropy (entropy-is-floor)))
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;                    PART VI: THE SIX FIXES DEMONSTRATED
+;;;  "The formalism enforces what you must believe"
+;;; ═══════════════════════════════════════════════════════════════════
+
+;; ─── Proof 13: Manifold Escape (Fix 2) ───
+;; Shows WHY deep learning escapes the curse of dimensionality.
+;; Extrinsic d_ext=4 (standing in for 3072 or 50000) is UNUSED.
+;; Only intrinsic d_int=2 participates, because all axioms require
+;; (err-uses-dim), which only fires on intrinsic dimension.
+;; Assumption 0 is structurally dead — the type system enforces it.
+
+(proof manifold-escape
+  :theory RigorousScaling
+  :assumptions (
+    (has-dim ?T extrinsic (s (s (s (s z)))))  ;; d_ext = 4 (DEAD — unused)
+    (has-dim ?T intrinsic (s (s z)))           ;; d_int = 2
+    (learns-manifold ?T)                       ;; Fix 2
+    (phase-stable ?T))                         ;; Fix 5
+  :goal (err-scales estim-err (power-law (frac (s z) (s (s z)))))
+  :derivation
+    (clt-estimation
+      (manifold-projection (assumption 1) (assumption 2) (assumption 3))))
+
+;; ─── Proof 14: RLCT Coupled Scaling (Fix 1) ───
+;; In coupled mode, the exponent is rlct(T)/1, not s/d.
+;; The RLCT is a geometric invariant of the singularity set.
+
+(proof coupled-rlct-scaling
+  :theory RigorousScaling
+  :assumptions (
+    (coupling-is coupled)
+    (has-dim ?T intrinsic (s (s z)))
+    (learns-manifold ?T)                    ;; Fix 2
+    (phase-stable ?T))                      ;; Fix 5
+  :goal (err-scales approx-err (power-law (frac (rlct ?T) (s z))))
+  :derivation
+    (rlct-coupled-scaling
+      (assumption 0)
+      (manifold-projection (assumption 1) (assumption 2) (assumption 3))))
+
+;; ─── Proof 15: Edge-of-Stability Convergence (Fix 3b) ───
+;; SGD at EoS converges at the same rate as PL — but requires
+;; discrete dynamics and fractal basin measure assumptions.
+;; This activates the previously "dead" edge-of-stability constructor.
+
+(proof eos-convergence-demo
+  :theory RigorousScaling
+  :assumptions (
+    (landscape-is edge-of-stability)
+    (dynamics-is discrete-sgd)
+    (fractal-basin-positive-measure ?T))
+  :goal (err-scales optim-err (power-law (frac (s z) (s z))))
+  :derivation
+    (eos-convergence (assumption 0) (assumption 1) (assumption 2)))
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;                    PART VII: OPEN PROBLEMS
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;; OPEN PROBLEM 1: RLCT Computation
+;;; ─────────────────────────────────
+;;; Statement: For architecture A with singularity set W_0,
+;;;            compute λ(A) = RLCT(W_0).
+;;; Known:     Existence via Hironaka resolution (Watanabe 2009).
+;;;            λ ≤ dim(W)/2 for regular; λ < dim(W)/2 for singular.
+;;; Open:      Effective computation for transformers, deep ResNets.
+;;; Impact:    Predicting scaling exponents from architecture alone.
+;;; In Omega:  (rlct ?T) is symbolic — structural reasoning only.
+;;;
+;;; OPEN PROBLEM 2: Manifold Learning Proof
+;;; ───────────────────────────────────────
+;;; Statement: GD on overparameterized f_θ converges to representation
+;;;            using intrinsic dimension d_int, not extrinsic d_ext.
+;;; Known:     Empirically robust; kernel methods use d_ext (curse).
+;;; Open:      Implicit bias analysis beyond the kernel regime.
+;;; Impact:    Formally explain why deep learning escapes the curse.
+;;; In Omega:  (learns-manifold ?T) is assumed — Proof 13 shows
+;;;            that without it, no scaling law fires.
+;;;
+;;; OPEN PROBLEM 3: PL Basin Characterization
+;;; ─────────────────────────────────────────
+;;; Statement: For width N > f(D, depth), landscape satisfies PL.
+;;; Known:     2-layer nets, N > poly(D) (Du et al. 2019).
+;;; Open:      Deep nets, transformers; tight threshold f(D, depth).
+;;; Impact:    Ground SGD convergence for practical architectures.
+;;; In Omega:  (width-exceeds-threshold ?N) is assumed.
+;;;
+;;; OPEN PROBLEM 4: Finite-Width Corrections
+;;; ────────────────────────────────────────
+;;; Statement: |L(N) - N^(-s/d)| ≤ C · N^(-s/d - 1/d) for explicit C.
+;;; Known:     1/N corrections in kernel regime (Bordelon & Pehlevan 2022).
+;;; Open:      Pre-factor C, feature-learning regime corrections.
+;;; Impact:    Predict exact crossover between scaling regimes.
+;;; In Omega:  (validity-is asymptotic) gates weyl-lazy AND
+;;;            alignment-conjecture. finite-regime exists but
+;;;            no rule produces scaling from it.
+;;;
+;;; OPEN PROBLEM 5: Fractal Basin Measure (EoS)
+;;; ────────────────────────────────────────────
+;;; Statement: The basin of attraction at Edge-of-Stability has
+;;;            positive Lebesgue measure in parameter space.
+;;; Known:     Empirical convergence at EoS (Cohen et al. 2021).
+;;;            Discrete dynamics create fractal boundaries.
+;;; Open:      Measure theory on non-smooth dynamical attractors.
+;;; Impact:    Would ground fast convergence in modern training regimes.
+;;; In Omega:  (fractal-basin-positive-measure ?T) is assumed.
+;;;            eos-convergence requires both this AND discrete-sgd dynamics.
+;;;
+;;; OPEN PROBLEM 6: Phase Transition Timing
+;;; ───────────────────────────────────────
+;;; Statement: Predict when RLCT λ(T) crosses a singularity boundary,
+;;;            causing grokking / sudden capability emergence.
+;;; Known:     Empirical observation of phase transitions in training.
+;;;            RLCT discontinuities at structural singularities (SLT).
+;;; Open:      Predicting transition width/step from architecture.
+;;; Impact:    Would predict emergence of capabilities before training.
+;;; In Omega:  (phase-stable ?T) gates manifold-projection.
+;;;            During a phase transition, ALL scaling laws are
+;;;            structurally blocked — the formalism enforces this.
+;;;
+;;; STRUCTURAL LIMITATION: C ≈ 6ND
+;;; ──────────────────────────────
+;;; compute-is-product documents that Compute (FLOPs) is physically
+;;; C ≈ 6ND, coupling it to Parameters and Data. Our theory treats
+;;; res-C / optim-err as independent. A complete theory would derive
+;;; Chinchilla-optimal (N, D) pairs from a FLOP budget, requiring
+;;; a rule connecting compute-is-product to the balance/dominance
+;;; framework. This remains a formalization gap.
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  SUMMARY: The Six Load-Bearing Assumptions
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;; Every proof in this theory visibly states what it assumes.
+;;; The formalism won't let you derive scaling without declaring
+;;; these six beliefs:
+;;;
+;;;  1. (learns-manifold ?T)      — NNs learn intrinsic manifold structure
+;;;  2. (phase-stable ?T)         — No phase transition / grokking underway
+;;;  3. (validity-is asymptotic)  — We're in the N→∞ asymptotic regime
+;;;  4. (width-exceeds-threshold) — Model is overparameterized (PL basin)
+;;;  5. (coupling-is independent) — Errors decouple (for balance only)
+;;;  6. (fractal-basin-positive-measure) — EoS basin exists (for EoS only)
+;;;
+;;; Remove any one, and the corresponding scaling law is structurally
+;;; blocked. These are the dark matter of deep learning theory.

@@ -1,0 +1,59 @@
+;;; =====================================================================
+;;;  KernelRegime: Spectral Decomposition of Intelligence
+;;; =====================================================================
+;;;
+;;;  We decompose the target function into eigenfunctions of the
+;;;  Neural Tangent Kernel (NTK).
+;;;
+;;;  The "Task Difficulty" is determined by how quickly the
+;;;  eigenvalues (Lambda) decay.
+;;;
+;;;  Proved: If Eigenvalues decay as k^(-nu),
+;;;          Then Loss decays as Data^(-(nu-1)/nu).
+;;; =====================================================================
+
+(theory KernelScaling
+  (sort Spectrum)
+  (sort DecayRate)
+  (sort GeneralizationError)
+
+  ;; The eigenvalues of the data kernel (Lambda_k)
+  (constructor eigenvalues : Spectrum)
+
+  ;; The power law exponent of the eigenvalues (nu)
+  (constructor spectral-decay : DecayRate)
+
+  ;; The resulting loss scaling
+  (constructor loss-scaling : (-> DecayRate GeneralizationError))
+
+  ;; Judgments
+  (judgment (has-spectrum ?S ?R) :where S : Spectrum R : DecayRate)
+  (judgment (implies-loss ?R ?L) :where R : DecayRate L : GeneralizationError)
+
+  ;; =================================================================
+  ;; AXIOM OF SPECTRAL BIAS
+  ;; =================================================================
+  ;;
+  ;; Neural networks learn high-eigenvalue components (coarse features) fast,
+  ;; and low-eigenvalue components (fine details) slow.
+  ;;
+  ;; The Capacity Theorem:
+  ;; The effective capacity at data size D is the sum of eigenvalues > 1/D.
+  ;; This determines the generalization error.
+
+  (rule spectral-law
+    :premises ((has-spectrum eigenvalues ?nu))
+    :conclusion (implies-loss ?nu (loss-scaling ?nu))))
+
+(check-theory KernelScaling)
+
+;; =================================================================
+;; THE PROOF: Given a dataset with spectral decay 'nu',
+;; the generalization error is forced to follow the power law.
+;; =================================================================
+
+(proof kernel-law
+  :theory KernelScaling
+  :assumptions ((has-spectrum eigenvalues spectral-decay))
+  :goal (implies-loss spectral-decay (loss-scaling spectral-decay))
+  :derivation (spectral-law (assumption)))

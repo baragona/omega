@@ -1,0 +1,285 @@
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  Scaling Conjectures: Three Laws of Neural Network Scaling
+;;; ═══════════════════════════════════════════════════════════════════
+;;;
+;;;  We formalize three conjectures about how neural network performance
+;;;  scales with model size N:
+;;;
+;;;  1. LAZY REGIME (Curse of Dimensionality):
+;;;     Loss ~ N^(-s/d) where s = smoothness, d = data dimension.
+;;;     In the NTK/kernel regime, scaling is geometry alone.
+;;;
+;;;  2. FEATURE LEARNING ADVANTAGE:
+;;;     Under muP, the effective exponent improves: α_rich > α_lazy.
+;;;     Feature learning beats the curse by compressing dimensions.
+;;;
+;;;  3. SCALING TRANSITION (Breakpoint):
+;;;     For mixture data, loss follows a piecewise power law with a
+;;;     critical width N_crit where the dominant task switches.
+;;; ═══════════════════════════════════════════════════════════════════
+
+(theory ScalingConjectures
+  ;; ── Sorts ──
+  (sort Nat)           ;; Natural numbers (dimensions, smoothness)
+  (sort Exponent)      ;; Scaling exponents as fractions
+  (sort Regime)        ;; Training regime
+  (sort Model)         ;; A neural network model
+  (sort Task)          ;; A learning task
+  (sort DataShape)     ;; Geometry of the data distribution
+  (sort Width)         ;; Network width parameter
+  (sort LossProfile)   ;; How loss scales with N
+
+  ;; ── Peano naturals ──
+  (constructor z : Nat)
+  (constructor s : (-> Nat Nat))
+
+  ;; ── Scaling exponents as fractions: frac(a, b) = a/b ──
+  (constructor frac : (-> Nat Nat Exponent))
+
+  ;; ── Training regimes ──
+  (constructor lazy : Regime)        ;; NTK / kernel regime (weights ~ frozen)
+  (constructor rich : Regime)        ;; Feature learning / muP (weights move)
+
+  ;; ── Data geometry ──
+  (constructor isotropic : DataShape)    ;; Uniform in all directions
+  (constructor anisotropic : DataShape)  ;; Some directions matter more
+
+  ;; ── Loss profiles ──
+  (constructor power-law : (-> Exponent LossProfile))
+  (constructor piecewise : (-> LossProfile LossProfile Width LossProfile))
+
+  ;; ── Task constructors ──
+  (constructor mixture : (-> Task Task Task))
+  (constructor n-crit  : (-> Task Task Width))   ;; Critical transition width
+
+  ;; ── Concrete instances for proofs ──
+  (constructor M-ntk : Model)       ;; NTK-parameterized model
+  (constructor M-mup : Model)       ;; muP-parameterized model
+  (constructor M-llm : Model)       ;; LLM on mixed data
+  (constructor vision : Task)       ;; Image classification
+  (constructor syntax-task : Task)  ;; Easy language patterns
+  (constructor reason-task : Task)  ;; Hard reasoning patterns
+
+  ;; ═══════════════════════════════════════════════════════════════
+  ;; JUDGMENTS
+  ;; ═══════════════════════════════════════════════════════════════
+  (judgment (has-dim ?T ?d) :where T : Task d : Nat)
+  (judgment (has-smooth ?T ?s) :where T : Task s : Nat)
+  (judgment (has-shape ?T ?S) :where T : Task S : DataShape)
+  (judgment (regime-of ?M ?R) :where M : Model R : Regime)
+  (judgment (task-of ?M ?T) :where M : Model T : Task)
+  (judgment (scales-as ?M ?L) :where M : Model L : LossProfile)
+  (judgment (faster-decay ?L1 ?L2) :where L1 : LossProfile L2 : LossProfile)
+  (judgment (beats ?M1 ?M2) :where M1 : Model M2 : Model)
+  (judgment (gt ?a ?b) :where a : Nat b : Nat)
+
+  ;; ═══════════════════════════════════════════════════════════════
+  ;; NATURAL NUMBER ORDERING
+  ;; ═══════════════════════════════════════════════════════════════
+  (rule gt-base
+    :conclusion (gt (s ?n) z))       ;; n+1 > 0
+
+  (rule gt-succ
+    :conclusion (gt (s ?n) ?n))      ;; n+1 > n
+
+  (rule gt-step
+    :premises ((gt ?a ?b))
+    :conclusion (gt (s ?a) (s ?b)))  ;; a > b → a+1 > b+1
+
+  ;; ═══════════════════════════════════════════════════════════════
+  ;; CONJECTURE 1: Lazy Regime — Curse of Dimensionality
+  ;; ═══════════════════════════════════════════════════════════════
+  ;;
+  ;; In the kernel regime, eigenvalues of the NTK follow Weyl's law:
+  ;;   λ_k ~ k^(-2s/d)
+  ;; The generalization error after N samples is the unlearned tail:
+  ;;   Loss ~ N^(-s/d)
+  ;; where s = Sobolev smoothness, d = manifold dimension.
+
+  (rule lazy-scaling
+    :premises ((regime-of ?M lazy)
+               (task-of ?M ?T)
+               (has-dim ?T ?d)
+               (has-smooth ?T ?s))
+    :conclusion (scales-as ?M (power-law (frac ?s ?d))))
+
+  ;; ═══════════════════════════════════════════════════════════════
+  ;; CONJECTURE 2: Feature Learning Advantage
+  ;; ═══════════════════════════════════════════════════════════════
+  ;;
+  ;; Under muP, the network rotates weights to align with principal
+  ;; components. With anisotropic data, this effectively increases
+  ;; the "smoothness" by 1 (compresses irrelevant dimensions).
+  ;;   Loss_rich ~ N^(-(s+1)/d)
+  ;; Since (s+1)/d > s/d, feature learning strictly wins.
+
+  (rule rich-scaling
+    :premises ((regime-of ?M rich)
+               (task-of ?M ?T)
+               (has-dim ?T ?d)
+               (has-smooth ?T ?s)
+               (has-shape ?T anisotropic))
+    :conclusion (scales-as ?M (power-law (frac (s ?s) ?d))))
+
+  ;; ── Scaling comparison ──
+  ;; Larger numerator (same denominator) = faster decay = better
+  (rule faster-by-smoothness
+    :premises ((gt ?a ?b))
+    :conclusion (faster-decay (power-law (frac ?a ?d)) (power-law (frac ?b ?d))))
+
+  ;; Smaller denominator (same numerator) = faster decay = better
+  (rule faster-by-dimension
+    :premises ((gt ?d2 ?d1))
+    :conclusion (faster-decay (power-law (frac ?s ?d1)) (power-law (frac ?s ?d2))))
+
+  ;; Model comparison via scaling profiles
+  (rule model-beats
+    :premises ((scales-as ?M1 ?L1)
+               (scales-as ?M2 ?L2)
+               (faster-decay ?L1 ?L2))
+    :conclusion (beats ?M1 ?M2))
+
+  ;; ═══════════════════════════════════════════════════════════════
+  ;; CONJECTURE 3: Scaling Transition (Breakpoint)
+  ;; ═══════════════════════════════════════════════════════════════
+  ;;
+  ;; For data that is a mixture of an easy task (low d) and a hard
+  ;; task (high d), the scaling law has a "kink":
+  ;;   Below N_crit: Loss ~ N^(-s/dA)  (learning easy patterns)
+  ;;   Above N_crit: Loss ~ N^(-s/dB)  (learning hard patterns)
+  ;; The critical width is where the network exhausts easy features.
+
+  (rule mixture-scaling
+    :premises ((task-of ?M (mixture ?A ?B))
+               (regime-of ?M ?R)
+               (has-dim ?A ?dA)
+               (has-dim ?B ?dB)
+               (has-smooth ?A ?s)
+               (has-smooth ?B ?s)
+               (gt ?dB ?dA))
+    :conclusion (scales-as ?M
+      (piecewise
+        (power-law (frac ?s ?dA))
+        (power-law (frac ?s ?dB))
+        (n-crit ?A ?B)))))
+
+(check-theory ScalingConjectures)
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  CONJECTURE 1: Lazy Regime Scaling
+;;; ═══════════════════════════════════════════════════════════════════
+;;; For an NTK model on a 2D manifold (d=2) with smoothness s=1:
+;;;   Loss ~ N^(-1/2)
+;;; The curse of dimensionality: higher d means slower scaling.
+
+(proof conj1-lazy-scaling
+  :theory ScalingConjectures
+  :assumptions (
+    (regime-of M-ntk lazy)
+    (task-of M-ntk vision)
+    (has-dim vision (s (s z)))        ;; d = 2
+    (has-smooth vision (s z)))        ;; s = 1
+  :goal (scales-as M-ntk (power-law (frac (s z) (s (s z)))))
+  :derivation
+    (lazy-scaling (assumption 0) (assumption 1) (assumption 2) (assumption 3)))
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  CONJECTURE 2: Feature Learning Advantage
+;;; ═══════════════════════════════════════════════════════════════════
+
+;; ── LEMMA: Feature learning ALWAYS beats the kernel regime ──
+;; For any task dimension d and smoothness s, as long as the data is
+;; anisotropic, a muP model beats an NTK model.
+;;
+;; Proof sketch:
+;;   muP  gives exponent (s+1)/d
+;;   NTK  gives exponent s/d
+;;   s+1 > s (gt-succ), so (s+1)/d > s/d.
+
+(lemma rich-beats-lazy
+  :theory ScalingConjectures
+  :premises (
+    (regime-of ?M1 rich)
+    (task-of ?M1 ?T)
+    (has-dim ?T ?d)
+    (has-smooth ?T ?s)
+    (has-shape ?T anisotropic)
+    (regime-of ?M2 lazy)
+    (task-of ?M2 ?T))
+  :conclusion (beats ?M1 ?M2)
+  :derivation
+    (model-beats
+      ;; muP scaling: Loss ~ N^(-(s+1)/d)
+      (rich-scaling (assumption 0) (assumption 1) (assumption 2) (assumption 3) (assumption 4))
+      ;; NTK scaling: Loss ~ N^(-s/d)
+      (lazy-scaling (assumption 5) (assumption 6) (assumption 2) (assumption 3))
+      ;; (s+1) > s, so (s+1)/d decays faster
+      (faster-by-smoothness (gt-succ))))
+
+;; ── Concrete instance: muP beats NTK on 2D vision task ──
+(proof conj2-feature-learning
+  :theory ScalingConjectures
+  :assumptions (
+    (regime-of M-mup rich)
+    (task-of M-mup vision)
+    (has-dim vision (s (s z)))        ;; d = 2
+    (has-smooth vision (s z))         ;; s = 1
+    (has-shape vision anisotropic)
+    (regime-of M-ntk lazy)
+    (task-of M-ntk vision))
+  :goal (beats M-mup M-ntk)
+  :derivation
+    (rich-beats-lazy
+      (assumption 0) (assumption 1) (assumption 2)
+      (assumption 3) (assumption 4) (assumption 5) (assumption 6)))
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  CONJECTURE 3: Scaling Transition (Breakpoint)
+;;; ═══════════════════════════════════════════════════════════════════
+;;; An LLM trained on syntax (d=2) + reasoning (d=4), both smoothness 1:
+;;;   Below N_crit: Loss ~ N^(-1/2)   (learning syntax fast)
+;;;   Above N_crit: Loss ~ N^(-1/4)   (learning reasoning slow)
+;;;
+;;; The "kink" in the scaling law is the transition from easy to hard.
+
+(proof conj3-scaling-transition
+  :theory ScalingConjectures
+  :assumptions (
+    (task-of M-llm (mixture syntax-task reason-task))
+    (regime-of M-llm lazy)
+    (has-dim syntax-task (s (s z)))                ;; d_A = 2
+    (has-dim reason-task (s (s (s (s z)))))        ;; d_B = 4
+    (has-smooth syntax-task (s z))                 ;; s = 1
+    (has-smooth reason-task (s z)))                ;; s = 1
+  :goal (scales-as M-llm
+    (piecewise
+      (power-law (frac (s z) (s (s z))))                   ;; N^(-1/2) phase
+      (power-law (frac (s z) (s (s (s (s z))))))           ;; N^(-1/4) phase
+      (n-crit syntax-task reason-task)))
+  :derivation
+    (mixture-scaling
+      (assumption 0) (assumption 1)
+      (assumption 2) (assumption 3)
+      (assumption 4) (assumption 5)
+      ;; gt(4, 2): 4 > 2 via gt-base(2 > 0), gt-step(3 > 1), gt-step(4 > 2)
+      (gt-step (gt-step (gt-base)))))
+
+
+;;; ═══════════════════════════════════════════════════════════════════
+;;;  BONUS: Easy phase decays faster than hard phase
+;;; ═══════════════════════════════════════════════════════════════════
+;;; N^(-1/2) decays faster than N^(-1/4) because 1/2 > 1/4
+;;; (equivalently: d=4 > d=2, so same smoothness over larger d is slower).
+;;; This is why we observe the kink: the fast phase exhausts first.
+
+(proof easy-phase-faster
+  :theory ScalingConjectures
+  :goal (faster-decay
+    (power-law (frac (s z) (s (s z))))              ;; N^(-1/2)
+    (power-law (frac (s z) (s (s (s (s z)))))))     ;; N^(-1/4)
+  :derivation
+    ;; d_B(4) > d_A(2) → s/d_A decays faster than s/d_B
+    (faster-by-dimension (gt-step (gt-step (gt-base)))))
