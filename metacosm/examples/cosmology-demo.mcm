@@ -1,0 +1,139 @@
+;;; Full cosmology mode: the flagship demo.
+;;;
+;;; "Theorem cosmology pipeline"
+;;;
+;;; Three worlds with different epistemic profiles:
+;;;   Explorer  — high discovery, weak canonicality (e-graph saturation)
+;;;   Certifier — low discovery, high verification (directed rewriting)
+;;;   Executor  — no discovery, high compression (operational compiler)
+;;;
+;;; A pipeline discovers in Explorer, tunnels to Certifier, coarse-grains to Executor.
+
+;; --- Layer 2: Hyperion categories + substrates ---
+
+[Category CartesianClosed
+    [Object Type]
+    [Object Term]
+    [Morphism app :domain [Term Term] :codomain Term]
+    [Exponential lam :object Type]
+    [Evaluator app]
+]
+
+[Substrate EGraphSubstrate
+    @engine interaction-graph
+    @resource-mode optimal-sharing
+    @barrier transparent
+    @equality equality-saturation
+]
+
+[Substrate RewriteSubstrate
+    @engine term-tree
+    @resource-mode optimal-sharing
+    @barrier transparent
+    @equality rewrite-equivalence
+]
+
+[Substrate CompileSubstrate
+    @engine abstract-machine
+    @resource-mode deep-copy
+    @barrier transparent
+    @equality rewrite-equivalence
+]
+
+;; --- Layer 3: Metacosm worlds with epistemic profiles ---
+
+[World Explorer
+    :category CartesianClosed
+    :substrate EGraphSubstrate
+    :epistemic [
+        :discovery high
+        :verification medium
+        :canonicality low
+        :transportability high
+        :compression low
+    ]
+    :admits [Split Tunnel]
+]
+
+[World Certifier
+    :category CartesianClosed
+    :substrate RewriteSubstrate
+    :epistemic [
+        :discovery low
+        :verification high
+        :canonicality high
+        :transportability medium
+        :compression medium
+    ]
+    :admits [CoarseGrain]
+]
+
+[World Executor
+    :category CartesianClosed
+    :substrate CompileSubstrate
+    :epistemic [
+        :discovery none
+        :verification medium
+        :canonicality high
+        :transportability low
+        :compression high
+    ]
+]
+
+;; --- Transitions ---
+
+[Transition DiscoverTunnel
+    :kind Tunnel
+    :from Explorer
+    :to Certifier
+    :preserves [Soundness]
+    :breaks [PathStructure]
+]
+
+[Transition CertifyToExecute
+    :kind CoarseGrain
+    :from Certifier
+    :to Executor
+    :preserves [Soundness Normalization]
+    :breaks [ResourceSensitivity]
+]
+
+;; --- Universe family ---
+
+[Family TheoremPipeline
+    :worlds [Explorer Certifier Executor]
+    :invariants [Soundness]
+]
+
+;; --- Epistemic observables ---
+
+[Observable DiscoveryPower :kind discovery-cost]
+[Observable VerificationClarity :kind verification-cost]
+[Observable TransportDistance :kind transport-cost]
+[Observable ProofCompression :kind compression]
+
+;; --- Measurements ---
+
+[Measure :observable DiscoveryPower :world Explorer]
+[Measure :observable DiscoveryPower :world Certifier]
+[Measure :observable DiscoveryPower :world Executor]
+
+[Measure :observable VerificationClarity :world Certifier]
+[Measure :observable VerificationClarity :world Executor]
+
+[Measure :observable TransportDistance :world Explorer :target Certifier]
+[Measure :observable TransportDistance :world Certifier :target Executor]
+[Measure :observable TransportDistance :world Explorer :target Executor]
+
+[Measure :observable ProofCompression :world Explorer]
+[Measure :observable ProofCompression :world Executor]
+
+;; --- The pipeline ---
+
+[Pipeline TheoremCosmology
+    [Step discover-equivalences :action Discover :world Explorer]
+    [Step tunnel-to-certifier :action Tunnel :world Explorer :target Certifier]
+    [Step verify-result :action Verify :world Certifier]
+    [Step compress-for-execution :action CoarseGrain :world Certifier :target Executor]
+    [Step measure-outcome :action Measure :world Executor]
+]

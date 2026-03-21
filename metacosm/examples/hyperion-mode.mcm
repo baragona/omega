@@ -1,0 +1,42 @@
+;;; Hyperion mode: categories + substrates + universes, no cosmology.
+;;; This demonstrates that Hyperion is a conservative fragment of Metacosm.
+;;; Category, Substrate, Universe, Functor blocks route directly to Hyperion.
+
+;; Define categories (Hyperion layer)
+[Category CartesianClosed
+    [Object Type]
+    [Object Term]
+    [Morphism app :domain [Term Term] :codomain Term]
+    [Exponential lam :object Type]
+    [Evaluator app]
+]
+
+[Category SymmetricMonoidal
+    [Object Type]
+    [Object Term]
+    [Morphism combine :domain [Term Term] :codomain Term]
+    [TensorProduct tensor]
+    [Unit unit]
+]
+
+;; Define substrates (Hyperion layer)
+[Substrate EGraphExplorer
+    @engine interaction-graph
+    @resource-mode optimal-sharing
+    @barrier transparent
+    @equality equality-saturation
+]
+
+[Substrate DirectedVerifier
+    @engine term-tree
+    @resource-mode optimal-sharing
+    @barrier transparent
+    @equality rewrite-equivalence
+]
+
+;; Define universes (Hyperion layer)
+[Universe ExploreUniverse :category CartesianClosed :substrate EGraphExplorer]
+[Universe VerifyUniverse :category CartesianClosed :substrate DirectedVerifier]
+
+;;; This is pure Hyperion usage. No World blocks, no Transition blocks,
+;;; no epistemic annotations. Metacosm passes everything through.

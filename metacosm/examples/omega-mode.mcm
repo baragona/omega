@@ -1,0 +1,23 @@
+;;; Omega mode: pure theory + proofs, no worlds, no cosmology.
+;;; This demonstrates that Omega is a conservative fragment of Metacosm.
+;;; Every Omega .hyp file works unchanged — blocks route through Hyperion → Apeiron.
+
+;; Define a substrate (Hyperion layer)
+[Substrate OmegaDefault
+    @engine term-tree
+    @resource-mode optimal-sharing
+    @barrier transparent
+    @equality rewrite-equivalence
+]
+
+;; Define a category (Hyperion layer)
+[Category SimpleLogic
+    [Object Prop]
+    [Morphism mp :domain [Prop Prop] :codomain Prop]
+]
+
+;; Define a universe (Hyperion layer, maps to Omega's single-world)
+[Universe OmegaWorld :category SimpleLogic :substrate OmegaDefault]
+
+;;; Everything below is pure Omega: theories and proofs in a fixed world.
+;;; No epistemic annotations, no transitions, no cosmology required.
