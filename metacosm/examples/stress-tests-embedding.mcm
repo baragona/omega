@@ -1,0 +1,321 @@
+;; ============================================================
+;; LAYER EMBEDDING STRESS TEST
+;;
+;; Prove that a pure Omega logic theory survives completely
+;; unperturbed when wrapped in a Hyperion substrate, and then
+;; embedded into a Metacosm world with full cosmological
+;; machinery around it.
+;;
+;; This tests the "conservative extension all the way down"
+;; philosophy: Omega ↪ Hyperion ↪ Metacosm.
+;; ============================================================
+
+
+;; ============================================================
+;; LAYER 1 (Omega): Pure Logic
+;;
+;; A simple Peano arithmetic theory with rewrite rules.
+;; This is Omega-level content: sorts, constructors, rules.
+;; It should compute 2+2=4 by normalization alone.
+;; ============================================================
+
+;; First we need a Hyperion universe to host the theory.
+;; This is the minimum Hyperion scaffolding required.
+[Category PeanoCategory
+    [Object Nat]
+    [Morphism z :domain [] :codomain Nat]
+    [Morphism s :domain [Nat] :codomain Nat]
+    [Morphism plus :domain [Nat Nat] :codomain Nat]
+]
+
+[Substrate PeanoSubstrate
+    @engine term-tree
+    @resource-mode optimal-sharing
+    @barrier transparent
+    @equality rewrite-equivalence
+]
+
+[Universe PeanoUniverse :category PeanoCategory :substrate PeanoSubstrate]
+
+;; Pure Omega theory: Peano addition with rewrite rules
+[Theory PeanoArithmetic :in PeanoUniverse
+    [@rule [plus z ?n] ==> ?n]
+    [@rule [plus [s ?n] ?m] ==> [s [plus ?n ?m]]]
+]
+
+;; Pure Omega proofs: 2+2=4 by normalization
+[Proofs PeanoCheck :in PeanoArithmetic
+    [assert-eq two-plus-two
+        [plus [s [s z]] [s [s z]]]
+        [s [s [s [s z]]]]
+    ]
+    [assert-eq one-plus-three
+        [plus [s z] [s [s [s z]]]]
+        [s [s [s [s z]]]]
+    ]
+    [assert-eq zero-plus-n
+        [plus z [s [s z]]]
+        [s [s z]]
+    ]
+]
+
+
+;; ============================================================
+;; LAYER 2 (Hyperion): Categorical Physics
+;;
+;; Add a second substrate and functor. The Omega theory above
+;; is already running on PeanoSubstrate. We show that adding
+;; Hyperion machinery (functors, universes) doesn't perturb it.
+;; ============================================================
+
+[Substrate EGraphSubstrate
+    @engine interaction-graph
+    @resource-mode optimal-sharing
+    @barrier transparent
+    @equality equality-saturation
+]
+
+[Universe EGraphPeano :category PeanoCategory :substrate EGraphSubstrate]
+
+;; Functor: rewrite-based computation → e-graph exploration
+;; Functor from e-graph exploration to rewrite verification
+[Functor EGraphToRewrite
+    :from EGraphSubstrate :to PeanoSubstrate
+    :map-object [Nat Nat]
+    :map-morphism [z z]
+    :map-morphism [s s]
+    :map-morphism [plus plus]
+]
+
+;; The same theory can be checked in the e-graph universe too
+[Theory PeanoInEGraph :in EGraphPeano
+    [@rule [plus z ?n] ==> ?n]
+    [@rule [plus [s ?n] ?m] ==> [s [plus ?n ?m]]]
+]
+
+[Proofs EGraphCheck :in PeanoInEGraph
+    [assert-eq egraph-two-plus-two
+        [plus [s [s z]] [s [s z]]]
+        [s [s [s [s z]]]]
+    ]
+]
+
+
+;; ============================================================
+;; LAYER 3 (Metacosm): Cosmological Epistemic Structure
+;;
+;; Now wrap both universes in Metacosm worlds with full
+;; epistemic profiles, transitions, pipelines, and assertions.
+;; The Omega proofs above must still hold — cosmology doesn't
+;; perturb them.
+;; ============================================================
+
+;; World 1: The rewrite-based prover
+[World ProverWorld
+    :category PeanoCategory
+    :substrate PeanoSubstrate
+    :epistemic [
+        :discover heuristic
+        :verify [:soundness sound :completeness complete :termination decidable]
+        :canonicalize [:normalization strong :confluence yes :unique-normal-forms yes]
+    ]
+    :admits [Tunnel CoarseGrain]
+]
+
+;; World 2: The e-graph explorer
+[World ExplorerWorld
+    :category PeanoCategory
+    :substrate EGraphSubstrate
+    :epistemic [
+        :discover complete
+        :verify sound
+        :canonicalize [:normalization weak :confluence yes]
+    ]
+    :admits [Tunnel CoarseGrain]
+]
+
+;; World 3: A compiled output world (no proofs, just results)
+[Substrate CompileSubstrate
+    @engine abstract-machine
+    @resource-mode deep-copy
+    @barrier transparent
+    @equality rewrite-equivalence
+]
+
+[World CompilerWorld
+    :category PeanoCategory
+    :substrate CompileSubstrate
+    :epistemic [
+        :discover none
+        :verify heuristic
+        :canonicalize none
+        :compress codegen
+    ]
+]
+
+;; Transition: Explorer finds, Prover certifies
+[Transition ExploreToProve
+    :kind Tunnel
+    :from ExplorerWorld :to ProverWorld
+    :functor EGraphToRewrite
+    :transport [:mode witness]
+    :preserves [Soundness Normalization]
+]
+
+;; Transition: Prover compiles to executable
+[Functor PeanoToCompile
+    :from PeanoSubstrate :to CompileSubstrate
+    :map-object [Nat Nat]
+    :map-morphism [z z]
+    :map-morphism [s s]
+    :map-morphism [plus plus]
+]
+
+[Transition ProveToCompile
+    :kind CoarseGrain
+    :from ProverWorld :to CompilerWorld
+    :functor PeanoToCompile
+    :transport [:mode lossy :loss [PathStructure]]
+    :preserves [Soundness]
+    :breaks [PathStructure]
+]
+
+;; Compose the full pipeline
+[Compose ExploreToCompile
+    :transitions [ExploreToProve ProveToCompile]
+]
+
+;; Family: the three worlds form a theorem pipeline
+[Family PeanoFamily
+    :worlds [ExplorerWorld ProverWorld CompilerWorld]
+    :invariants [Soundness]
+]
+
+
+;; ============================================================
+;; EMBEDDING ASSERTIONS: The Conservative Extension Tests
+;; ============================================================
+
+;; (A) Layer embeddings — structural checks
+[Embedding OmegaInHyperionCheck
+    :from Omega
+    :to Hyperion
+    :properties [conservative definable-fragment strict-extension non-perturbing]
+]
+
+[Embedding HyperionInMetacosmCheck
+    :from Hyperion
+    :to Metacosm
+    :properties [conservative definable-fragment strict-extension non-perturbing]
+]
+
+[Embedding OmegaAllTheWayDown
+    :from Omega
+    :to Metacosm
+    :properties [conservative definable-fragment strict-extension non-perturbing]
+]
+
+
+;; (B) Epistemic assertions — world relationships hold
+[Assert [dominates ProverWorld CompilerWorld]]
+[Assert [dominates ExplorerWorld CompilerWorld]]
+[Assert [preserves PeanoFamily Soundness]]
+[Assert [faithful ExploreToProve]]
+
+
+;; (C) Composition algebra — the full pipeline's properties
+[Assert [preserves-transition ExploreToCompile Soundness]]
+
+
+;; (D) World audits — substrate physics match epistemic claims
+[CheckWorld ProverWorld]
+[CheckWorld ExplorerWorld]
+[CheckWorld CompilerWorld]
+
+
+;; (E) Observables — semantic measurements work across layers
+[Observable DiscoveryStrength :kind discovery-strength]
+[Observable VerifyProfile :kind verification-soundness]
+[Observable CanonProfile :kind canonicality-strength]
+[Observable Confluence :kind canonicality-confluence]
+[Observable EpDist :kind epistemic-distance]
+
+[Measure :observable DiscoveryStrength :world ExplorerWorld]
+[Measure :observable DiscoveryStrength :world ProverWorld]
+[Measure :observable DiscoveryStrength :world CompilerWorld]
+[Measure :observable VerifyProfile :world ProverWorld]
+[Measure :observable CanonProfile :world ProverWorld]
+[Measure :observable Confluence :world ExplorerWorld]
+[Measure :observable EpDist :world ExplorerWorld :target ProverWorld]
+[Measure :observable EpDist :world ProverWorld :target CompilerWorld]
+[Measure :observable EpDist :world ExplorerWorld :target CompilerWorld]
+
+
+;; (F) Lemma transport — theorem moves across the pipeline
+[Lemma TwoPlusTwo
+    :source ExplorerWorld
+    :via ExploreToProve
+    :target ProverWorld
+    :statement "plus(s(s(z)), s(s(z))) = s(s(s(s(z))))"
+]
+
+
+;; (G) Pipeline — epistemic feasibility of the full workflow
+[Pipeline PeanoPipeline
+    [Step discover :action Discover :world ExplorerWorld]
+    [Step transport :action Tunnel :world ExplorerWorld :target ProverWorld]
+    [Step verify :action Verify :world ProverWorld]
+    [Step compile :action CoarseGrain :world ProverWorld :target CompilerWorld]
+    [Step measure :action Measure :world CompilerWorld]
+]
+
+
+;; (H) Materialize the pipeline
+[Materialize RunPeano :pipeline PeanoPipeline]
+
+
+;; (I) Laws — metatheoretic properties verified by model-check
+[Law DominanceReflexive
+    :forall [W]
+    :then [dominates W W]
+    :method model-check
+]
+
+[Law DominanceTransitive
+    :forall [X Y Z]
+    :where [[dominates X Y] [dominates Y Z]]
+    :then [dominates X Z]
+    :method model-check
+]
+
+;; The key impossibility: you can't have a world that dominates
+;; the Explorer (complete discovery) AND is dominated by the
+;; Compiler (no discovery). Discovery is a monotone axis.
+[Refute NoCakeAndEatIt
+    :forall [W]
+    :impossible [
+        [dominates W ExplorerWorld]
+        [dominates CompilerWorld W]
+    ]
+    :method model-check
+]
+
+
+;; ============================================================
+;; ADVERSARIAL ATTACKS ON THE EMBEDDING
+;; ============================================================
+
+;; Attack 1: Try to embed a rich world into a poor one
+;; (backwards conservative extension — should fail)
+[Embedding BackwardsEmbed
+    :from ProverWorld
+    :to CompilerWorld
+    :properties [conservative]
+]
+
+;; Attack 2: Claim the composed pipeline preserves PathStructure
+;; (it doesn't — the compile step breaks it)
+[Assert [preserves-transition ExploreToCompile PathStructure]]
+
+;; Attack 3: Claim the compiled world is as capable as the explorer
+[Assert [dominates CompilerWorld ExplorerWorld]]
