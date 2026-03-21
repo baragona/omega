@@ -67,17 +67,11 @@ pub fn parse_transition_kind(s: &str) -> Result<TransitionKind> {
 /// A named invariant that may or may not survive a transition.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Invariant {
-    /// All provable statements remain provable
     Soundness,
-    /// All terms have normal forms
     Normalization,
-    /// Transport between worlds is possible
     Transportability,
-    /// Higher path structure is preserved
     PathStructure,
-    /// Resource sensitivity is preserved
     ResourceSensitivity,
-    /// Custom invariant
     Custom(String),
 }
 
@@ -105,6 +99,66 @@ pub fn parse_invariant(s: &str) -> Invariant {
     }
 }
 
+/// Transport mode: how a transition moves theorems across worlds.
+/// This is a relational property — it belongs on transitions, not worlds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TransportMode {
+    /// Transport the full witness/proof
+    Witness,
+    /// Transport only the theorem statement
+    TheoremOnly,
+    /// Conservative: everything transfers
+    Conservative,
+    /// Lossy: some information is lost
+    Lossy,
+}
+
+impl Default for TransportMode {
+    fn default() -> Self {
+        TransportMode::Witness
+    }
+}
+
+impl std::fmt::Display for TransportMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TransportMode::Witness => write!(f, "witness"),
+            TransportMode::TheoremOnly => write!(f, "theorem-only"),
+            TransportMode::Conservative => write!(f, "conservative"),
+            TransportMode::Lossy => write!(f, "lossy"),
+        }
+    }
+}
+
+fn parse_transport_mode(s: &str) -> Result<TransportMode> {
+    match s {
+        "witness" => Ok(TransportMode::Witness),
+        "theorem-only" => Ok(TransportMode::TheoremOnly),
+        "conservative" => Ok(TransportMode::Conservative),
+        "lossy" => Ok(TransportMode::Lossy),
+        _ => Err(MetacosmError::ParseError {
+            block: "Transition".into(),
+            detail: format!("unknown transport mode: '{}'", s),
+        }),
+    }
+}
+
+/// Epistemic data attached to a transition (relational properties).
+#[derive(Debug, Clone)]
+pub struct TransportEpistemics {
+    pub mode: TransportMode,
+    pub loss: Vec<Invariant>,
+}
+
+impl Default for TransportEpistemics {
+    fn default() -> Self {
+        TransportEpistemics {
+            mode: TransportMode::Witness,
+            loss: Vec::new(),
+        }
+    }
+}
+
 /// A declared transition between two worlds.
 #[derive(Debug, Clone)]
 pub struct TransitionDef {
@@ -116,9 +170,11 @@ pub struct TransitionDef {
     pub preserves: Vec<Invariant>,
     /// Invariants that this transition may violate
     pub breaks: Vec<Invariant>,
+    /// Relational epistemic data (transport mode, information loss)
+    pub transport: TransportEpistemics,
 }
 
-/// Parse `[Transition Name :kind K :from S :to T :preserves [...] :breaks [...]]`
+/// Parse `[Transition Name :kind K :from S :to T :preserves [...] :breaks [...] :transport [...]]`
 pub fn parse_transition(items: &[Sexp]) -> Result<TransitionDef> {
     if items.len() < 2 {
         return Err(MetacosmError::ParseError {
@@ -140,6 +196,7 @@ pub fn parse_transition(items: &[Sexp]) -> Result<TransitionDef> {
     let mut target: Option<String> = None;
     let mut preserves = Vec::new();
     let mut breaks = Vec::new();
+    let mut transport = TransportEpistemics::default();
 
     let mut i = 2;
     while i < items.len() {
@@ -179,6 +236,12 @@ pub fn parse_transition(items: &[Sexp]) -> Result<TransitionDef> {
                     }
                 }
             }
+            ":transport" => {
+                i += 1;
+                if let Some(list) = items.get(i).and_then(|s| s.as_list()) {
+                    transport = parse_transport_epistemics(list)?;
+                }
+            }
             _ => {
                 return Err(MetacosmError::ParseError {
                     block: "Transition".into(),
@@ -209,10 +272,51 @@ pub fn parse_transition(items: &[Sexp]) -> Result<TransitionDef> {
         target,
         preserves,
         breaks,
+        transport,
     })
 }
 
+fn parse_transport_epistemics(items: &[Sexp]) -> Result<TransportEpistemics> {
+    let mut te = TransportEpistemics::default();
+    let mut i = 0;
+    while i < items.len() {
+        let key = items[i].as_atom().unwrap_or("");
+        match key {
+            ":mode" => {
+                i += 1;
+                if let Some(v) = items.get(i).and_then(|s| s.as_atom()) {
+                    te.mode = parse_transport_mode(v)?;
+                }
+            }
+            ":loss" => {
+                i += 1;
+                if let Some(list) = items.get(i).and_then(|s| s.as_list()) {
+                    for item in list {
+                        if let Some(inv) = item.as_atom() {
+                            te.loss.push(parse_invariant(inv));
+                        }
+                    }
+                }
+            }
+            _ => {
+                return Err(MetacosmError::ParseError {
+                    block: "Transition/transport".into(),
+                    detail: format!("unknown keyword: {}", key),
+                });
+            }
+        }
+        i += 1;
+    }
+    Ok(te)
+}
+
 /// Check that a transition is valid given the epistemic profiles of its worlds.
+///
+/// Transportability is no longer a unary world property. Instead:
+/// - Tunnel: target must have verification capability (can check presented proof)
+/// - ConservativeExtension: target must dominate source
+/// - Collapse: warns if target gains discovery (unusual)
+/// - CoarseGrain: warns if target loses verification
 pub fn check_transition_epistemic(
     transition: &TransitionDef,
     source_ep: &EpistemicProfile,
@@ -222,7 +326,7 @@ pub fn check_transition_epistemic(
 
     match transition.kind {
         TransitionKind::Tunnel => {
-            // Tunnel: target must be able to verify but need not discover
+            // Tunnel target must be able to verify
             if !target_ep.can_verify() {
                 return Err(MetacosmError::InvalidTransition {
                     from: transition.source.clone(),
@@ -230,16 +334,15 @@ pub fn check_transition_epistemic(
                     detail: "tunnel target cannot verify (verification = none)".into(),
                 });
             }
-            if !source_ep.can_transport() {
-                return Err(MetacosmError::InvalidTransition {
-                    from: transition.source.clone(),
-                    to: transition.target.clone(),
-                    detail: "tunnel source cannot transport (transportability = none)".into(),
-                });
+            // Tunnel source should have some discovery capability
+            if !source_ep.can_discover() {
+                warnings.push(format!(
+                    "tunnel source {} has no discovery capability",
+                    transition.source
+                ));
             }
         }
         TransitionKind::ConservativeExtension => {
-            // Target must dominate source epistemically (no capabilities lost)
             if !target_ep.dominates(source_ep) {
                 warnings.push(format!(
                     "conservative extension {} → {} loses epistemic capability",
@@ -248,8 +351,7 @@ pub fn check_transition_epistemic(
             }
         }
         TransitionKind::Collapse => {
-            // Collapse typically loses path structure / discovery
-            if target_ep.discovery > source_ep.discovery {
+            if target_ep.discover > source_ep.discover {
                 warnings.push(format!(
                     "collapse {} → {} gains discovery power (unusual)",
                     transition.source, transition.target
@@ -257,10 +359,9 @@ pub fn check_transition_epistemic(
             }
         }
         TransitionKind::CoarseGrain => {
-            // Coarse-graining should improve verification/compression at cost of richness
-            if target_ep.verification < source_ep.verification {
+            if target_ep.verify < source_ep.verify {
                 warnings.push(format!(
-                    "coarse-grain {} → {} loses verification power",
+                    "coarse-grain {} → {} loses verification strength",
                     transition.source, transition.target
                 ));
             }
@@ -286,7 +387,7 @@ pub fn check_transition_epistemic(
 mod tests {
     use super::*;
     use apeiron::parser::parse;
-    use crate::epistemic::Capacity;
+    use crate::epistemic::*;
 
     #[test]
     fn parse_transition_basic() {
@@ -309,6 +410,20 @@ mod tests {
     }
 
     #[test]
+    fn parse_transition_with_transport() {
+        let input = r#"[Transition T
+            :kind Tunnel
+            :from A :to B
+            :transport [:mode witness :loss [PathStructure]]
+        ]"#;
+        let sexps = parse(input).unwrap();
+        let items = sexps[0].as_list().unwrap();
+        let t = parse_transition(items).unwrap();
+        assert_eq!(t.transport.mode, TransportMode::Witness);
+        assert_eq!(t.transport.loss, vec![Invariant::PathStructure]);
+    }
+
+    #[test]
     fn tunnel_requires_verification() {
         let t = TransitionDef {
             name: "T".into(),
@@ -317,9 +432,16 @@ mod tests {
             target: "B".into(),
             preserves: vec![],
             breaks: vec![],
+            transport: TransportEpistemics::default(),
         };
-        let src = EpistemicProfile { transportability: Capacity::High, ..Default::default() };
-        let tgt = EpistemicProfile { verification: Capacity::None, ..Default::default() };
+        let src = EpistemicProfile {
+            discover: DiscoveryStrength::Complete,
+            ..Default::default()
+        };
+        let tgt = EpistemicProfile {
+            verify: VerificationStrength::None,
+            ..Default::default()
+        };
         assert!(check_transition_epistemic(&t, &src, &tgt).is_err());
     }
 
@@ -332,6 +454,7 @@ mod tests {
             target: "B".into(),
             preserves: vec![Invariant::Soundness],
             breaks: vec![Invariant::Soundness],
+            transport: TransportEpistemics::default(),
         };
         let ep = EpistemicProfile::default();
         assert!(check_transition_epistemic(&t, &ep, &ep).is_err());

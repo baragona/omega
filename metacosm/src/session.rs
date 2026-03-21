@@ -24,23 +24,14 @@ pub struct ResultEntry {
 /// - Hyperion mode: Category/Substrate/Universe/Functor blocks handled by Hyperion
 /// - Cosmology mode: World/Transition/Observable/Family/Pipeline blocks handled here
 pub struct MetacosmSession {
-    /// The underlying Hyperion session (which contains Apeiron)
     pub hyperion: hyperion::session::HyperionSession,
-    /// Metacosm worlds (superset of Hyperion universes)
     pub worlds: HashMap<String, WorldDef>,
-    /// Transitions between worlds
     pub transitions: HashMap<String, TransitionDef>,
-    /// Epistemic observables
     pub observables: HashMap<String, Observable>,
-    /// Universe families
     pub families: HashMap<String, FamilyDef>,
-    /// Pipelines
     pub pipelines: HashMap<String, PipelineDef>,
-    /// Measurements taken
     pub measurements: Vec<Measurement>,
-    /// Output messages
     pub output: Vec<String>,
-    /// Structured output for JSON mode
     pub structured_output: Vec<ResultEntry>,
 }
 
@@ -59,7 +50,6 @@ impl MetacosmSession {
         }
     }
 
-    /// Create a session with Hyperion prelude loaded.
     pub fn with_prelude() -> Result<Self> {
         let mut session = Self::new();
         match hyperion::session::HyperionSession::with_prelude() {
@@ -106,17 +96,14 @@ impl MetacosmSession {
             "Measure" => self.process_measure(items),
 
             // --- Hyperion pass-through (Layer 2: category + substrate) ---
-            // These go directly to Hyperion, which handles them natively.
             "Category" | "Substrate" | "Universe" | "Functor"
             | "NatTrans" | "Adjunction" | "VerifyFunctor" => {
                 self.hyperion.process(sexp).map_err(MetacosmError::from)?;
-                // Mirror Hyperion output
                 self.drain_hyperion_output();
                 Ok(())
             }
 
             // --- Omega pass-through (Layer 1: theories + proofs) ---
-            // These go through Hyperion → Apeiron, preserving exact Omega semantics.
             "Theory" | "Proofs" => {
                 self.hyperion.process(sexp).map_err(MetacosmError::from)?;
                 self.drain_hyperion_output();
@@ -129,13 +116,10 @@ impl MetacosmSession {
         }
     }
 
-    /// Drain output from Hyperion into our output buffer.
     fn drain_hyperion_output(&mut self) {
         let new_output: Vec<String> = self.hyperion.output.drain(..).collect();
         self.output.extend(new_output);
     }
-
-    // --- Metacosm native processors ---
 
     fn process_world(&mut self, items: &[Sexp]) -> Result<()> {
         let w = world::parse_world(items)?;
@@ -148,8 +132,7 @@ impl MetacosmSession {
             });
         }
 
-        // If this world has explicit category + substrate, also register it as a
-        // Hyperion Universe so theories can be checked in it.
+        // If this world has explicit category + substrate, register as Hyperion Universe
         if w.category != "Implicit" && w.substrate != "Default" {
             let hyp_sexp = format!(
                 "[Universe {} :category {} :substrate {}]",
@@ -157,7 +140,6 @@ impl MetacosmSession {
             );
             if let Ok(sexps) = apeiron::parser::parse(&hyp_sexp) {
                 if let Err(e) = self.hyperion.process(&sexps[0]) {
-                    // Only warn — world registration itself still succeeds
                     self.output.push(format!(
                         "[WORLD] Warning: Hyperion universe registration for '{}' failed: {}",
                         name, e
@@ -176,12 +158,10 @@ impl MetacosmSession {
         };
 
         let msg = format!(
-            "[WORLD] {} registered (category={}, substrate={}, mode={}, transitions={})",
-            name,
-            w.category,
-            w.substrate,
-            mode,
-            w.admissible_transitions.len()
+            "[WORLD] {} registered (category={}, substrate={}, mode={}, discover={}, verify={}, canonicalize={}, compress={})",
+            name, w.category, w.substrate, mode,
+            w.epistemic.discover, w.epistemic.verify,
+            w.epistemic.canonicalize, w.epistemic.compress,
         );
         self.output.push(msg.clone());
         self.record_result(&name, "valid", Some(msg));
@@ -200,7 +180,6 @@ impl MetacosmSession {
             });
         }
 
-        // Validate source and target worlds exist
         let source_ep = self.worlds.get(&t.source)
             .ok_or_else(|| MetacosmError::Undefined {
                 kind: "World".into(),
@@ -215,7 +194,7 @@ impl MetacosmSession {
             })?
             .epistemic.clone();
 
-        // Check that source world admits this transition kind
+        // Check admissibility
         let source_world = self.worlds.get(&t.source).unwrap();
         if !source_world.admissible_transitions.is_empty()
             && !source_world.admissible_transitions.contains(&t.kind)
@@ -237,11 +216,8 @@ impl MetacosmSession {
         }
 
         let msg = format!(
-            "[TRANSITION] {} registered ({}: {} → {}, preserves=[{}], breaks=[{}])",
-            name,
-            t.kind,
-            t.source,
-            t.target,
+            "[TRANSITION] {} registered ({}: {} → {}, transport={}, preserves=[{}], breaks=[{}])",
+            name, t.kind, t.source, t.target, t.transport.mode,
             t.preserves.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(", "),
             t.breaks.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(", "),
         );
@@ -280,7 +256,6 @@ impl MetacosmSession {
             });
         }
 
-        // Validate all worlds exist
         for w in &fam.worlds {
             if !self.worlds.contains_key(w) {
                 return Err(MetacosmError::Undefined {
@@ -292,9 +267,7 @@ impl MetacosmSession {
 
         let msg = format!(
             "[FAMILY] {} registered ({} worlds, {} invariants)",
-            name,
-            fam.worlds.len(),
-            fam.invariants.len()
+            name, fam.worlds.len(), fam.invariants.len()
         );
         self.output.push(msg.clone());
         self.record_result(&name, "valid", Some(msg));
@@ -313,7 +286,7 @@ impl MetacosmSession {
             });
         }
 
-        // Validate all referenced worlds exist
+        // Validate world references
         for step in &pipe.steps {
             if !self.worlds.contains_key(&step.world) {
                 return Err(MetacosmError::Undefined {
@@ -331,7 +304,7 @@ impl MetacosmSession {
             }
         }
 
-        // Validate epistemic feasibility of each step
+        // Validate epistemic feasibility
         for step in &pipe.steps {
             let world = self.worlds.get(&step.world).unwrap();
             match step.action {
@@ -341,7 +314,7 @@ impl MetacosmSession {
                             pipeline: name.clone(),
                             step: step.name.clone(),
                             detail: format!(
-                                "world '{}' has discovery=none, cannot discover",
+                                "world '{}' has discover=none, cannot discover",
                                 step.world
                             ),
                         });
@@ -353,23 +326,14 @@ impl MetacosmSession {
                             pipeline: name.clone(),
                             step: step.name.clone(),
                             detail: format!(
-                                "world '{}' has verification=none, cannot verify",
+                                "world '{}' has verify=none, cannot verify",
                                 step.world
                             ),
                         });
                     }
                 }
                 PipelineAction::Tunnel => {
-                    if !world.epistemic.can_transport() {
-                        return Err(MetacosmError::PipelineError {
-                            pipeline: name.clone(),
-                            step: step.name.clone(),
-                            detail: format!(
-                                "world '{}' has transportability=none, cannot tunnel",
-                                step.world
-                            ),
-                        });
-                    }
+                    // Tunnel target must be able to verify
                     if let Some(ref target) = step.target {
                         let target_world = self.worlds.get(target).unwrap();
                         if !target_world.epistemic.can_verify() {
@@ -377,7 +341,7 @@ impl MetacosmSession {
                                 pipeline: name.clone(),
                                 step: step.name.clone(),
                                 detail: format!(
-                                    "tunnel target '{}' has verification=none",
+                                    "tunnel target '{}' has verify=none",
                                     target
                                 ),
                             });
@@ -405,7 +369,6 @@ impl MetacosmSession {
     }
 
     fn process_measure(&mut self, items: &[Sexp]) -> Result<()> {
-        // [Measure :observable O :world W [:target T]]
         let mut obs_name: Option<String> = None;
         let mut world_name: Option<String> = None;
         let mut target_name: Option<String> = None;
@@ -445,7 +408,6 @@ impl MetacosmSession {
             detail: "missing :world".into(),
         })?;
 
-        // Validate references
         let obs = self.observables.get(&obs_name)
             .ok_or_else(|| MetacosmError::Undefined {
                 kind: "Observable".into(),
@@ -457,15 +419,20 @@ impl MetacosmSession {
                 name: world_name.clone(),
             })?;
 
-        // Compute measurement from epistemic profile
         let value = match obs.kind {
-            epistemic::ObservableKind::DiscoveryCost => {
-                MeasureValue::Capacity(world.epistemic.discovery)
+            epistemic::ObservableKind::DiscoveryStrength => {
+                MeasureValue::Grade(world.epistemic.discover.to_string())
             }
-            epistemic::ObservableKind::VerificationCost => {
-                MeasureValue::Capacity(world.epistemic.verification)
+            epistemic::ObservableKind::VerificationStrength => {
+                MeasureValue::Grade(world.epistemic.verify.to_string())
             }
-            epistemic::ObservableKind::TransportCost => {
+            epistemic::ObservableKind::CanonicalityStrength => {
+                MeasureValue::Grade(world.epistemic.canonicalize.to_string())
+            }
+            epistemic::ObservableKind::CompressionMode => {
+                MeasureValue::Grade(world.epistemic.compress.to_string())
+            }
+            epistemic::ObservableKind::EpistemicDistance => {
                 if let Some(ref target) = target_name {
                     let target_world = self.worlds.get(target)
                         .ok_or_else(|| MetacosmError::Undefined {
@@ -473,19 +440,16 @@ impl MetacosmSession {
                             name: target.clone(),
                         })?;
                     let dist = world.epistemic.distance(&target_world.epistemic);
-                    MeasureValue::Cost(dist as u64)
+                    MeasureValue::Distance(dist)
                 } else {
-                    MeasureValue::Capacity(world.epistemic.transportability)
+                    return Err(MetacosmError::ParseError {
+                        block: "Measure".into(),
+                        detail: "epistemic-distance requires :target".into(),
+                    });
                 }
             }
-            epistemic::ObservableKind::Canonicality => {
-                MeasureValue::Capacity(world.epistemic.canonicality)
-            }
-            epistemic::ObservableKind::Compression => {
-                MeasureValue::Capacity(world.epistemic.compression)
-            }
             epistemic::ObservableKind::Custom => {
-                MeasureValue::Boolean(true) // placeholder for custom
+                MeasureValue::Boolean(true)
             }
         };
 
@@ -507,7 +471,6 @@ impl MetacosmSession {
         Ok(())
     }
 
-    /// Generate JSON output.
     pub fn json_output(&self, had_errors: bool, elapsed_ms: f64) -> serde_json::Value {
         serde_json::json!({
             "status": if had_errors { "failure" } else { "success" },
@@ -540,25 +503,18 @@ mod tests {
 
     #[test]
     fn omega_passthrough() {
-        // A bare Theory + Proofs block should pass through to Hyperion → Apeiron
         let mut session = MetacosmSession::new();
-        // This is an Omega-mode usage: just theories and proofs, no worlds at all
-        // We don't test full Omega here (needs real theory), just that routing works
         let input = "[Theory Dummy]";
         let sexps = parse(input).unwrap();
-        // This will fail in Hyperion (no :in clause) but that's expected —
-        // the point is it routes to Hyperion, not to Metacosm
         let result = session.process(&sexps[0]);
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());
-        // Should be a Hyperion error, not a Metacosm "unknown block" error
         assert!(!err_msg.contains("unknown top-level block"));
     }
 
     #[test]
     fn hyperion_passthrough() {
         let mut session = MetacosmSession::new();
-        // Category block should pass through to Hyperion
         let input = r#"[Category SimpleCategory
             [Object Type]
             [Morphism app :domain [Type Type] :codomain Type]
@@ -575,12 +531,11 @@ mod tests {
         let input = r#"[World Explorer
             :category CartesianClosed
             :substrate ApeironStandard
-            :epistemic [:discovery high :verification high :canonicality low :transportability medium :compression low]
+            :epistemic [:discover complete :verify sound :canonicalize weak-nf :compress lossless]
             :admits [Split Tunnel]
         ]"#;
         let sexps = parse(input).unwrap();
         let result = session.process(&sexps[0]);
-        // May warn about Hyperion universe registration (prelude not loaded) but should succeed
         assert!(result.is_ok());
         assert!(session.worlds.contains_key("Explorer"));
     }
@@ -589,16 +544,14 @@ mod tests {
     fn transition_validation() {
         let mut session = MetacosmSession::new();
 
-        // Register two worlds
-        let w1 = "[World Explorer :category CartesianClosed :substrate ApeironStandard :epistemic [:discovery high :verification high :transportability high] :admits [Tunnel]]";
-        let w2 = "[World Certifier :category CartesianClosed :substrate ApeironStandard :epistemic [:discovery low :verification high :canonicality high]]";
+        let w1 = "[World Explorer :category CartesianClosed :substrate ApeironStandard :epistemic [:discover complete :verify sound] :admits [Tunnel]]";
+        let w2 = "[World Certifier :category CartesianClosed :substrate ApeironStandard :epistemic [:discover heuristic :verify decidable :canonicalize unique-nf]]";
         for input in [w1, w2] {
             let sexps = parse(input).unwrap();
             session.process(&sexps[0]).unwrap();
         }
 
-        // Register a tunnel transition
-        let t = "[Transition DiscoverAndCertify :kind Tunnel :from Explorer :to Certifier :preserves [Soundness]]";
+        let t = "[Transition DiscoverAndCertify :kind Tunnel :from Explorer :to Certifier :preserves [Soundness] :transport [:mode witness :loss [PathStructure]]]";
         let sexps = parse(t).unwrap();
         let result = session.process(&sexps[0]);
         assert!(result.is_ok());
@@ -609,8 +562,8 @@ mod tests {
     fn tunnel_target_must_verify() {
         let mut session = MetacosmSession::new();
 
-        let w1 = "[World A :category CartesianClosed :substrate ApeironStandard :epistemic [:transportability high]]";
-        let w2 = "[World B :category CartesianClosed :substrate ApeironStandard :epistemic [:verification none]]";
+        let w1 = "[World A :category CartesianClosed :substrate ApeironStandard :epistemic [:discover complete]]";
+        let w2 = "[World B :category CartesianClosed :substrate ApeironStandard :epistemic [:verify none]]";
         for input in [w1, w2] {
             let sexps = parse(input).unwrap();
             session.process(&sexps[0]).unwrap();
@@ -626,8 +579,8 @@ mod tests {
     fn pipeline_validation() {
         let mut session = MetacosmSession::new();
 
-        let w1 = "[World Explorer :category CartesianClosed :substrate ApeironStandard :epistemic [:discovery high :transportability high] :admits [Tunnel]]";
-        let w2 = "[World Certifier :category CartesianClosed :substrate ApeironStandard :epistemic [:verification high :canonicality high]]";
+        let w1 = "[World Explorer :category CartesianClosed :substrate ApeironStandard :epistemic [:discover complete :verify sound] :admits [Tunnel]]";
+        let w2 = "[World Certifier :category CartesianClosed :substrate ApeironStandard :epistemic [:verify decidable :canonicalize unique-nf]]";
         for input in [w1, w2] {
             let sexps = parse(input).unwrap();
             session.process(&sexps[0]).unwrap();
@@ -647,18 +600,18 @@ mod tests {
     fn measurement() {
         let mut session = MetacosmSession::new();
 
-        let w1 = "[World A :category CartesianClosed :substrate ApeironStandard :epistemic [:discovery high :verification low]]";
-        let w2 = "[World B :category CartesianClosed :substrate ApeironStandard :epistemic [:discovery low :verification high]]";
+        let w1 = "[World A :category CartesianClosed :substrate ApeironStandard :epistemic [:discover complete :verify heuristic]]";
+        let w2 = "[World B :category CartesianClosed :substrate ApeironStandard :epistemic [:discover none :verify decidable]]";
         for input in [w1, w2] {
             let sexps = parse(input).unwrap();
             session.process(&sexps[0]).unwrap();
         }
 
-        let obs = "[Observable TransportDistance :kind transport-cost]";
+        let obs = "[Observable Dist :kind epistemic-distance]";
         let sexps = parse(obs).unwrap();
         session.process(&sexps[0]).unwrap();
 
-        let measure = "[Measure :observable TransportDistance :world A :target B]";
+        let measure = "[Measure :observable Dist :world A :target B]";
         let sexps = parse(measure).unwrap();
         session.process(&sexps[0]).unwrap();
 

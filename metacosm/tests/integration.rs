@@ -75,7 +75,7 @@ fn world_registration() {
         [World Explorer
             :category CartesianClosed
             :substrate ApeironStandard
-            :epistemic [:discovery high :verification high :canonicality low :transportability medium :compression low]
+            :epistemic [:discover complete :verify sound :canonicalize weak-nf :compress lossless]
             :admits [Split Tunnel]
         ]
     "#);
@@ -83,6 +83,29 @@ fn world_registration() {
     assert!(session.worlds.contains_key("Explorer"));
     let w = &session.worlds["Explorer"];
     assert_eq!(w.admissible_transitions.len(), 2);
+}
+
+#[test]
+fn world_with_full_epistemic_syntax() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [World W
+            :category CartesianClosed
+            :substrate ApeironStandard
+            :epistemic [
+                :discover [:strength semi-decidable]
+                :verify [:capability yes :strength sound-complete]
+                :canonicalize [:strength confluent]
+                :compress [:strength codegen]
+            ]
+        ]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+    let w = &session.worlds["W"];
+    assert_eq!(w.epistemic.discover, metacosm::epistemic::DiscoveryStrength::SemiDecidable);
+    assert_eq!(w.epistemic.verify, metacosm::epistemic::VerificationStrength::SoundComplete);
+    assert_eq!(w.epistemic.canonicalize, metacosm::epistemic::CanonicalityStrength::Confluent);
+    assert_eq!(w.epistemic.compress, metacosm::epistemic::CompressionMode::Codegen);
 }
 
 #[test]
@@ -101,14 +124,33 @@ fn transition_basic() {
     let mut session = MetacosmSession::new();
     let errors = process_all(&mut session, r#"
         [World Src :category CartesianClosed :substrate ApeironStandard
-            :epistemic [:transportability high]
+            :epistemic [:discover complete :verify sound]
             :admits [Tunnel]]
         [World Dst :category CartesianClosed :substrate ApeironStandard
-            :epistemic [:verification high]]
+            :epistemic [:verify decidable]]
         [Transition T :kind Tunnel :from Src :to Dst :preserves [Soundness]]
     "#);
     assert!(errors.is_empty(), "errors: {:?}", errors);
     assert!(session.transitions.contains_key("T"));
+}
+
+#[test]
+fn transition_with_transport_epistemics() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [World A :category CartesianClosed :substrate ApeironStandard
+            :epistemic [:discover complete :verify sound]
+            :admits [Tunnel]]
+        [World B :category CartesianClosed :substrate ApeironStandard
+            :epistemic [:verify decidable]]
+        [Transition T :kind Tunnel :from A :to B
+            :transport [:mode witness :loss [PathStructure]]
+            :preserves [Soundness]]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+    let t = &session.transitions["T"];
+    assert_eq!(t.transport.mode, metacosm::transition::TransportMode::Witness);
+    assert_eq!(t.transport.loss, vec![metacosm::transition::Invariant::PathStructure]);
 }
 
 #[test]
@@ -127,27 +169,13 @@ fn tunnel_target_must_verify() {
     let mut session = MetacosmSession::new();
     let errors = process_all(&mut session, r#"
         [World A :category CartesianClosed :substrate ApeironStandard
-            :epistemic [:transportability high]]
+            :epistemic [:discover complete]]
         [World B :category CartesianClosed :substrate ApeironStandard
-            :epistemic [:verification none]]
+            :epistemic [:verify none]]
         [Transition T :kind Tunnel :from A :to B]
     "#);
     assert_eq!(errors.len(), 1);
     assert!(errors[0].contains("cannot verify"));
-}
-
-#[test]
-fn tunnel_source_must_transport() {
-    let mut session = MetacosmSession::new();
-    let errors = process_all(&mut session, r#"
-        [World A :category CartesianClosed :substrate ApeironStandard
-            :epistemic [:transportability none]]
-        [World B :category CartesianClosed :substrate ApeironStandard
-            :epistemic [:verification high]]
-        [Transition T :kind Tunnel :from A :to B]
-    "#);
-    assert_eq!(errors.len(), 1);
-    assert!(errors[0].contains("cannot transport"));
 }
 
 #[test]
@@ -182,8 +210,8 @@ fn observable_and_measure() {
     let mut session = MetacosmSession::new();
     let errors = process_all(&mut session, r#"
         [World A :category CartesianClosed :substrate ApeironStandard
-            :epistemic [:discovery high]]
-        [Observable DiscPower :kind discovery-cost]
+            :epistemic [:discover complete]]
+        [Observable DiscPower :kind discovery-strength]
         [Measure :observable DiscPower :world A]
     "#);
     assert!(errors.is_empty(), "errors: {:?}", errors);
@@ -191,18 +219,30 @@ fn observable_and_measure() {
 }
 
 #[test]
-fn transport_cost_measurement() {
+fn epistemic_distance_measurement() {
     let mut session = MetacosmSession::new();
     let errors = process_all(&mut session, r#"
         [World A :category CartesianClosed :substrate ApeironStandard
-            :epistemic [:discovery high :verification low]]
+            :epistemic [:discover complete :verify heuristic]]
         [World B :category CartesianClosed :substrate ApeironStandard
-            :epistemic [:discovery low :verification high]]
-        [Observable Dist :kind transport-cost]
+            :epistemic [:discover none :verify decidable]]
+        [Observable Dist :kind epistemic-distance]
         [Measure :observable Dist :world A :target B]
     "#);
     assert!(errors.is_empty(), "errors: {:?}", errors);
     assert_eq!(session.measurements.len(), 1);
+}
+
+#[test]
+fn epistemic_distance_requires_target() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [World A :category CartesianClosed :substrate ApeironStandard]
+        [Observable Dist :kind epistemic-distance]
+        [Measure :observable Dist :world A]
+    "#);
+    assert_eq!(errors.len(), 1);
+    assert!(errors[0].contains("requires :target"));
 }
 
 #[test]
@@ -233,10 +273,10 @@ fn pipeline_basic() {
     let mut session = MetacosmSession::new();
     let errors = process_all(&mut session, r#"
         [World Explorer :category CartesianClosed :substrate ApeironStandard
-            :epistemic [:discovery high :transportability high]
+            :epistemic [:discover complete :verify sound]
             :admits [Tunnel]]
         [World Certifier :category CartesianClosed :substrate ApeironStandard
-            :epistemic [:verification high]]
+            :epistemic [:verify decidable]]
         [Pipeline Demo
             [Step search :action Discover :world Explorer]
             [Step tunnel :action Tunnel :world Explorer :target Certifier]
@@ -252,29 +292,29 @@ fn pipeline_infeasible_discovery() {
     let mut session = MetacosmSession::new();
     let errors = process_all(&mut session, r#"
         [World NoDiscover :category CartesianClosed :substrate ApeironStandard
-            :epistemic [:discovery none]]
+            :epistemic [:discover none]]
         [Pipeline Bad
             [Step search :action Discover :world NoDiscover]
         ]
     "#);
     assert_eq!(errors.len(), 1);
-    assert!(errors[0].contains("discovery=none"));
+    assert!(errors[0].contains("discover=none"));
 }
 
 #[test]
-fn pipeline_infeasible_tunnel() {
+fn pipeline_infeasible_tunnel_target() {
     let mut session = MetacosmSession::new();
     let errors = process_all(&mut session, r#"
-        [World NoTransport :category CartesianClosed :substrate ApeironStandard
-            :epistemic [:transportability none]]
+        [World Source :category CartesianClosed :substrate ApeironStandard
+            :epistemic [:discover complete]]
         [World Target :category CartesianClosed :substrate ApeironStandard
-            :epistemic [:verification high]]
+            :epistemic [:verify none]]
         [Pipeline Bad
-            [Step tunnel :action Tunnel :world NoTransport :target Target]
+            [Step tunnel :action Tunnel :world Source :target Target]
         ]
     "#);
     assert_eq!(errors.len(), 1);
-    assert!(errors[0].contains("transportability=none"));
+    assert!(errors[0].contains("verify=none"));
 }
 
 // ========== Full cosmology demo ==========
@@ -286,13 +326,12 @@ fn cosmology_demo_file() {
     let errors = process_all(&mut session, &source);
     assert!(errors.is_empty(), "errors: {:?}", errors);
 
-    // Check all structures registered
     assert_eq!(session.worlds.len(), 3);
     assert_eq!(session.transitions.len(), 2);
-    assert_eq!(session.observables.len(), 4);
+    assert_eq!(session.observables.len(), 5);
     assert_eq!(session.families.len(), 1);
     assert_eq!(session.pipelines.len(), 1);
-    assert_eq!(session.measurements.len(), 10);
+    assert_eq!(session.measurements.len(), 13);
 
     // Hyperion layer also populated
     assert!(session.hyperion.categories.contains_key("CartesianClosed"));
@@ -303,7 +342,6 @@ fn cosmology_demo_file() {
 
 #[test]
 fn omega_is_trivial_world() {
-    // Omega mode = one world with Implicit category, Default substrate, trivial epistemic
     let w = metacosm::world::WorldDef::omega_default("OmegaWorld");
     assert!(w.is_omega_mode());
     assert!(!w.is_hyperion_mode());
@@ -315,7 +353,6 @@ fn omega_is_trivial_world() {
 
 #[test]
 fn hyperion_is_static_world() {
-    // Hyperion mode = explicit category + substrate, no transitions
     let w = metacosm::world::WorldDef::hyperion("HypWorld", "CartesianClosed", "ApeironStandard");
     assert!(!w.is_omega_mode());
     assert!(w.is_hyperion_mode());
@@ -324,24 +361,40 @@ fn hyperion_is_static_world() {
 
 #[test]
 fn epistemic_dominance_is_partial_order() {
-    use metacosm::epistemic::{EpistemicProfile, Capacity};
+    use metacosm::epistemic::*;
     let a = EpistemicProfile {
-        discovery: Capacity::High,
-        verification: Capacity::Medium,
-        canonicality: Capacity::Low,
-        transportability: Capacity::High,
-        compression: Capacity::Medium,
+        discover: DiscoveryStrength::Complete,
+        verify: VerificationStrength::Heuristic,
+        canonicalize: CanonicalityStrength::None,
+        compress: CompressionMode::None,
     };
     let b = EpistemicProfile {
-        discovery: Capacity::Medium,
-        verification: Capacity::High,
-        canonicality: Capacity::Medium,
-        transportability: Capacity::Medium,
-        compression: Capacity::High,
+        discover: DiscoveryStrength::None,
+        verify: VerificationStrength::Decidable,
+        canonicalize: CanonicalityStrength::UniqueNf,
+        compress: CompressionMode::None,
     };
-    // Neither dominates the other
+    // Neither dominates the other (a has better discovery, b has better verify+canonicalize)
     assert!(!a.dominates(&b));
     assert!(!b.dominates(&a));
     // Self-dominance (reflexivity)
     assert!(a.dominates(&a));
+}
+
+#[test]
+fn strength_lattice_ordering() {
+    use metacosm::epistemic::*;
+    // Discovery lattice
+    assert!(DiscoveryStrength::None < DiscoveryStrength::Heuristic);
+    assert!(DiscoveryStrength::Heuristic < DiscoveryStrength::SemiDecidable);
+    assert!(DiscoveryStrength::SemiDecidable < DiscoveryStrength::CompleteFragment);
+    assert!(DiscoveryStrength::CompleteFragment < DiscoveryStrength::Complete);
+    // Verification lattice
+    assert!(VerificationStrength::None < VerificationStrength::Heuristic);
+    assert!(VerificationStrength::Sound < VerificationStrength::SoundComplete);
+    assert!(VerificationStrength::SoundComplete < VerificationStrength::Decidable);
+    // Canonicality lattice
+    assert!(CanonicalityStrength::None < CanonicalityStrength::WeakNf);
+    assert!(CanonicalityStrength::Normalizing < CanonicalityStrength::Confluent);
+    assert!(CanonicalityStrength::Confluent < CanonicalityStrength::UniqueNf);
 }

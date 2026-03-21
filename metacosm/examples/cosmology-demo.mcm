@@ -2,10 +2,10 @@
 ;;;
 ;;; "Theorem cosmology pipeline"
 ;;;
-;;; Three worlds with different epistemic profiles:
-;;;   Explorer  — high discovery, weak canonicality (e-graph saturation)
-;;;   Certifier — low discovery, high verification (directed rewriting)
-;;;   Executor  — no discovery, high compression (operational compiler)
+;;; Three worlds with typed epistemic profiles:
+;;;   Explorer  — complete discovery, weak canonicality (e-graph saturation)
+;;;   Certifier — heuristic discovery, decidable verification (directed rewriting)
+;;;   Executor  — no discovery, confluent canonicality (operational compiler)
 ;;;
 ;;; A pipeline discovers in Explorer, tunnels to Certifier, coarse-grains to Executor.
 
@@ -40,17 +40,22 @@
     @equality rewrite-equivalence
 ]
 
-;; --- Layer 3: Metacosm worlds with epistemic profiles ---
+;; --- Layer 3: Metacosm worlds with typed epistemic profiles ---
+;;
+;; Each axis is now a grade in an explicit lattice:
+;;   discover:     none < heuristic < semi-decidable < complete-fragment < complete
+;;   verify:       none < heuristic < sound < sound-complete < decidable
+;;   canonicalize: none < weak-nf < normalizing < confluent < unique-nf
+;;   compress:     none | lossless | lossy | quotient | abstraction | codegen
 
 [World Explorer
     :category CartesianClosed
     :substrate EGraphSubstrate
     :epistemic [
-        :discovery high
-        :verification medium
-        :canonicality low
-        :transportability high
-        :compression low
+        :discover complete
+        :verify sound
+        :canonicalize weak-nf
+        :compress none
     ]
     :admits [Split Tunnel]
 ]
@@ -59,11 +64,10 @@
     :category CartesianClosed
     :substrate RewriteSubstrate
     :epistemic [
-        :discovery low
-        :verification high
-        :canonicality high
-        :transportability medium
-        :compression medium
+        :discover heuristic
+        :verify decidable
+        :canonicalize unique-nf
+        :compress lossless
     ]
     :admits [CoarseGrain]
 ]
@@ -72,20 +76,20 @@
     :category CartesianClosed
     :substrate CompileSubstrate
     :epistemic [
-        :discovery none
-        :verification medium
-        :canonicality high
-        :transportability low
-        :compression high
+        :discover none
+        :verify sound
+        :canonicalize confluent
+        :compress codegen
     ]
 ]
 
-;; --- Transitions ---
+;; --- Transitions with relational transport semantics ---
 
 [Transition DiscoverTunnel
     :kind Tunnel
     :from Explorer
     :to Certifier
+    :transport [:mode witness :loss [PathStructure]]
     :preserves [Soundness]
     :breaks [PathStructure]
 ]
@@ -94,6 +98,7 @@
     :kind CoarseGrain
     :from Certifier
     :to Executor
+    :transport [:mode lossy :loss [ResourceSensitivity]]
     :preserves [Soundness Normalization]
     :breaks [ResourceSensitivity]
 ]
@@ -107,12 +112,13 @@
 
 ;; --- Epistemic observables ---
 
-[Observable DiscoveryPower :kind discovery-cost]
-[Observable VerificationClarity :kind verification-cost]
-[Observable TransportDistance :kind transport-cost]
-[Observable ProofCompression :kind compression]
+[Observable DiscoveryPower :kind discovery-strength]
+[Observable VerificationClarity :kind verification-strength]
+[Observable CanonicalStrength :kind canonicality-strength]
+[Observable CompressCapability :kind compression-mode]
+[Observable EpistemicDistance :kind epistemic-distance]
 
-;; --- Measurements ---
+;; --- Measurements: typed grades, not adjectives ---
 
 [Measure :observable DiscoveryPower :world Explorer]
 [Measure :observable DiscoveryPower :world Certifier]
@@ -121,12 +127,16 @@
 [Measure :observable VerificationClarity :world Certifier]
 [Measure :observable VerificationClarity :world Executor]
 
-[Measure :observable TransportDistance :world Explorer :target Certifier]
-[Measure :observable TransportDistance :world Certifier :target Executor]
-[Measure :observable TransportDistance :world Explorer :target Executor]
+[Measure :observable CanonicalStrength :world Explorer]
+[Measure :observable CanonicalStrength :world Certifier]
+[Measure :observable CanonicalStrength :world Executor]
 
-[Measure :observable ProofCompression :world Explorer]
-[Measure :observable ProofCompression :world Executor]
+[Measure :observable CompressCapability :world Explorer]
+[Measure :observable CompressCapability :world Executor]
+
+[Measure :observable EpistemicDistance :world Explorer :target Certifier]
+[Measure :observable EpistemicDistance :world Certifier :target Executor]
+[Measure :observable EpistemicDistance :world Explorer :target Executor]
 
 ;; --- The pipeline ---
 

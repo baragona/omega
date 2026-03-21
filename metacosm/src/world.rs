@@ -235,7 +235,7 @@ mod tests {
         let input = r#"[World Explorer
             :category CartesianClosed
             :substrate ApeironStandard
-            :epistemic [:discovery high :verification high :canonicality low :transportability medium :compression low]
+            :epistemic [:discover complete :verify sound :canonicalize weak-nf :compress lossless]
             :admits [Split Merge Tunnel]
         ]"#;
         let sexps = parse(input).unwrap();
