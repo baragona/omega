@@ -1,0 +1,267 @@
+;; ============================================================
+;; ADVANCED STRESS TESTS (7-10): Edge cases in categorical
+;; topology, inference limits, and branched pipelines.
+;; ============================================================
+
+;; Minimal Hyperion infrastructure
+[Category Minimal
+    [Object Type]
+    [Morphism id :domain [Type] :codomain Type]
+]
+
+[Substrate GenericSubstrate
+    @engine term-tree
+    @resource-mode optimal-sharing
+    @barrier transparent
+    @equality rewrite-equivalence
+]
+
+;; ============================================================
+;; TEST 7: "Ouroboros" Timeout (Inference Engine Limits)
+;;
+;; Circular conservative extensions: A extends B, B extends C,
+;; C extends A. Each requires the target to dominate the source.
+;; With differing baselines, the engine can't satisfy all three.
+;;
+;; EXPECTED: INFERENCE CONFLICT or clean termination at 20 iterations
+;; ============================================================
+
+[World T7_A
+    :category Minimal
+    :substrate GenericSubstrate
+    :epistemic [:discover heuristic :verify sound :canonicalize none]
+    :admits [ConservativeExtension]
+]
+
+[World T7_B
+    :category Minimal
+    :substrate GenericSubstrate
+    :epistemic [:discover none :verify decidable :canonicalize weak-nf]
+    :admits [ConservativeExtension]
+]
+
+[World T7_C
+    :category Minimal
+    :substrate GenericSubstrate
+    :epistemic [:discover complete :verify none :canonicalize unique-nf]
+    :admits [ConservativeExtension]
+]
+
+;; A extends B: B must dominate A (B needs discover >= heuristic, verify >= sound)
+[Transition T7_AextendsB
+    :kind ConservativeExtension
+    :from T7_A :to T7_B
+    :transport [:mode conservative]
+]
+
+;; B extends C: C must dominate B (C needs verify >= decidable, canon >= weak-nf)
+[Transition T7_BextendsC
+    :kind ConservativeExtension
+    :from T7_B :to T7_C
+    :transport [:mode conservative]
+]
+
+;; C extends A: A must dominate C (A needs discover >= complete, canon >= unique-nf)
+[Transition T7_CextendsA
+    :kind ConservativeExtension
+    :from T7_C :to T7_A
+    :transport [:mode conservative]
+]
+
+;; If the cycle resolved, all three would need to dominate each other
+;; (i.e., be identical). They're not, so at least one must fail.
+[Assert [dominates T7_B T7_A]]
+[Assert [dominates T7_C T7_B]]
+[Assert [dominates T7_A T7_C]]
+
+
+;; ============================================================
+;; TEST 8: "Ship of Theseus" (Family Invariant Leak)
+;;
+;; A chain of 5 worlds. Soundness is broken at B->C but
+;; re-declared as "preserved" in later transitions.
+;; The family invariant assertion must catch the break.
+;;
+;; EXPECTED: FAIL — B->C breaks Soundness within the family.
+;; ============================================================
+
+[World T8_A
+    :category Minimal
+    :substrate GenericSubstrate
+    :epistemic [:discover complete :verify sound]
+    :admits [Tunnel CoarseGrain]
+]
+
+[World T8_B
+    :category Minimal
+    :substrate GenericSubstrate
+    :epistemic [:discover heuristic :verify sound]
+    :admits [Tunnel CoarseGrain]
+]
+
+[World T8_C
+    :category Minimal
+    :substrate GenericSubstrate
+    :epistemic [:discover none :verify heuristic]
+    :admits [CoarseGrain Tunnel]
+]
+
+[World T8_D
+    :category Minimal
+    :substrate GenericSubstrate
+    :epistemic [:discover none :verify sound]
+    :admits [Tunnel]
+]
+
+[World T8_E
+    :category Minimal
+    :substrate GenericSubstrate
+    :epistemic [:discover none :verify sound]
+]
+
+[Transition T8_AtoB
+    :kind Tunnel
+    :from T8_A :to T8_B
+    :transport [:mode witness]
+    :preserves [Soundness]
+]
+
+;; The critical break: Soundness is destroyed here
+[Transition T8_BtoC
+    :kind CoarseGrain
+    :from T8_B :to T8_C
+    :transport [:mode lossy]
+    :breaks [Soundness]
+]
+
+;; Re-declaring preserves after it's already gone
+[Transition T8_CtoD
+    :kind Tunnel
+    :from T8_C :to T8_D
+    :transport [:mode witness]
+    :preserves [Soundness]
+]
+
+[Transition T8_DtoE
+    :kind Tunnel
+    :from T8_D :to T8_E
+    :transport [:mode witness]
+    :preserves [Soundness]
+]
+
+[Family T8_ShipOfTheseus
+    :worlds [T8_A T8_B T8_C T8_D T8_E]
+    :invariants [Soundness]
+]
+
+;; Attack: assert family preserves Soundness despite the B->C break
+[Assert [preserves T8_ShipOfTheseus Soundness]]
+
+
+;; ============================================================
+;; TEST 9: "Unfaithful Quotient" (Categorical Morphisms)
+;;
+;; A Quotient transition collapses equivalence classes.
+;; By definition this is many-to-one on proofs, hence unfaithful.
+;;
+;; EXPECTED: FAIL — quotient is inherently unfaithful.
+;; ============================================================
+
+[World T9_Raw
+    :category Minimal
+    :substrate GenericSubstrate
+    :epistemic [:discover complete :verify sound :canonicalize weak-nf]
+    :admits [Quotient]
+]
+
+[World T9_Quotiented
+    :category Minimal
+    :substrate GenericSubstrate
+    :epistemic [:discover heuristic :verify sound :canonicalize confluent]
+]
+
+[Transition T9_Simplify
+    :kind Quotient
+    :from T9_Raw :to T9_Quotiented
+    :transport [:mode witness]
+    :preserves [Soundness]
+]
+
+;; Attack: a quotient can't be faithful (it collapses distinct proofs)
+[Assert [faithful T9_Simplify]]
+
+
+;; ============================================================
+;; TEST 10: "Schrodinger's Proof" (Split/Merge Algebra)
+;;
+;; Pipeline branches: one branch preserves PathStructure,
+;; the other breaks it. After merge, the invariant is gone.
+;;
+;; EXPECTED: FAIL — the breaks union taints the merge.
+;; ============================================================
+
+[World T10_Start
+    :category Minimal
+    :substrate GenericSubstrate
+    :epistemic [:discover complete :verify sound :canonicalize weak-nf]
+    :admits [Split]
+]
+
+[World T10_BranchA
+    :category Minimal
+    :substrate GenericSubstrate
+    :epistemic [:discover heuristic :verify sound :canonicalize weak-nf]
+    :admits [Merge]
+]
+
+[World T10_BranchB
+    :category Minimal
+    :substrate GenericSubstrate
+    :epistemic [:discover complete :verify sound :canonicalize none]
+    :admits [Merge]
+]
+
+[World T10_Finish
+    :category Minimal
+    :substrate GenericSubstrate
+    :epistemic [:discover heuristic :verify sound :canonicalize none]
+]
+
+;; Split into two branches
+[Transition T10_SplitA
+    :kind Split
+    :from T10_Start :to T10_BranchA
+    :transport [:mode witness]
+    :preserves [PathStructure Soundness]
+]
+
+[Transition T10_SplitB
+    :kind Split
+    :from T10_Start :to T10_BranchB
+    :transport [:mode witness]
+    :breaks [PathStructure]
+    :preserves [Soundness]
+]
+
+;; Merge back together
+[Transition T10_MergeA
+    :kind Merge
+    :from T10_BranchA :to T10_Finish
+    :transport [:mode witness]
+    :preserves [PathStructure Soundness]
+]
+
+[Transition T10_MergeB
+    :kind Merge
+    :from T10_BranchB :to T10_Finish
+    :transport [:mode witness]
+    :preserves [Soundness]
+    :breaks [PathStructure]
+]
+
+;; Compose the full paths: Start->BranchA->Finish and Start->BranchB->Finish
+[Compose T10_PathA :transitions [T10_SplitA T10_MergeA]]
+[Compose T10_PathB :transitions [T10_SplitB T10_MergeB]]
+
+;; Attack: PathB breaks PathStructure, so no composed path can guarantee it
+[Assert [preserves-transition T10_PathB PathStructure]]
