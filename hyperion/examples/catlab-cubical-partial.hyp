@@ -1,0 +1,38 @@
+;; Test: Cubical partial elements with PartialElement structure
+[Category CubicalCat
+  [Object Ctx]
+  [Object Ty]
+  [Object Tm]
+  [Object Interval]
+  [Morphism papp :domain [Tm Interval] :codomain Tm]
+  [PathType :refl refl :concat concat :inv inv :ap ap]
+  [PartialElement :hcomp hcomp :coe coe]
+]
+
+[Substrate CubicalSub
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Universe CubicalWorld :category CubicalCat :substrate CubicalSub]
+
+[Theory CubicalTest :in CubicalWorld
+  [const A Ty]
+  [const a Tm]
+  [const x Tm]
+  [const i0 Interval]
+
+  ;; path_beta: papp(refl(a), i) = a  (path type already gives concat(refl(a),p)=p)
+  [@rule path-app-refl [papp [refl ?a] ?i] ==> ?a]
+]
+
+[Proofs CubicalCheck :in CubicalTest
+  ;; coe-refl: coe(refl(A), i0, x) = x
+  [assert-eq coe-refl [coe [refl A] i0 x] x]
+  ;; hcomp-trivial: hcomp(refl(a), x) = x
+  [assert-eq hcomp-trivial [hcomp [refl a] x] x]
+  ;; composed: coe(refl(A), i0, hcomp(refl(a), x)) = x
+  [assert-eq composed [coe [refl A] i0 [hcomp [refl a] x]] x]
+]

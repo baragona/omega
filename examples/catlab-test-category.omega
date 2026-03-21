@@ -1,0 +1,61 @@
+;;; CatLab Test 3.4: Category Theory
+;;; Sorts Ob, Mor; composition with identity laws
+
+(theory Cat
+  (sort Ob)
+  (sort Mor)
+
+  ;; Source and target
+  (constructor src : (-> Mor Ob))
+  (constructor tgt : (-> Mor Ob))
+
+  ;; Identity morphism
+  (constructor id : (-> Ob Mor))
+
+  ;; Composition (we model comp(f,g) = g∘f, i.e., f then g)
+  (constructor comp : (-> Mor Mor Mor))
+
+  ;; Equality on morphisms
+  (judgment (meq ?f ?g) :where f : Mor g : Mor)
+  (rule meq-refl :premises () :conclusion (meq ?f ?f))
+
+  ;; Equality on objects
+  (judgment (oeq ?a ?b) :where a : Ob b : Ob)
+  (rule oeq-refl :premises () :conclusion (oeq ?a ?a))
+
+  ;; Rewrite rules for identity laws
+  (rewrite left-id (comp (id ?a) ?f) ?f)
+  (rewrite right-id (comp ?f (id ?a)) ?f)
+
+  ;; Associativity
+  (rewrite assoc (comp (comp ?f ?g) ?h) (comp ?f (comp ?g ?h))))
+
+;; Test: id composed with id is id
+(proof test-id-id
+  :theory Cat
+  :goal (meq (comp (id ?a) (id ?a)) (id ?a))
+  :derivation (meq-refl))
+
+;; Test: left identity
+(proof test-left-id
+  :theory Cat
+  :goal (meq (comp (id ?a) ?f) ?f)
+  :derivation (meq-refl))
+
+;; Test: right identity
+(proof test-right-id
+  :theory Cat
+  :goal (meq (comp ?f (id ?a)) ?f)
+  :derivation (meq-refl))
+
+;; Test: associativity
+(proof test-assoc
+  :theory Cat
+  :goal (meq (comp (comp ?f ?g) ?h) (comp ?f (comp ?g ?h)))
+  :derivation (meq-refl))
+
+;; Test: nested associativity — ((f∘g)∘h)∘k = f∘(g∘(h∘k))
+(proof test-deep-assoc
+  :theory Cat
+  :goal (meq (comp (comp (comp ?f ?g) ?h) ?k) (comp ?f (comp ?g (comp ?h ?k))))
+  :derivation (meq-refl))

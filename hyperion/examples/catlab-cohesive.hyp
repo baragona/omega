@@ -1,0 +1,88 @@
+;; CatLab Test 4.4: Cohesive HoTT
+;; ================================
+;; Modal operators: shape (esh), flat (bflat), sharp (bsharp)
+;; These form an adjoint triple: esh -| bflat -| bsharp
+;; Unit/counit maps and triangle identities via path algebra.
+
+[Category CohesiveCat
+  [Object Type]
+  [Object Tm]
+  [Morphism esh    :domain [Tm] :codomain Tm]
+  [Morphism bflat  :domain [Tm] :codomain Tm]
+  [Morphism bsharp :domain [Tm] :codomain Tm]
+  [Morphism eta_sf :domain [Tm] :codomain Tm]
+  [Morphism eps_sf :domain [Tm] :codomain Tm]
+  [Morphism eta_fs :domain [Tm] :codomain Tm]
+  [Morphism eps_fs :domain [Tm] :codomain Tm]
+  [PathType :refl refl :concat concat :inv inv :ap ap]
+]
+
+[Substrate CohesiveSub
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality topological-homotopy
+]
+
+[Universe CohesiveUniverse :category CohesiveCat :substrate CohesiveSub]
+
+[Theory CohesiveTheory :in CohesiveUniverse
+  [const A Tm]
+  [const a Tm]
+
+  ;; esh -| bflat adjunction
+  ;; Unit: eta_sf : Id -> bflat . esh
+  ;; Counit: eps_sf : esh . bflat -> Id
+  [@rule eps-sf-unit [eps_sf [esh [bflat ?x]]] ==> ?x]
+  [@rule eta-sf-unit [bflat [eta_sf [esh ?x]]] ==> [bflat [esh ?x]]]
+
+  ;; bflat -| bsharp adjunction
+  ;; Unit: eta_fs : Id -> bsharp . bflat
+  ;; Counit: eps_fs : bflat . bsharp -> Id
+  [@rule eps-fs-unit [eps_fs [bflat [bsharp ?x]]] ==> ?x]
+  [@rule eta-fs-unit [bsharp [eta_fs [bflat ?x]]] ==> [bsharp [bflat ?x]]]
+
+  ;; Triangle identity 1 (esh -| bflat):
+  ;; eps_sf(esh(eta_sf(x))) = x  for esh
+  [@rule triangle-sf-1 [eps_sf [esh [eta_sf ?x]]] ==> ?x]
+
+  ;; Triangle identity 2 (bflat -| bsharp):
+  ;; eps_fs(bflat(eta_fs(x))) = x  for bflat
+  [@rule triangle-fs-1 [eps_fs [bflat [eta_fs ?x]]] ==> ?x]
+
+  ;; Idempotency: shape of shape = shape, flat of flat = flat, sharp of sharp = sharp
+  [@rule esh-idem   [esh [esh ?x]]     ==> [esh ?x]]
+  [@rule bflat-idem [bflat [bflat ?x]] ==> [bflat ?x]]
+  [@rule bsharp-idem [bsharp [bsharp ?x]] ==> [bsharp ?x]]
+
+  ;; Modalities preserve refl
+  [@rule esh-refl    [esh [refl ?x]]    ==> [refl [esh ?x]]]
+  [@rule bflat-refl  [bflat [refl ?x]]  ==> [refl [bflat ?x]]]
+  [@rule bsharp-refl [bsharp [refl ?x]] ==> [refl [bsharp ?x]]]
+]
+
+[Proofs CohesiveChecks :in CohesiveTheory
+  ;; Triangle identity: eps_sf(esh(eta_sf(a))) = a
+  [assert-eq triangle-sf [eps_sf [esh [eta_sf a]]] a]
+
+  ;; Triangle identity: eps_fs(bflat(eta_fs(a))) = a
+  [assert-eq triangle-fs [eps_fs [bflat [eta_fs a]]] a]
+
+  ;; Idempotency: esh(esh(a)) = esh(a)
+  [assert-eq esh-idempotent [esh [esh a]] [esh a]]
+
+  ;; Modality preserves refl: esh(refl(a)) = refl(esh(a))
+  [assert-eq esh-preserves-refl [esh [refl a]] [refl [esh a]]]
+
+  ;; Derived: eps_sf applied to esh(bflat(x)) reduces
+  [assert-eq counit-reduces [eps_sf [esh [bflat a]]] a]
+
+  ;; Derived: double idempotency bflat(bflat(bflat(a))) = bflat(a)
+  [assert-eq triple-bflat [bflat [bflat [bflat a]]] [bflat a]]
+
+  ;; Path algebra (auto-injected): concat(refl(a), refl(a)) => refl(a)
+  [assert-eq path-unit [concat [refl a] [refl a]] [refl a]]
+
+  ;; Derived chain: bsharp(refl(bflat(a))) => refl(bsharp(bflat(a)))
+  [assert-eq sharp-flat-refl [bsharp [refl [bflat a]]] [refl [bsharp [bflat a]]]]
+]

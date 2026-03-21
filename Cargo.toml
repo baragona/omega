@@ -21,6 +21,8 @@ path = "src/main.rs"
 omega-driver = { path = "crates/omega-driver" }
 clap = { version = "4", features = ["derive"] }
 rustyline = "14"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [dev-dependencies]
 omega-core = { path = "crates/omega-core" }

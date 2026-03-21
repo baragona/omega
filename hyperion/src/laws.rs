@@ -69,6 +69,38 @@ pub fn generate_laws(cat: &CategoryDef) -> Vec<CategoricalLaw> {
         }
     }
 
+    // JType laws (if PathType + JType present)
+    for s in &cat.structure {
+        if let CategoricalStructure::JType { j_elim, transport } = s {
+            let refl_name = cat.structure.iter().find_map(|s2| {
+                if let CategoricalStructure::PathType { refl, .. } = s2 {
+                    Some(refl.as_str())
+                } else {
+                    None
+                }
+            });
+            if let Some(refl) = refl_name {
+                laws.extend(j_type_laws(j_elim, transport, refl));
+            }
+        }
+    }
+
+    // PartialElement laws (cubical)
+    for s in &cat.structure {
+        if let CategoricalStructure::PartialElement { hcomp, coe } = s {
+            let refl_name = cat.structure.iter().find_map(|s2| {
+                if let CategoricalStructure::PathType { refl, .. } = s2 {
+                    Some(refl.as_str())
+                } else {
+                    None
+                }
+            });
+            if let Some(refl) = refl_name {
+                laws.extend(partial_element_laws(hcomp, coe, refl));
+            }
+        }
+    }
+
     laws
 }
 
@@ -326,6 +358,63 @@ fn preorder_laws(relation: &str) -> Vec<CategoricalLaw> {
             name: "preorder-refl-structured".into(),
             lhs: mk_rel(mk_rel(a(), b()), mk_rel(a(), b())),
             rhs: tr(),
+        },
+    ]
+}
+
+fn j_type_laws(j_elim: &str, transport: &str, refl: &str) -> Vec<CategoricalLaw> {
+    let sp = Span::default();
+    let a = || Sexp::Atom("__law_a".into(), sp);
+    let d = || Sexp::Atom("__law_d".into(), sp);
+    let c = || Sexp::Atom("__law_C".into(), sp);
+    let x = || Sexp::Atom("__law_x".into(), sp);
+
+    let mk_refl = |v: Sexp| Sexp::List(vec![Sexp::Atom(refl.into(), sp), v], sp);
+
+    vec![
+        // J(C, d, refl(a)) = d
+        CategoricalLaw {
+            name: "j-beta".into(),
+            lhs: Sexp::List(vec![
+                Sexp::Atom(j_elim.into(), sp), c(), d(), mk_refl(a()),
+            ], sp),
+            rhs: d(),
+        },
+        // transport(refl(a), x) = x
+        CategoricalLaw {
+            name: "transport-refl".into(),
+            lhs: Sexp::List(vec![
+                Sexp::Atom(transport.into(), sp), mk_refl(a()), x(),
+            ], sp),
+            rhs: x(),
+        },
+    ]
+}
+
+fn partial_element_laws(hcomp: &str, coe: &str, refl: &str) -> Vec<CategoricalLaw> {
+    let sp = Span::default();
+    let a = || Sexp::Atom("__law_a".into(), sp);
+    let x = || Sexp::Atom("__law_x".into(), sp);
+    let i = || Sexp::Atom("__law_i".into(), sp);
+
+    let mk_refl = |v: Sexp| Sexp::List(vec![Sexp::Atom(refl.into(), sp), v], sp);
+
+    vec![
+        // coe(refl(A), i, x) = x
+        CategoricalLaw {
+            name: "coe-refl".into(),
+            lhs: Sexp::List(vec![
+                Sexp::Atom(coe.into(), sp), mk_refl(a()), i(), x(),
+            ], sp),
+            rhs: x(),
+        },
+        // hcomp(refl(a), base) = base
+        CategoricalLaw {
+            name: "hcomp-trivial".into(),
+            lhs: Sexp::List(vec![
+                Sexp::Atom(hcomp.into(), sp), mk_refl(a()), x(),
+            ], sp),
+            rhs: x(),
         },
     ]
 }

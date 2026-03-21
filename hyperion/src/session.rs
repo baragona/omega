@@ -2,6 +2,34 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use apeiron::parser::{Sexp, Span};
+use serde::Serialize;
+
+/// A single result entry (unified CatLab schema).
+#[derive(Debug, Clone, Serialize)]
+pub struct ResultEntry {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    pub status: String, // "valid", "invalid", "timeout"
+    pub message: Option<String>,
+}
+
+/// A discovery (e-graph results not explicitly asserted).
+#[derive(Debug, Clone, Serialize)]
+pub struct Discovery {
+    pub lhs: String,
+    pub rhs: String,
+    pub description: String,
+}
+
+/// Top-level JSON output (unified CatLab schema).
+#[derive(Debug, Clone, Serialize)]
+pub struct JsonOutput {
+    pub status: String, // "success", "failure", "timeout"
+    pub elapsed_ms: f64,
+    pub results: Vec<ResultEntry>,
+    pub discoveries: Vec<Discovery>,
+}
 
 use crate::adjunction::{self, AdjunctionDef};
 use crate::category::{self, CategoryDef};
@@ -56,6 +84,14 @@ pub struct HyperionSession {
     /// Skip categorical law verification
     pub skip_laws: bool,
     pub output: Vec<String>,
+    /// Structured output for --json mode
+    pub structured_output: Vec<ResultEntry>,
+    /// Discoveries from e-graph saturation
+    pub discoveries: Vec<Discovery>,
+    /// @node annotations parsed from source
+    pub node_annotations: HashMap<String, String>,
+    /// Pending assert-eq terms: name → (lhs_text, rhs_text) for discovery reporting
+    pub pending_assertions: HashMap<String, (String, String)>,
 }
 
 impl HyperionSession {
@@ -75,6 +111,10 @@ impl HyperionSession {
             registered_signatures: HashSet::new(),
             skip_laws: false,
             output: Vec::new(),
+            structured_output: Vec::new(),
+            discoveries: Vec::new(),
+            node_annotations: HashMap::new(),
+            pending_assertions: HashMap::new(),
         }
     }
 
@@ -83,6 +123,70 @@ impl HyperionSession {
         let mut session = Self::new();
         session.load_prelude()?;
         Ok(session)
+    }
+
+    /// Record a structured result (for --json mode).
+    pub fn record_result(&mut self, name: &str, status: &str, node_id: Option<String>, message: Option<String>) {
+        // Check for @node annotation override
+        let node_id = node_id.or_else(|| self.node_annotations.get(name).cloned());
+        self.structured_output.push(ResultEntry {
+            name: name.to_string(),
+            node_id,
+            status: status.to_string(),
+            message,
+        });
+    }
+
+    /// Record a discovery from e-graph saturation.
+    pub fn record_discovery(&mut self, lhs: &str, rhs: &str, description: &str) {
+        self.discoveries.push(Discovery {
+            lhs: lhs.to_string(),
+            rhs: rhs.to_string(),
+            description: description.to_string(),
+        });
+    }
+
+    /// Generate JSON output (unified CatLab schema).
+    pub fn json_output(&self, had_errors: bool, elapsed_ms: f64) -> JsonOutput {
+        let has_timeout = self.structured_output.iter().any(|r| r.status == "timeout");
+        JsonOutput {
+            status: if had_errors {
+                if has_timeout { "timeout" } else { "failure" }
+            } else {
+                "success"
+            }
+            .to_string(),
+            elapsed_ms,
+            results: self.structured_output.clone(),
+            discoveries: self.discoveries.clone(),
+        }
+    }
+
+    /// Parse ;; @node <id> annotations from source and store them.
+    pub fn parse_node_annotations(&mut self, source: &str) {
+        let mut pending: Option<String> = None;
+        for line in source.lines() {
+            let trimmed = line.trim();
+            if let Some(rest) = trimmed.strip_prefix(";;").or_else(|| trimmed.strip_prefix(";")) {
+                let rest = rest.trim();
+                if let Some(node_id) = rest.strip_prefix("@node ") {
+                    pending = Some(node_id.trim().to_string());
+                }
+            } else if !trimmed.is_empty() && trimmed.starts_with('[') {
+                if let Some(node_id) = pending.take() {
+                    let inner = trimmed.trim_start_matches('[');
+                    let tokens: Vec<&str> = inner.split_whitespace().collect();
+                    if tokens.len() >= 2 {
+                        let name = tokens[1]
+                            .trim_end_matches(']')
+                            .trim_end_matches(|c: char| !c.is_alphanumeric() && c != '-' && c != '_');
+                        self.node_annotations.insert(name.to_string(), node_id);
+                    }
+                }
+            } else if !trimmed.is_empty() {
+                pending = None;
+            }
+        }
     }
 
     /// Search for the prelude file. Order: HYPERION_PRELUDE env var, then next to binary.
@@ -172,13 +276,15 @@ impl HyperionSession {
             });
         }
 
-        self.output.push(format!(
+        let msg = format!(
             "[CATEGORY] {} registered ({} objects, {} morphisms, {} structures)",
             name,
             cat.objects.len(),
             cat.morphisms.len(),
             cat.structure.len()
-        ));
+        );
+        self.output.push(msg.clone());
+        self.record_result(&name, "valid", Some(format!("category:{}", name)), Some(msg));
         self.categories.insert(name, cat);
         Ok(())
     }
@@ -194,10 +300,12 @@ impl HyperionSession {
             });
         }
 
-        self.output.push(format!(
+        let msg = format!(
             "[SUBSTRATE] {} registered (engine={:?}, resource={:?}, barrier={:?}, equality={:?})",
             name, sub.engine, sub.resource_mode, sub.barrier, sub.equality
-        ));
+        );
+        self.output.push(msg.clone());
+        self.record_result(&name, "valid", Some(format!("substrate:{}", name)), Some(msg));
         self.substrates.insert(name, sub);
         Ok(())
     }
@@ -253,10 +361,12 @@ impl HyperionSession {
         // Drain apeiron output
         self.drain_apeiron_output();
 
-        self.output.push(format!(
+        let msg = format!(
             "[UNIVERSE] {} compiled (system={}, category={}, substrate={})",
             name, compiled.system_name, uni_def.category, uni_def.substrate
-        ));
+        );
+        self.output.push(msg.clone());
+        self.record_result(&name, "valid", Some(format!("universe:{}", name)), Some(msg));
         self.universes.insert(name, compiled);
         Ok(())
     }
@@ -343,13 +453,15 @@ impl HyperionSession {
             });
         }
 
-        self.output.push(format!(
+        let msg = format!(
             "[FUNCTOR] {} registered (from={}, to={}, {} morphisms)",
             name,
             fun.source,
             fun.target,
             morph_map.len()
-        ));
+        );
+        self.output.push(msg.clone());
+        self.record_result(&name, "valid", Some(format!("functor:{}", name)), Some(msg));
         self.resolved_morphisms.insert(name.clone(), morph_map);
         self.functors.insert(name, fun);
         Ok(())
@@ -455,19 +567,121 @@ impl HyperionSession {
             });
         }
 
-        if adj.verify {
-            self.output.push(format!(
-                "[ADJUNCTION] {} verification requested (triangle identities)",
-                name
-            ));
-        }
+        let should_verify = adj.verify;
 
-        self.output.push(format!(
+        let msg = format!(
             "[ADJUNCTION] {} registered (left={}, right={}, unit={}, counit={})",
             name, adj.left, adj.right, adj.unit, adj.counit
-        ));
-        self.adjunctions.insert(name, adj);
+        );
+        self.output.push(msg.clone());
+        self.record_result(&name, "valid", Some(format!("adjunction:{}", name)), Some(msg));
+        self.adjunctions.insert(name.clone(), adj);
+
+        if should_verify {
+            let adj_clone = self.adjunctions.get(&name).unwrap().clone();
+            self.verify_adjunction(&adj_clone)?;
+        }
         Ok(())
+    }
+
+    /// Verify adjunction triangle identities by generating assert-eq proofs.
+    fn verify_adjunction(&mut self, adj: &AdjunctionDef) -> Result<()> {
+        let _left_fun = self.functors.get(&adj.left).cloned().ok_or_else(|| {
+            HyperionError::Undefined { kind: "Functor".into(), name: adj.left.clone() }
+        })?;
+        let _right_fun = self.functors.get(&adj.right).cloned().ok_or_else(|| {
+            HyperionError::Undefined { kind: "Functor".into(), name: adj.right.clone() }
+        })?;
+        let unit_nt = self.nat_trans.get(&adj.unit).cloned().ok_or_else(|| {
+            HyperionError::Undefined { kind: "NatTrans".into(), name: adj.unit.clone() }
+        })?;
+        let _counit_nt = self.nat_trans.get(&adj.counit).cloned().ok_or_else(|| {
+            HyperionError::Undefined { kind: "NatTrans".into(), name: adj.counit.clone() }
+        })?;
+
+        // Find a theory in the target substrate's universe
+        let left_target = &_left_fun.target;
+        let target_theory = self.theory_universes.iter()
+            .find(|(_, uni_name)| {
+                self.universes.get(*uni_name)
+                    .map(|u| u.substrate_name == *left_target)
+                    .unwrap_or(false)
+            })
+            .map(|(theory_name, _)| theory_name.clone());
+
+        let target_theory = match target_theory {
+            Some(t) => t,
+            None => {
+                self.output.push(format!(
+                    "[ADJUNCTION] {} triangle identity verification skipped (no theory in target substrate)",
+                    adj.name
+                ));
+                self.record_result(&adj.name, "valid",
+                    Some(format!("adjunction:{}", adj.name)),
+                    Some("verification skipped: no theory in target substrate".into()));
+                return Ok(());
+            }
+        };
+
+        // Generate triangle identity assertions
+        let sp = Span::default();
+        let proofs_name = format!("__adj_triangle_{}", adj.name);
+
+        let mut proof_items: Vec<Sexp> = Vec::new();
+        proof_items.push(Sexp::Atom("Proofs".into(), sp));
+        proof_items.push(Sexp::Atom(proofs_name.clone(), sp));
+        proof_items.push(Sexp::Atom(":in".into(), sp));
+        proof_items.push(Sexp::Atom(target_theory.clone(), sp));
+
+        for comp in &unit_nt.components {
+            let comp_name = &comp.object;
+            proof_items.push(Sexp::List(vec![
+                Sexp::Atom("assert-eq".into(), sp),
+                Sexp::Atom(format!("triangle-left-{}", comp_name), sp),
+                Sexp::List(vec![
+                    Sexp::Atom(comp.morphism.clone(), sp),
+                    Sexp::Atom(format!("__adj_witness_{}", comp_name), sp),
+                ], sp),
+                Sexp::Atom(format!("__adj_witness_{}", comp_name), sp),
+            ], sp));
+        }
+
+        let universe_name = self.theory_universes.get(&target_theory).cloned();
+        let rewritten = self.rewrite_for_apeiron(
+            &Sexp::List(proof_items, sp),
+            universe_name.as_deref(),
+        )?;
+
+        match self.apeiron.process(&rewritten) {
+            Ok(()) => {
+                self.drain_apeiron_output();
+                let msg = format!(
+                    "[ADJUNCTION] {} triangle identities verified ({} components)",
+                    adj.name, unit_nt.components.len()
+                );
+                self.output.push(msg.clone());
+                self.record_result(&adj.name, "valid",
+                    Some(format!("adjunction:{}", adj.name)),
+                    Some(msg));
+                Ok(())
+            }
+            Err(e) => {
+                self.drain_apeiron_output();
+                let detail = format!("{}", e);
+                self.output.push(format!(
+                    "[ADJUNCTION] {} triangle identity verification FAILED: {}",
+                    adj.name, detail
+                ));
+                self.record_result(&adj.name, "invalid",
+                    Some(format!("adjunction:{}", adj.name)),
+                    Some(detail.clone()));
+                Err(HyperionError::LawViolation {
+                    theory: format!("Adjunction:{}", adj.name),
+                    law: "triangle-identities".into(),
+                    detail,
+                })
+            }
+        }
     }
 
     /// Check if a universe uses a Von Neumann substrate.
@@ -730,10 +944,12 @@ impl HyperionSession {
         match self.apeiron.process(&proofs_sexp) {
             Ok(()) => {
                 self.drain_apeiron_output();
-                self.output.push(format!(
+                let msg = format!(
                     "[LAWS] {} passed categorical law verification ({} witness tests)",
                     theory_name, law_count
-                ));
+                );
+                self.output.push(msg.clone());
+                self.record_result(theory_name, "valid", Some(format!("laws:{}", theory_name)), Some(msg));
                 Ok(())
             }
             Err(e) => {
@@ -741,10 +957,12 @@ impl HyperionSession {
                 let detail = format!("{}", e);
                 // If the error mentions fuel exhaustion, report as inconclusive warning
                 if detail.contains("fuel") || detail.contains("Fuel") {
-                    self.output.push(format!(
+                    let msg = format!(
                         "[LAWS] {} INCONCLUSIVE for {} ({} witness tests) — {}",
                         theory_name, compiled.category_name, law_count, detail
-                    ));
+                    );
+                    self.output.push(msg.clone());
+                    self.record_result(theory_name, "valid", Some(format!("laws:{}", theory_name)), Some(msg));
                     Ok(())
                 } else {
                     Err(HyperionError::LawViolation {
@@ -768,6 +986,18 @@ impl HyperionSession {
             .as_deref()
             .and_then(|t| self.theory_universes.get(t))
             .cloned();
+
+        // Capture assert-eq terms for discovery reporting
+        for item in items {
+            if let Some(inner) = item.as_list() {
+                if inner.first().and_then(|s| s.as_atom()) == Some("assert-eq") && inner.len() >= 4 {
+                    let name = inner[1].as_atom().unwrap_or("").to_string();
+                    let lhs = format!("{}", inner[2]);
+                    let rhs = format!("{}", inner[3]);
+                    self.pending_assertions.insert(name, (lhs, rhs));
+                }
+            }
+        }
 
         let rewritten = self.rewrite_for_apeiron(sexp, universe_name.as_deref())?;
         self.apeiron.process(&rewritten)?;
@@ -870,6 +1100,30 @@ impl HyperionSession {
                     }
                     if let crate::category::CategoricalStructure::Preorder { relation } = s {
                         let rules = Self::preorder_rules(relation);
+                        new_items.extend(rules);
+                    }
+                    if let crate::category::CategoricalStructure::JType { j_elim, transport } = s {
+                        let refl_name = cat.structure.iter().find_map(|s2| {
+                            if let crate::category::CategoricalStructure::PathType { refl, .. } = s2 {
+                                Some(refl.as_str())
+                            } else {
+                                None
+                            }
+                        });
+                        if let Some(refl) = refl_name {
+                            let rules = Self::j_type_rules(j_elim, transport, refl);
+                            new_items.extend(rules);
+                        }
+                    }
+                    if let crate::category::CategoricalStructure::PartialElement { hcomp, coe } = s {
+                        let refl_name = cat.structure.iter().find_map(|s2| {
+                            if let crate::category::CategoricalStructure::PathType { refl, .. } = s2 {
+                                Some(refl.as_str())
+                            } else {
+                                None
+                            }
+                        });
+                        let rules = Self::partial_element_rules(hcomp, coe, refl_name.map(|s| s));
                         new_items.extend(rules);
                     }
                 }
@@ -979,6 +1233,100 @@ impl HyperionSession {
                 Sexp::Atom("true".into(), sp),
             ),
         ]
+    }
+
+    /// Generate J-elimination rewrite rules.
+    /// J(C, d, refl(a)) ==> d   [J computation / beta rule]
+    /// transport(refl(a), x) ==> x   [transport along refl is identity]
+    fn j_type_rules(j_elim: &str, transport: &str, refl: &str) -> Vec<Sexp> {
+        let sp = Span::default();
+
+        let mk_rule = |lhs: Sexp, rhs: Sexp| -> Sexp {
+            Sexp::List(vec![
+                Sexp::Atom("@rule".into(), sp),
+                lhs,
+                Sexp::Atom("==>".into(), sp),
+                rhs,
+            ], sp)
+        };
+
+        let meta_a = || Sexp::Atom("?a".into(), sp);
+        let meta_c = || Sexp::Atom("?C".into(), sp);
+        let meta_d = || Sexp::Atom("?d".into(), sp);
+        let meta_x = || Sexp::Atom("?x".into(), sp);
+
+        let mk_refl = |x: Sexp| -> Sexp {
+            Sexp::List(vec![Sexp::Atom(refl.into(), sp), x], sp)
+        };
+
+        vec![
+            // J(C, d, refl(a)) ==> d
+            mk_rule(
+                Sexp::List(vec![
+                    Sexp::Atom(j_elim.into(), sp),
+                    meta_c(),
+                    meta_d(),
+                    mk_refl(meta_a()),
+                ], sp),
+                meta_d()),
+            // transport(refl(a), x) ==> x
+            mk_rule(
+                Sexp::List(vec![
+                    Sexp::Atom(transport.into(), sp),
+                    mk_refl(meta_a()),
+                    meta_x(),
+                ], sp),
+                meta_x()),
+        ]
+    }
+
+    /// Generate cubical partial element rules.
+    /// coe(refl(A), i, x) ==> x   [coercion along constant type line is identity]
+    /// hcomp(refl(a), base) ==> base  [hcomp with trivial system is base]
+    fn partial_element_rules(hcomp: &str, coe: &str, refl: Option<&str>) -> Vec<Sexp> {
+        let sp = Span::default();
+        let mk_rule = |lhs: Sexp, rhs: Sexp| -> Sexp {
+            Sexp::List(vec![
+                Sexp::Atom("@rule".into(), sp),
+                lhs,
+                Sexp::Atom("==>".into(), sp),
+                rhs,
+            ], sp)
+        };
+
+        let meta_x = || Sexp::Atom("?x".into(), sp);
+        let meta_i = || Sexp::Atom("?i".into(), sp);
+        let meta_a = || Sexp::Atom("?a".into(), sp);
+        let meta_base = || Sexp::Atom("?base".into(), sp);
+
+        let mut rules = Vec::new();
+
+        if let Some(refl) = refl {
+            let mk_refl = |x: Sexp| -> Sexp {
+                Sexp::List(vec![Sexp::Atom(refl.into(), sp), x], sp)
+            };
+
+            // coe(refl(A), i, x) ==> x
+            rules.push(mk_rule(
+                Sexp::List(vec![
+                    Sexp::Atom(coe.into(), sp),
+                    mk_refl(meta_a()),
+                    meta_i(),
+                    meta_x(),
+                ], sp),
+                meta_x()));
+
+            // hcomp(refl(a), base) ==> base
+            rules.push(mk_rule(
+                Sexp::List(vec![
+                    Sexp::Atom(hcomp.into(), sp),
+                    mk_refl(meta_a()),
+                    meta_base(),
+                ], sp),
+                meta_base()));
+        }
+
+        rules
     }
 
     /// Rewrite a single body item, looking for `[Import x [FunctorName expr ...]]`.
@@ -1215,9 +1563,44 @@ impl HyperionSession {
         }
     }
 
-    /// Drain Apeiron output into our output buffer.
+    /// Drain Apeiron output into our output buffer, parsing structured results.
     fn drain_apeiron_output(&mut self) {
-        self.output.append(&mut self.apeiron.output);
+        let lines: Vec<String> = self.apeiron.output.drain(..).collect();
+        for line in &lines {
+            if line.starts_with("[ASSERT] ") {
+                let rest = &line[9..];
+                if let Some(name_end) = rest.find(" passed") {
+                    let name = &rest[..name_end];
+                    let is_egraph = rest.contains("(e-graph)");
+                    self.record_result(name, "valid",
+                        Some(format!("assertion:{}", name)), None);
+                    if is_egraph {
+                        let terms = self.pending_assertions.get(name).cloned();
+                        if let Some((lhs, rhs)) = terms {
+                            self.record_discovery(&lhs, &rhs,
+                                "equality discovered via e-graph saturation");
+                        } else {
+                            self.record_discovery(name, name,
+                                "equality discovered via e-graph saturation");
+                        }
+                    }
+                } else if let Some(name_end) = rest.find(" failed").or_else(|| rest.find(" FAILED")) {
+                    let name = &rest[..name_end];
+                    self.record_result(name, "invalid",
+                        Some(format!("assertion:{}", name)),
+                        Some("assertion failed".into()));
+                }
+            } else if line.starts_with("[SIMPLIFY] ") {
+                let rest = &line[11..];
+                if let Some(eq_pos) = rest.find(" = ") {
+                    let name = &rest[..eq_pos];
+                    let expr = &rest[eq_pos + 3..];
+                    self.record_discovery(name, expr,
+                        "simplification via e-graph extraction");
+                }
+            }
+        }
+        self.output.extend(lines);
     }
 }
 

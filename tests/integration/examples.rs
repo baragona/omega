@@ -1806,4 +1806,22 @@ fn ruliad_gut_example() {
     assert!(results.iter().any(|r| r.contains("Refutation proton-not-trapped: VERIFIED")));
     assert!(results.iter().any(|r| r.contains("Refutation classical-no-escape: VERIFIED")));
     assert!(results.iter().any(|r| r.contains("Refutation no-hawking-without-quantum: VERIFIED")));
+    // ACT IX: Classical information
+    assert!(results.iter().any(|r| r.contains("Proof cnot-measures: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof landauer-erasure: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof cnot-involution: VALID")));
+    assert!(results.iter().any(|r| r.contains("Proof tagged-proton-stress-energy: VALID")));
+    // ACT X: Information-theoretic impossibilities
+    assert!(results.iter().any(|r| r.contains("Refutation no-magical-cooling: VERIFIED")));
+    assert!(results.iter().any(|r| r.contains("Refutation no-info-destruction: VERIFIED")));
+    assert!(results.iter().any(|r| r.contains("Refutation tagged-photon-no-gravity: VERIFIED")));
+    // ACT XI: Matter-energy conversion
+    assert!(results.iter().any(|r| r.contains("Proof electron-positron-annihilation: VALID")));
+    assert!(results.iter().any(|r| r.contains("Refutation no-spontaneous-pairs: VERIFIED")));
+    // ACT XII: Cosmic censorship
+    assert!(results.iter().any(|r| r.contains("Refutation cosmic-censorship: VERIFIED")));
+    // ACT XIII: GUT prediction
+    assert!(results.iter().any(|r| r.contains("Proof proton-decay: VALID")));
+    // ACT XIV: Arrow of time
+    assert!(results.iter().any(|r| r.contains("Refutation no-free-mass: VERIFIED")));
 }

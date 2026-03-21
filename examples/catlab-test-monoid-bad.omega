@@ -1,0 +1,16 @@
+;;; CatLab Test 3.1b: Bad Monoid — wrong arity error diagnostic
+(theory BadMonoid
+  (sort M)
+  (constructor mu : (-> M M M))
+  (constructor eta : (-> M M))
+
+  (judgment (eq ?a ?b) :where a : M b : M)
+  (rule eq-refl :premises () :conclusion (eq ?a ?a))
+
+  (rewrite left-unit (mu (eta ?x) ?x) ?x))
+
+;; This should fail: eta used as nullary but declared unary
+(proof bad-test
+  :theory BadMonoid
+  :goal (eq (mu eta eta) eta)
+  :derivation (eq-refl))

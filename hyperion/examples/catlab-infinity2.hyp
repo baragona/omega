@@ -1,0 +1,112 @@
+;; CatLab Test 4.2: (infinity,2)-Category / Interchange
+;; =====================================================
+;; Two compositions (vertical=concat, horizontal=hcomp) on 2-cells.
+;; Part A: equality-saturation substrate discovers Eckmann-Hilton commutativity.
+;; Part B: rewrite-equivalence substrate CANNOT discover it (assert-neq).
+
+;; Shared category: 3-level cells with two compositions
+[Category Infinity2Cat
+  [Object Cell0]
+  [Object Cell1]
+  [Object Cell2]
+  [Morphism vcomp :domain [Cell2 Cell2] :codomain Cell2]
+  [Morphism hcomp :domain [Cell2 Cell2] :codomain Cell2]
+  [PathType :refl refl2 :concat vcomp :inv inv2 :ap ap2]
+]
+
+;; ============================================================
+;; Part A: Equality-saturation substrate — discovery expected
+;; ============================================================
+
+[Substrate EqSatSub
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality equality-saturation
+]
+
+[Universe Inf2EqSat :category Infinity2Cat :substrate EqSatSub]
+
+[Theory Interchange2Cat :in Inf2EqSat :no-laws
+  [const base Cell0]
+  [const id1 Cell1]
+  [const alpha Cell2]
+  [const beta Cell2]
+
+  ;; Interchange law: hcomp of vertical composites = vertical of horizontal composites
+  [@law interchange
+    [hcomp [vcomp ?a ?b] [vcomp ?c ?d]]
+    ===
+    [vcomp [hcomp ?a ?c] [hcomp ?b ?d]]
+  ]
+
+  ;; Unit laws for hcomp (refl2 is the horizontal identity)
+  [@law hcomp-left-id  [hcomp [refl2 base] ?p] === ?p]
+  [@law hcomp-right-id [hcomp ?p [refl2 base]] === ?p]
+
+  ;; Unit laws for vcomp (refl2 is also the vertical identity)
+  ;; Must be @law (bidirectional) for the proof to work
+  [@law vcomp-left-id  [vcomp [refl2 base] ?p] === ?p]
+  [@law vcomp-right-id [vcomp ?p [refl2 base]] === ?p]
+]
+
+[Proofs EqSatDiscovery :in Interchange2Cat
+  ;; The e-graph should discover that vcomp and hcomp coincide
+  [assert-eq coincidence
+    [vcomp alpha beta]
+    [hcomp alpha beta]
+  ]
+
+  ;; The e-graph should discover commutativity of vertical composition
+  [assert-eq eckmann-hilton-commutes
+    [vcomp alpha beta]
+    [vcomp beta alpha]
+  ]
+
+  ;; Extract simplest form
+  [eval-simplify extract [vcomp alpha beta]]
+]
+
+;; ============================================================
+;; Part B: Rewrite-equivalence substrate — discovery blocked
+;; ============================================================
+
+[Substrate RewriteSub
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Universe Inf2Rewrite :category Infinity2Cat :substrate RewriteSub]
+
+[Theory Interchange2CatDirected :in Inf2Rewrite :no-laws
+  [const base Cell0]
+  [const id1 Cell1]
+  [const alpha Cell2]
+  [const beta Cell2]
+
+  ;; IDENTICAL laws as Part A
+  [@law interchange
+    [hcomp [vcomp ?a ?b] [vcomp ?c ?d]]
+    ===
+    [vcomp [hcomp ?a ?c] [hcomp ?b ?d]]
+  ]
+  [@law hcomp-left-id  [hcomp [refl2 base] ?p] === ?p]
+  [@law hcomp-right-id [hcomp ?p [refl2 base]] === ?p]
+  [@law vcomp-left-id  [vcomp [refl2 base] ?p] === ?p]
+  [@law vcomp-right-id [vcomp ?p [refl2 base]] === ?p]
+]
+
+[Proofs RewriteBlocked :in Interchange2CatDirected
+  ;; In directed physics, neither coincidence nor commutativity is reachable
+  [assert-neq coincidence-blocked
+    [vcomp alpha beta]
+    [hcomp alpha beta]
+  ]
+
+  [assert-neq commutes-blocked
+    [vcomp alpha beta]
+    [vcomp beta alpha]
+  ]
+]

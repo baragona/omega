@@ -15,14 +15,21 @@ struct Cli {
     /// Enable verbose output.
     #[arg(long, global = true)]
     verbose: bool,
+
+    /// Output results as JSON.
+    #[arg(long, global = true)]
+    json: bool,
 }
 
 #[derive(clap::Subcommand)]
 enum Commands {
     /// Check an .omega source file.
     Check {
-        /// Path to the .omega file.
-        file: String,
+        /// Path to the .omega file (ignored if --stdin is used).
+        file: Option<String>,
+        /// Read source from stdin instead of a file.
+        #[arg(long)]
+        stdin: bool,
     },
     /// Compile a verified theory to a Rust crate.
     Kompile {
@@ -44,16 +51,38 @@ fn main() {
     let mut session = Session::new().with_verbose(cli.verbose);
 
     match cli.command {
-        Some(Commands::Check { file }) => {
-            match batch::process_file_path(&mut session, &file) {
-                Ok(results) => {
-                    for r in results {
-                        println!("{}", r);
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Error: {}", e);
+        Some(Commands::Check { file, stdin }) => {
+            let (source, filename) = if stdin {
+                let mut buf = String::new();
+                std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)
+                    .expect("failed to read stdin");
+                (buf, "<stdin>".to_string())
+            } else {
+                let f = file.expect("file path required when not using --stdin");
+                let s = std::fs::read_to_string(&f).unwrap_or_else(|e| {
+                    eprintln!("Error: cannot read {}: {}", f, e);
                     std::process::exit(1);
+                });
+                (s, f)
+            };
+
+            if cli.json {
+                let output = batch::process_file_json(&mut session, &source, &filename);
+                println!("{}", serde_json::to_string_pretty(&output).unwrap());
+                if output.status != "success" {
+                    std::process::exit(1);
+                }
+            } else {
+                match batch::process_file(&mut session, &source, &filename) {
+                    Ok(results) => {
+                        for r in results {
+                            println!("{}", r);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        std::process::exit(1);
+                    }
                 }
             }
         }

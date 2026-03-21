@@ -1,0 +1,43 @@
+;;; CatLab Test 3.6: Metatheorem Verification
+;;; Category with associativity — test deeper associativity via lemma
+
+(theory CatMeta
+  (sort Ob)
+  (sort Mor)
+
+  (constructor id : (-> Ob Mor))
+  (constructor comp : (-> Mor Mor Mor))
+
+  (judgment (meq ?f ?g) :where f : Mor g : Mor)
+  (rule meq-refl :premises () :conclusion (meq ?f ?f))
+
+  (rewrite left-id (comp (id ?a) ?f) ?f)
+  (rewrite right-id (comp ?f (id ?a)) ?f)
+  (rewrite assoc (comp (comp ?f ?g) ?h) (comp ?f (comp ?g ?h))))
+
+;; Lemma: 4-fold associativity ((f∘g)∘h)∘k = f∘(g∘(h∘k))
+;; Rewrite rules handle this automatically via normalization
+(proof test-4-assoc
+  :theory CatMeta
+  :goal (meq (comp (comp (comp ?f ?g) ?h) ?k) (comp ?f (comp ?g (comp ?h ?k))))
+  :derivation (meq-refl))
+
+;; Lemma: install as a derived rule for reuse
+(lemma assoc4
+  :theory CatMeta
+  :premises ((meq (comp (comp (comp ?f ?g) ?h) ?k) (comp (comp (comp ?f ?g) ?h) ?k)))
+  :conclusion (meq (comp (comp (comp ?f ?g) ?h) ?k) (comp ?f (comp ?g (comp ?h ?k))))
+  :derivation (meq-refl))
+
+;; 5-fold: (((f∘g)∘h)∘k)∘l = f∘(g∘(h∘(k∘l)))
+(proof test-5-assoc
+  :theory CatMeta
+  :goal (meq (comp (comp (comp (comp ?f ?g) ?h) ?k) ?l) (comp ?f (comp ?g (comp ?h (comp ?k ?l)))))
+  :derivation (meq-refl))
+
+;; Test that identity + associativity compose:
+;; comp(id(a), comp(comp(f, g), h)) = comp(f, comp(g, h))
+(proof test-id-plus-assoc
+  :theory CatMeta
+  :goal (meq (comp (id ?a) (comp (comp ?f ?g) ?h)) (comp ?f (comp ?g ?h)))
+  :derivation (meq-refl))

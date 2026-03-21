@@ -1,0 +1,35 @@
+;;; CatLab Test 3.1: Monoid Theory
+;;; Sort M, binary mu, nullary eta, associativity + unit laws
+
+(theory Monoid
+  (sort M)
+  (constructor mu : (-> M M M))
+  (constructor eta : M)
+
+  (judgment (eq ?a ?b) :where a : M b : M)
+  (rule eq-refl :premises () :conclusion (eq ?a ?a))
+
+  ;; Rewrite rules: associativity and unit laws
+  (rewrite assoc (mu (mu ?x ?y) ?z) (mu ?x (mu ?y ?z)))
+  (rewrite left-unit (mu eta ?x) ?x)
+  (rewrite right-unit (mu ?x eta) ?x))
+
+;; Test: left unit
+(proof test-left-unit
+  :theory Monoid
+  :goal (eq (mu eta (mu eta eta)) (mu eta eta))
+  :derivation (eq-refl))
+
+;; Test: right unit
+(proof test-right-unit
+  :theory Monoid
+  :goal (eq (mu (mu eta eta) eta) (mu eta eta))
+  :derivation (eq-refl))
+
+;; Test: associativity normalizes nested expression
+(proof test-assoc
+  :theory Monoid
+  :goal (eq (mu (mu eta eta) eta) (mu eta (mu eta eta)))
+  :derivation (eq-refl))
+
+;;; Bad Monoid test moved to catlab-test-monoid-bad.omega

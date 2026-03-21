@@ -1,6 +1,7 @@
 use std::env;
 use std::fs;
 use std::process;
+use std::time::Instant;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -27,22 +28,45 @@ fn main() {
 }
 
 fn cmd_check(args: &[String]) {
-    if args.is_empty() {
-        eprintln!("Usage: hyperion check <file.hyp> [-v] [--no-prelude] [--skip-laws]");
-        process::exit(1);
-    }
-
-    let filename = &args[0];
     let verbose = args.iter().any(|a| a == "-v" || a == "--verbose");
     let no_prelude = args.iter().any(|a| a == "--no-prelude");
     let skip_laws = args.iter().any(|a| a == "--skip-laws");
+    let json_mode = args.iter().any(|a| a == "--json");
+    let stdin_mode = args.iter().any(|a| a == "--stdin");
 
-    let source = fs::read_to_string(filename).unwrap_or_else(|e| {
-        eprintln!("Error reading {}: {}", filename, e);
-        process::exit(1);
-    });
+    let start = Instant::now();
+
+    let (source, filename) = if stdin_mode {
+        let mut buf = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)
+            .expect("failed to read stdin");
+        (buf, "<stdin>".to_string())
+    } else {
+        let filename = args
+            .iter()
+            .find(|a| !a.starts_with('-'))
+            .unwrap_or_else(|| {
+                eprintln!("Usage: hyperion check <file.hyp> [--json] [--stdin] [-v] [--no-prelude] [--skip-laws]");
+                process::exit(1);
+            });
+        let source = fs::read_to_string(filename).unwrap_or_else(|e| {
+            eprintln!("Error reading {}: {}", filename, e);
+            process::exit(1);
+        });
+        (source, filename.clone())
+    };
 
     let sexps = apeiron::parser::parse(&source).unwrap_or_else(|e| {
+        if json_mode {
+            let output = serde_json::json!({
+                "status": "failure",
+                "elapsed_ms": start.elapsed().as_secs_f64() * 1000.0,
+                "results": [{"name": filename, "node_id": null, "status": "invalid", "message": format!("parse error: {}", e)}],
+                "discoveries": []
+            });
+            println!("{}", serde_json::to_string_pretty(&output).unwrap());
+            process::exit(1);
+        }
         eprintln!("Parse error: {}", e);
         process::exit(1);
     });
@@ -63,43 +87,53 @@ fn cmd_check(args: &[String]) {
         session.skip_laws = true;
     }
 
+    // Parse @node annotations from source
+    session.parse_node_annotations(&source);
+
     let mut had_errors = false;
 
     for sexp in &sexps {
         match session.process(sexp) {
             Ok(()) => {}
             Err(e) => {
-                eprintln!("Error: {}", e);
+                if !json_mode {
+                    eprintln!("Error: {}", e);
+                }
                 had_errors = true;
             }
         }
     }
 
-    // Print output
-    for line in &session.output {
-        println!("{}", line);
-    }
+    if json_mode {
+        let elapsed = start.elapsed().as_secs_f64() * 1000.0;
+        let output = session.json_output(had_errors, elapsed);
+        println!("{}", serde_json::to_string_pretty(&output).unwrap());
+    } else {
+        for line in &session.output {
+            println!("{}", line);
+        }
 
-    if verbose {
-        println!("\n--- Hyperion Stats ---");
-        println!("Categories:   {}", session.categories.len());
-        println!("Substrates:   {}", session.substrates.len());
-        println!("Universes:    {}", session.universes.len());
-        println!("Functors:     {}", session.functors.len());
-        println!("NatTrans:     {}", session.nat_trans.len());
-        println!("Adjunctions:  {}", session.adjunctions.len());
-        println!("VN Theories:  {}", session.vn_theories.len());
-        println!("\n--- Apeiron Stats ---");
-        println!(
-            "Nodes spawned: {}",
-            session.apeiron.arena.stats.nodes_spawned
-        );
-        println!("Nodes freed:   {}", session.apeiron.arena.stats.nodes_freed);
-        println!(
-            "Interactions:  {}",
-            session.apeiron.arena.stats.interactions
-        );
-        println!("Live nodes:    {}", session.apeiron.arena.live_count());
+        if verbose {
+            println!("\n--- Hyperion Stats ---");
+            println!("Categories:   {}", session.categories.len());
+            println!("Substrates:   {}", session.substrates.len());
+            println!("Universes:    {}", session.universes.len());
+            println!("Functors:     {}", session.functors.len());
+            println!("NatTrans:     {}", session.nat_trans.len());
+            println!("Adjunctions:  {}", session.adjunctions.len());
+            println!("VN Theories:  {}", session.vn_theories.len());
+            println!("\n--- Apeiron Stats ---");
+            println!(
+                "Nodes spawned: {}",
+                session.apeiron.arena.stats.nodes_spawned
+            );
+            println!("Nodes freed:   {}", session.apeiron.arena.stats.nodes_freed);
+            println!(
+                "Interactions:  {}",
+                session.apeiron.arena.stats.interactions
+            );
+            println!("Live nodes:    {}", session.apeiron.arena.live_count());
+        }
     }
 
     if had_errors {

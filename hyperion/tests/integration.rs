@@ -2751,3 +2751,8 @@ fn signature_deduplication() {
 fn surjection_demo_example() {
     run_file("examples/surjection-demo.hyp");
 }
+
+#[test]
+fn adjoint_meta_ascent_example() {
+    run_file("examples/adjoint-meta-ascent.hyp");
+}

@@ -1,0 +1,83 @@
+;; CatLab Test 4.3: Cubical Type Theory
+;; =====================================
+;; Interval type with endpoints (i0, i1), meet, join.
+;; Path types, hcomp (homogeneous composition), coe (coercion).
+;; Tests: path_beta (path application to endpoints), coe_refl (coercion along refl is identity).
+
+[Category CubicalCat
+  [Object Interval]
+  [Object Type]
+  [Object Tm]
+  [Morphism meet :domain [Interval Interval] :codomain Interval]
+  [Morphism join :domain [Interval Interval] :codomain Interval]
+  [Morphism papp :domain [Tm Interval] :codomain Tm]
+  [Morphism hcomp :domain [Tm Tm] :codomain Tm]
+  [Morphism coe  :domain [Tm Tm Tm] :codomain Tm]
+  [PathType :refl refl :concat concat :inv inv :ap ap]
+]
+
+[Substrate CubicalSub
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality topological-homotopy
+]
+
+[Universe CubicalUniverse :category CubicalCat :substrate CubicalSub]
+
+[Theory CubicalTheory :in CubicalUniverse
+  ;; Constants
+  [const i0 Interval]
+  [const i1 Interval]
+  [const A Type]
+  [const a Tm]
+  [const b Tm]
+  [const p Tm]
+
+  ;; Interval endpoints are idempotent under meet/join
+  [@rule meet-i0-l [meet i0 ?i] ==> i0]
+  [@rule meet-i1-l [meet i1 ?i] ==> ?i]
+  [@rule join-i0-l [join i0 ?i] ==> ?i]
+  [@rule join-i1-l [join i1 ?i] ==> i1]
+
+  ;; De Morgan: meet and join are dual
+  [@rule meet-comm [meet ?i ?j] ==> [meet ?j ?i]]
+
+  ;; Path application at endpoints
+  ;; papp(refl(a), i) => a  (constant path applied anywhere is the point)
+  [@rule path-beta-refl [papp [refl ?a] ?i] ==> ?a]
+
+  ;; coe along a constant type family is the identity
+  ;; coe(refl(A), i0, a) => a
+  [@rule coe-refl [coe [refl ?A] ?i ?a] ==> ?a]
+
+  ;; hcomp with trivial system is identity
+  [@rule hcomp-trivial [hcomp [refl ?a] ?b] ==> ?b]
+]
+
+[Proofs CubicalChecks :in CubicalTheory
+  ;; path_beta: papp(refl(a), i0) => a
+  [assert-eq path-beta [papp [refl a] i0] a]
+
+  ;; coe_refl: coe(refl(A), i0, a) => a
+  [assert-eq coe-refl-test [coe [refl A] i0 a] a]
+
+  ;; Meet with i0 annihilates
+  [assert-eq meet-i0 [meet i0 i1] i0]
+
+  ;; Join with i1 annihilates
+  [assert-eq join-i1 [join i0 i1] i1]
+
+  ;; hcomp-trivial: hcomp(refl(a), b) => b
+  [assert-eq hcomp-triv [hcomp [refl a] b] b]
+
+  ;; Derived: coe + path interaction
+  ;; coe(refl(A), i0, papp(refl(a), i1)) => papp(refl(a), i1) => a
+  [assert-eq coe-path-chain [coe [refl A] i0 [papp [refl a] i1]] a]
+
+  ;; Path algebra (auto-injected): concat(refl(a), refl(a)) => refl(a)
+  [assert-eq path-unit [concat [refl a] [refl a]] [refl a]]
+
+  ;; Evaluate: meet(i1, join(i0, i1))
+  [eval interval-eval [meet i1 [join i0 i1]]]
+]

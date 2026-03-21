@@ -1,0 +1,94 @@
+;; CatLab Test 4.5: Cross-Substrate Transport
+;; ============================================
+;; Define an algebraic theory on two different substrates
+;; (equality-saturation vs rewrite-equivalence), connect via Functor,
+;; and verify equational preservation.
+;;
+;; Key insight: @law declarations are bidirectional in equality-saturation
+;; but are NOT compiled as forward rules in rewrite-equivalence. So the
+;; target theory uses @rule (directed) for forward computation.
+;; VerifyFunctor checks that the rule LHS/RHS pairs from the source
+;; are provable on the target — which requires the target to have matching rules.
+
+;; Shared category
+[Category AlgCat
+  [Object Sort]
+  [Morphism op :domain [Sort Sort] :codomain Sort]
+  [PathType :refl refl :concat concat :inv inv :ap ap]
+]
+
+;; ============================================================
+;; Source: equality-saturation substrate (bidirectional laws)
+;; ============================================================
+
+[Substrate EqSatSource
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality equality-saturation
+]
+
+[Universe AlgEqSat :category AlgCat :substrate EqSatSource]
+
+[Theory AlgTheoryEqSat :in AlgEqSat :no-laws
+  [const e Sort]
+  [const a Sort]
+  [const b Sort]
+
+  ;; Monoid axioms as bidirectional laws
+  [@law assoc [op [op ?x ?y] ?z] === [op ?x [op ?y ?z]]]
+  [@law left-id [op e ?x] === ?x]
+  [@law right-id [op ?x e] === ?x]
+]
+
+[Proofs EqSatProofs :in AlgTheoryEqSat
+  ;; E-graph discovers identities bidirectionally
+  [assert-eq left-identity [op e a] a]
+  [assert-eq right-identity [op a e] a]
+  [assert-eq assoc-test [op [op a b] a] [op a [op b a]]]
+  [assert-eq nested-id [op e [op e a]] a]
+]
+
+;; ============================================================
+;; Target: rewrite-equivalence substrate (directed rules)
+;; ============================================================
+
+[Substrate RewriteTarget
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Universe AlgRewrite :category AlgCat :substrate RewriteTarget]
+
+[Theory AlgTheoryRewrite :in AlgRewrite :no-laws
+  [const e Sort]
+  [const a Sort]
+  [const b Sort]
+
+  ;; Same axioms as directed rules (forward-only)
+  [@rule assoc [op [op ?x ?y] ?z] ==> [op ?x [op ?y ?z]]]
+  [@rule left-id [op e ?x] ==> ?x]
+  [@rule right-id [op ?x e] ==> ?x]
+]
+
+[Proofs RewriteProofs :in AlgTheoryRewrite
+  ;; Forward reduction works
+  [assert-eq left-identity [op e a] a]
+  [assert-eq right-identity [op a e] a]
+  [assert-eq assoc-test [op [op a b] a] [op a [op b a]]]
+  [assert-eq nested-id [op e [op e a]] a]
+
+  ;; Path algebra (auto-injected)
+  [assert-eq path-unit [concat [refl a] [refl a]] [refl a]]
+]
+
+;; ============================================================
+;; Functor: transport from equality-saturation to rewrite substrate
+;; ============================================================
+
+[Functor EqSatToRewrite :from EqSatSource :to RewriteTarget :verify]
+
+;; Verify: the equational theory (rule shapes) is preserved across substrates
+[VerifyFunctor EqSatToRewrite :source AlgTheoryEqSat :target AlgTheoryRewrite]

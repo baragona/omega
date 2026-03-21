@@ -1,0 +1,38 @@
+;; Test: J-Type auto-injection with dependent elimination
+[Category CwFWithJ
+  [Object Ctx]
+  [Object Ty]
+  [Object Tm]
+  [Morphism app :domain [Tm Tm] :codomain Tm]
+  [Exponential lam :object Tm]
+  [Evaluator app]
+  [PathType :refl refl :concat concat :inv inv :ap ap]
+  [JType :elim J :transport transport]
+]
+
+[Substrate StandardSub
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Universe CwFWorld :category CwFWithJ :substrate StandardSub]
+
+[Theory CwFTest :in CwFWorld
+  [const a Tm]
+  [const b Tm]
+  [const C Ty]
+  [const d Tm]
+  [const p Tm]
+  [const x Tm]
+]
+
+[Proofs JElimCheck :in CwFTest
+  ;; J-beta: J(C, d, refl(a)) = d
+  [assert-eq j-beta [J C d [refl a]] d]
+  ;; transport-refl: transport(refl(a), x) = x
+  [assert-eq transport-refl [transport [refl a] x] x]
+  ;; Compose: transport(refl(a), J(C, d, refl(b))) = d
+  [assert-eq composed [transport [refl a] [J C d [refl b]]] d]
+]

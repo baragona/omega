@@ -1,0 +1,88 @@
+;; CatLab Test 4.1: HoTT / CwF (Categories with Families)
+;; =====================================================
+;; Category with Ctx, Ty, Tm objects modelling a CwF-style type theory.
+;; PathType for identity types, Evaluator+Exponential for Pi types.
+;; Tests: J-beta (refl elimination), pi-beta (function application),
+;;        pi-eta (extensionality via path), and derived interactions.
+
+;; 1. Category: CwF with PathType + CCC structure
+[Category CwF
+  [Object Ctx]
+  [Object Ty]
+  [Object Tm]
+  [Morphism subst :domain [Tm Tm] :codomain Tm]
+  [Morphism app   :domain [Tm Tm] :codomain Tm]
+  [Exponential lam :object Tm]
+  [Evaluator app]
+  [PathType :refl refl :concat concat :inv inv :ap ap]
+]
+
+;; 2. Substrate: interaction graph with homotopy equality
+[Substrate HoTTGraph
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality topological-homotopy
+]
+
+;; 3. Universe
+[Universe HoTTUniverse :category CwF :substrate HoTTGraph]
+
+;; 4. Theory: CwF rules encoding J-beta, pi-beta, pi-eta
+[Theory CwFTheory :in HoTTUniverse
+  ;; Type/term constants
+  [const A Ty]
+  [const B Ty]
+  [const a Tm]
+  [const b Tm]
+  [const f Tm]
+  [const g Tm]
+
+  ;; J-beta: J eliminator on refl reduces to the base case
+  ;; J(C, refl(a), d) => d   (where d is the "at refl" case)
+  [@rule j-beta [subst [refl ?x] ?d] ==> ?d]
+
+  ;; Pi-beta: (lam x . body)(arg) => subst(arg, body)
+  ;; Modelled as: app(lam(x, body), arg) => subst(arg, body)
+  ;; (auto-injected by CCC law verification)
+
+  ;; Pi-eta as a path: lam(x, app(f, x)) = f  (for any function f)
+  ;; We model this as: subst applied to eta-expansion gives refl
+  [@rule pi-eta [lam __law_x [app ?f __law_x]] ==> ?f]
+
+  ;; Substitution into refl
+  [@rule subst-refl [subst ?s [refl ?x]] ==> [refl [subst ?s ?x]]]
+
+  ;; Composition of substitutions
+  [@rule subst-comp [subst ?s [subst ?t ?u]] ==> [subst [subst ?s ?t] ?u]]
+]
+
+;; 5. Proofs
+[Proofs CwFChecks :in CwFTheory
+  ;; J-beta: subst(refl(a), b) => b
+  [assert-eq j-beta-test [subst [refl a] b] b]
+
+  ;; J-beta + path interaction: concat(refl(a), refl(a)) => refl(a) (auto-injected left-unit)
+  [assert-eq path-left-unit [concat [refl a] [refl a]] [refl a]]
+
+  ;; subst-refl: subst(s, refl(x)) => refl(subst(s, x))
+  [assert-eq subst-refl-test [subst a [refl b]] [refl [subst a b]]]
+
+  ;; Pi-eta: lam(x, app(f, x)) => f
+  [assert-eq pi-eta-test [lam __law_x [app f __law_x]] f]
+
+  ;; Derived: J-beta + subst-refl chain
+  ;; subst(refl(a), refl(b)) => refl(b)  (j-beta fires)
+  [assert-eq j-subst-chain [subst [refl a] [refl b]] [refl b]]
+
+  ;; Path inverse of refl is refl (auto-injected)
+  [assert-eq inv-refl-test [inv [refl a]] [refl a]]
+
+  ;; ap distributes over concat (auto-injected ap-concat with Evaluator)
+  [assert-eq ap-concat-test
+    [ap f [concat [refl a] [refl b]]]
+    [concat [ap f [refl a]] [ap f [refl b]]]]
+
+  ;; Evaluate a complex term
+  [eval complex-eval [subst [refl a] [concat [refl b] [refl b]]]]
+]

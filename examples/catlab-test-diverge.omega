@@ -1,0 +1,21 @@
+;;; CatLab Test 3.5: Timeout/Divergence
+;;; Two circular rewrite rules: f(x) => g(x), g(x) => f(x)
+
+(theory Diverge
+  (sort S)
+  (constructor f : (-> S S))
+  (constructor g : (-> S S))
+  (constructor a : S)
+
+  (judgment (eq ?x ?y) :where x : S y : S)
+  (rule eq-refl :premises () :conclusion (eq ?x ?x))
+
+  ;; Circular rewrites — should cause normalization to loop/timeout
+  (rewrite f-to-g (f ?x) (g ?x))
+  (rewrite g-to-f (g ?x) (f ?x)))
+
+;; This should hit fuel limit or diverge:
+(proof test-diverge
+  :theory Diverge
+  :goal (eq (f a) a)
+  :derivation (eq-refl))

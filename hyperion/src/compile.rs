@@ -438,6 +438,48 @@ pub fn emit_system_sexp(
                     }
                 }
             }
+            CategoricalStructure::JType { j_elim, transport } => {
+                for op_name in [j_elim, transport] {
+                    let already = cat.morphisms.iter().any(|m| m.name == *op_name)
+                        || syntax_items.iter().any(|s| {
+                            s.as_list()
+                                .and_then(|l| l.get(1))
+                                .and_then(|s| s.as_atom())
+                                .map(|a| a == op_name)
+                                .unwrap_or(false)
+                        });
+                    if !already {
+                        syntax_items.push(Sexp::List(
+                            vec![
+                                Sexp::Atom("op".into(), sp),
+                                Sexp::Atom(op_name.clone(), sp),
+                            ],
+                            sp,
+                        ));
+                    }
+                }
+            }
+            CategoricalStructure::PartialElement { hcomp, coe } => {
+                for op_name in [hcomp, coe] {
+                    let already = cat.morphisms.iter().any(|m| m.name == *op_name)
+                        || syntax_items.iter().any(|s| {
+                            s.as_list()
+                                .and_then(|l| l.get(1))
+                                .and_then(|s| s.as_atom())
+                                .map(|a| a == op_name)
+                                .unwrap_or(false)
+                        });
+                    if !already {
+                        syntax_items.push(Sexp::List(
+                            vec![
+                                Sexp::Atom("op".into(), sp),
+                                Sexp::Atom(op_name.clone(), sp),
+                            ],
+                            sp,
+                        ));
+                    }
+                }
+            }
         }
     }
 

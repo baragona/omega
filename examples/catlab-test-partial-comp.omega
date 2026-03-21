@@ -1,0 +1,57 @@
+;;; CatLab Test: Partial Composition via Judgment Constraints
+;;; comp(f,g) requires tgt(f) = src(g) — enforced via explicit composability judgment
+
+(theory PartialCat
+  (sort Ob)
+  (sort Mor)
+
+  ;; Source and target
+  (constructor src : (-> Mor Ob))
+  (constructor tgt : (-> Mor Ob))
+
+  ;; Identity
+  (constructor id : (-> Ob Mor))
+
+  ;; Composition (total at term level)
+  (constructor comp : (-> Mor Mor Mor))
+
+  ;; Equality judgments
+  (judgment (meq ?f ?g) :where f : Mor g : Mor)
+  (rule meq-refl :premises () :conclusion (meq ?f ?f))
+
+  (judgment (oeq ?a ?b) :where a : Ob b : Ob)
+  (rule oeq-refl :premises () :conclusion (oeq ?a ?a))
+
+  ;; Composability judgment: tgt(f) = src(g)
+  (judgment (composable ?f ?g) :where f : Mor g : Mor)
+  (rule composable-check
+    :premises ((oeq (tgt ?f) (src ?g)))
+    :conclusion (composable ?f ?g))
+
+  ;; Well-formed composition: must prove composability first
+  (judgment (wf-comp ?f ?g ?h) :where f : Mor g : Mor h : Mor)
+  (rule wf-comp-intro
+    :premises ((composable ?f ?g) (meq (comp ?f ?g) ?h))
+    :conclusion (wf-comp ?f ?g ?h))
+
+  ;; Rewrite rules for identity laws
+  (rewrite left-id (comp (id ?a) ?f) ?f)
+  (rewrite right-id (comp ?f (id ?a)) ?f)
+  (rewrite assoc (comp (comp ?f ?g) ?h) (comp ?f (comp ?g ?h)))
+
+  ;; Source/target of identity
+  (rewrite src-id (src (id ?a)) ?a)
+  (rewrite tgt-id (tgt (id ?a)) ?a)
+)
+
+;; Test: id(a) and id(a) are composable (tgt(id(a)) = a = src(id(a)))
+(proof test-id-composable
+  :theory PartialCat
+  :goal (composable (id ?a) (id ?a))
+  :derivation (composable-check (oeq-refl)))
+
+;; Test: well-formed composition of identities
+(proof test-wf-comp-id
+  :theory PartialCat
+  :goal (wf-comp (id ?a) (id ?a) (id ?a))
+  :derivation (wf-comp-intro (composable-check (oeq-refl)) (meq-refl)))

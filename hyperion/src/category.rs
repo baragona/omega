@@ -31,12 +31,24 @@ pub enum CategoricalStructure {
     TensorProduct { name: String },
     /// Monoidal: unit object
     Unit { name: String },
+    /// Preorder: reflexive relation with auto-injected reflexivity rule
+    Preorder { relation: String },
     /// HoTT: path algebra (refl, concat, inv, ap)
     PathType {
         refl: String,
         concat: String,
         inv: String,
         ap: String,
+    },
+    /// Dependent elimination for identity types (J-eliminator)
+    JType {
+        j_elim: String,
+        transport: String,
+    },
+    /// Partial element support (cubical face constraints)
+    PartialElement {
+        hcomp: String,
+        coe: String,
     },
 }
 
@@ -85,11 +97,32 @@ impl CategoryDef {
             .any(|s| matches!(s, CategoricalStructure::TensorProduct { .. }))
     }
 
+    /// Check whether this category has any Preorder structure.
+    pub fn has_preorder(&self) -> bool {
+        self.structure
+            .iter()
+            .any(|s| matches!(s, CategoricalStructure::Preorder { .. }))
+    }
+
     /// Check whether this category has any PathType structure.
     pub fn has_path_type(&self) -> bool {
         self.structure
             .iter()
             .any(|s| matches!(s, CategoricalStructure::PathType { .. }))
+    }
+
+    /// Check whether this category has any JType structure.
+    pub fn has_j_type(&self) -> bool {
+        self.structure
+            .iter()
+            .any(|s| matches!(s, CategoricalStructure::JType { .. }))
+    }
+
+    /// Check whether this category has any PartialElement structure.
+    pub fn has_partial_element(&self) -> bool {
+        self.structure
+            .iter()
+            .any(|s| matches!(s, CategoricalStructure::PartialElement { .. }))
     }
 }
 
@@ -168,6 +201,18 @@ pub fn parse_category(items: &[Sexp]) -> Result<CategoryDef> {
                 let u_name = get_required_atom(inner, 1, "Unit", "name")?;
                 structure.push(CategoricalStructure::Unit { name: u_name });
             }
+            "Preorder" => {
+                let rel_name = get_required_atom(inner, 1, "Preorder", "relation name")?;
+                structure.push(CategoricalStructure::Preorder { relation: rel_name });
+            }
+            "SymmetricMonoidal" => {
+                // Compound syntax: [SymmetricMonoidal tensor_name unit_name]
+                // Decomposes into TensorProduct + Unit
+                let tp_name = get_required_atom(inner, 1, "SymmetricMonoidal", "tensor product name")?;
+                let u_name = get_required_atom(inner, 2, "SymmetricMonoidal", "unit name")?;
+                structure.push(CategoricalStructure::TensorProduct { name: tp_name });
+                structure.push(CategoricalStructure::Unit { name: u_name });
+            }
             "PathType" => {
                 let refl = get_keyword_atom(inner, ":refl", "PathType")?;
                 let concat = get_keyword_atom(inner, ":concat", "PathType")?;
@@ -179,6 +224,16 @@ pub fn parse_category(items: &[Sexp]) -> Result<CategoryDef> {
                     inv,
                     ap,
                 });
+            }
+            "JType" => {
+                let j_elim = get_keyword_atom(inner, ":elim", "JType")?;
+                let transport = get_keyword_atom(inner, ":transport", "JType")?;
+                structure.push(CategoricalStructure::JType { j_elim, transport });
+            }
+            "PartialElement" => {
+                let hcomp = get_keyword_atom(inner, ":hcomp", "PartialElement")?;
+                let coe = get_keyword_atom(inner, ":coe", "PartialElement")?;
+                structure.push(CategoricalStructure::PartialElement { hcomp, coe });
             }
             _ => {
                 return Err(HyperionError::ParseError {
