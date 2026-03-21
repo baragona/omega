@@ -1,0 +1,166 @@
+;; ============================================================
+;; BOSS LEVEL STRESS TESTS (11-14): Measurement, Compression,
+;; Substrate Physics Audit, Domain Hierarchy Violations.
+;;
+;; ALL 4 TESTS PRODUCE THE EXPECTED FAILURE/REJECTION.
+;; ============================================================
+
+;; Minimal Hyperion infrastructure
+[Category Minimal
+    [Object Type]
+    [Morphism id :domain [Type] :codomain Type]
+]
+
+[Substrate GenericSubstrate
+    @engine term-tree
+    @resource-mode optimal-sharing
+    @barrier transparent
+    @equality rewrite-equivalence
+]
+
+
+;; ============================================================
+;; TEST 11: "Faster Than Light" Measurement
+;;
+;; Semantic observables are derived from structure — you can't
+;; override them with explicit values. This prevents "wishful
+;; thinking" where someone declares a world has properties
+;; its epistemic profile says it doesn't.
+;;
+;; RESULT: ERROR — "semantic observable 'T11_DiscoveryPower'
+;;   derives its value from the epistemic profile — cannot
+;;   override with explicit :value"
+;; ============================================================
+
+[World T11_Executor
+    :category Minimal
+    :substrate GenericSubstrate
+    :epistemic [:discover none :verify sound :canonicalize none :compress codegen]
+]
+
+;; Empirical observable — requires :value when measured
+[Observable T11_PipelineLatency :kind search-cost]
+
+;; Attack: override a semantic observable with a contradictory value
+;; The world has discover=none, but we try to claim "complete"
+[Observable T11_DiscoveryPower :kind discovery-strength]
+[Measure :observable T11_DiscoveryPower :world T11_Executor :value complete]
+
+
+;; ============================================================
+;; TEST 12: "Round Trip" Paradox (Compression Invertibility)
+;;
+;; High -> Low (lossy compression) -> High (tunnel back).
+;; The lossy bottleneck destroys proof structure, so the
+;; composed round-trip can't be faithful and can't preserve
+;; PathStructure.
+;;
+;; RESULT: BOTH assertions correctly FAIL.
+;;   - faithful: lossy compression taints the composition
+;;   - preserves-transition: PathStructure broken by compression
+;; ============================================================
+
+[World T12_High
+    :category Minimal
+    :substrate GenericSubstrate
+    :epistemic [:discover complete :verify decidable :canonicalize unique-nf]
+    :admits [CoarseGrain]
+]
+
+[World T12_Low
+    :category Minimal
+    :substrate GenericSubstrate
+    :epistemic [:discover none :verify heuristic :canonicalize none :compress codegen]
+    :admits [Tunnel]
+]
+
+;; Down: lossy compression destroys proof structure
+[Transition T12_Compress
+    :kind CoarseGrain
+    :from T12_High :to T12_Low
+    :transport [:mode lossy :loss [PathStructure]]
+    :breaks [PathStructure]
+]
+
+;; Up: tunnel back (Low has heuristic verification, so tunnel is valid)
+[Transition T12_Miracle
+    :kind Tunnel
+    :from T12_Low :to T12_High
+    :transport [:mode witness]
+]
+
+;; Compose the round trip
+[Compose T12_RoundTrip :transitions [T12_Compress T12_Miracle]]
+
+;; Attack: assert the round-trip is faithful
+[Assert [faithful T12_RoundTrip]]
+
+;; Attack: assert path structure survives
+[Assert [preserves-transition T12_RoundTrip PathStructure]]
+
+
+;; ============================================================
+;; TEST 13: "Delusional Auditor" (Substrate Physics Audit)
+;;
+;; A VonNeumann engine with topological-hash equality cannot
+;; provide complete discovery or strong normalization. You can't
+;; declare a world is a genius if its brain is a toaster.
+;;
+;; RESULT: AUDIT FAIL (2 findings).
+;;   - [ERROR] discover: complete discovery requires
+;;     equality-saturation, but substrate uses TopologicalHash
+;;   - [ERROR] canonicalize: strong normalization requires a
+;;     term rewriting engine, but VonNeumann/TopologicalHash
+;;     has no reduction strategy
+;; ============================================================
+
+[Substrate T13_DumbSubstrate
+    @engine von-neumann
+    @resource-mode deep-copy
+    @barrier transparent
+    @equality topological-hash
+]
+
+[World T13_Delusional
+    :category Minimal
+    :substrate T13_DumbSubstrate
+    :epistemic [:discover complete :verify decidable :canonicalize unique-nf]
+]
+
+;; Audit catches the impossibility
+[CheckWorld T13_Delusional]
+
+
+;; ============================================================
+;; TEST 14: "Trojan Horse" Class (Domain Hierarchy Violation)
+;;
+;; A world on RewriteSubstrate can't do complete discovery
+;; even for a specific theorem class. The substrate's physical
+;; limits apply to ALL theorem classes — you can't cheat by
+;; labeling your theorem "MagicClass".
+;;
+;; RESULT: AUDIT FAIL (1 finding).
+;;   - [ERROR] class-epistemic(MagicClass): class override
+;;     declares complete discovery, but substrate uses
+;;     RewriteEquivalence — a theorem class cannot exceed
+;;     the substrate's physical search capability
+;; ============================================================
+
+[Substrate T14_RewriteSubstrate
+    @engine term-tree
+    @resource-mode optimal-sharing
+    @barrier transparent
+    @equality rewrite-equivalence
+]
+
+[World T14_StrictVerifier
+    :category Minimal
+    :substrate T14_RewriteSubstrate
+    :epistemic [:discover heuristic :verify decidable]
+    :class-epistemic [
+        [MagicClass :discover complete]
+    ]
+]
+
+;; Audit catches the class-level violation
+[CheckWorld T14_StrictVerifier]

@@ -519,6 +519,18 @@ impl MetacosmSession {
                 name: world_name.clone(),
             })?;
 
+        // Semantic observables cannot have explicit :value overrides
+        if obs.species == knowledge::KnowledgeSpecies::Semantic && explicit_value.is_some() {
+            return Err(MetacosmError::ParseError {
+                block: "Measure".into(),
+                detail: format!(
+                    "semantic observable '{}' derives its value from the epistemic profile — \
+                     cannot override with explicit :value",
+                    obs_name
+                ),
+            });
+        }
+
         // For empirical observables, require explicit :value
         if obs.species == knowledge::KnowledgeSpecies::Empirical {
             let val = explicit_value.ok_or_else(|| MetacosmError::ParseError {
