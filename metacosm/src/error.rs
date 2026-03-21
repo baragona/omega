@@ -20,6 +20,10 @@ pub enum MetacosmError {
     FamilyError { family: String, detail: String },
     /// Pipeline step failure
     PipelineError { pipeline: String, step: String, detail: String },
+    /// Transition composition error
+    CompositionError { detail: String },
+    /// Embedding property violation
+    EmbeddingViolation { embedding: String, property: String, detail: String },
     /// Hyperion pass-through
     HyperionError(hyperion::error::HyperionError),
 }
@@ -57,6 +61,16 @@ impl fmt::Display for MetacosmError {
             }
             MetacosmError::PipelineError { pipeline, step, detail } => {
                 write!(f, "pipeline '{}' failed at step '{}': {}", pipeline, step, detail)
+            }
+            MetacosmError::CompositionError { detail } => {
+                write!(f, "transition composition error: {}", detail)
+            }
+            MetacosmError::EmbeddingViolation { embedding, property, detail } => {
+                write!(
+                    f,
+                    "embedding '{}' violates '{}': {}",
+                    embedding, property, detail
+                )
             }
             MetacosmError::HyperionError(e) => write!(f, "{}", e),
         }

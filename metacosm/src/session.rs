@@ -3,8 +3,10 @@ use std::collections::HashMap;
 use apeiron::parser::Sexp;
 use serde::Serialize;
 
+use crate::embedding::{self, EmbeddingDef};
 use crate::epistemic::{self, Measurement, MeasureValue, Observable};
 use crate::error::{MetacosmError, Result};
+use crate::knowledge::{self, SemanticProperty};
 use crate::pipeline::{self, PipelineAction, PipelineDef};
 use crate::transition::{self, TransitionDef};
 use crate::world::{self, FamilyDef, WorldDef};
@@ -31,13 +33,15 @@ pub struct MetacosmSession {
     pub families: HashMap<String, FamilyDef>,
     pub pipelines: HashMap<String, PipelineDef>,
     pub measurements: Vec<Measurement>,
+    pub embeddings: HashMap<String, EmbeddingDef>,
+    pub semantic_properties: Vec<SemanticProperty>,
     pub output: Vec<String>,
     pub structured_output: Vec<ResultEntry>,
 }
 
 impl MetacosmSession {
     pub fn new() -> Self {
-        MetacosmSession {
+        let mut session = MetacosmSession {
             hyperion: hyperion::session::HyperionSession::new(),
             worlds: HashMap::new(),
             transitions: HashMap::new(),
@@ -45,9 +49,13 @@ impl MetacosmSession {
             families: HashMap::new(),
             pipelines: HashMap::new(),
             measurements: Vec::new(),
+            embeddings: HashMap::new(),
+            semantic_properties: Vec::new(),
             output: Vec::new(),
             structured_output: Vec::new(),
-        }
+        };
+        session.register_builtin_embeddings();
+        session
     }
 
     pub fn with_prelude() -> Result<Self> {
@@ -94,6 +102,8 @@ impl MetacosmSession {
             "Family" => self.process_family(items),
             "Pipeline" => self.process_pipeline(items),
             "Measure" => self.process_measure(items),
+            "Compose" => self.process_compose(items),
+            "Embedding" => self.process_embedding(items),
 
             // --- Hyperion pass-through (Layer 2: category + substrate) ---
             "Category" | "Substrate" | "Universe" | "Functor"
@@ -165,7 +175,14 @@ impl MetacosmSession {
         );
         self.output.push(msg.clone());
         self.record_result(&name, "valid", Some(msg));
-        self.worlds.insert(name, w);
+        self.worlds.insert(name.clone(), w);
+
+        // Derive epistemic properties from substrate/category structure
+        let derive_msgs = self.derive_epistemic_properties(&name);
+        for m in derive_msgs {
+            self.output.push(m);
+        }
+
         Ok(())
     }
 
@@ -372,6 +389,8 @@ impl MetacosmSession {
         let mut obs_name: Option<String> = None;
         let mut world_name: Option<String> = None;
         let mut target_name: Option<String> = None;
+        let mut class_name: Option<String> = None;
+        let mut explicit_value: Option<String> = None;
 
         let mut i = 1;
         while i < items.len() {
@@ -388,6 +407,14 @@ impl MetacosmSession {
                 ":target" => {
                     i += 1;
                     target_name = items.get(i).and_then(|s| s.as_atom()).map(|s| s.to_string());
+                }
+                ":class" => {
+                    i += 1;
+                    class_name = items.get(i).and_then(|s| s.as_atom()).map(|s| s.to_string());
+                }
+                ":value" => {
+                    i += 1;
+                    explicit_value = items.get(i).and_then(|s| s.as_atom()).map(|s| s.to_string());
                 }
                 _ => {
                     return Err(MetacosmError::ParseError {
@@ -419,38 +446,58 @@ impl MetacosmSession {
                 name: world_name.clone(),
             })?;
 
-        let value = match obs.kind {
-            epistemic::ObservableKind::DiscoveryStrength => {
-                MeasureValue::Grade(world.epistemic.discover.to_string())
-            }
-            epistemic::ObservableKind::VerificationStrength => {
-                MeasureValue::Grade(world.epistemic.verify.to_string())
-            }
-            epistemic::ObservableKind::CanonicalityStrength => {
-                MeasureValue::Grade(world.epistemic.canonicalize.to_string())
-            }
-            epistemic::ObservableKind::CompressionMode => {
-                MeasureValue::Grade(world.epistemic.compress.to_string())
-            }
-            epistemic::ObservableKind::EpistemicDistance => {
-                if let Some(ref target) = target_name {
-                    let target_world = self.worlds.get(target)
-                        .ok_or_else(|| MetacosmError::Undefined {
-                            kind: "World".into(),
-                            name: target.clone(),
-                        })?;
-                    let dist = world.epistemic.distance(&target_world.epistemic);
-                    MeasureValue::Distance(dist)
+        // For empirical observables, require explicit :value
+        if obs.species == knowledge::KnowledgeSpecies::Empirical {
+            let val = explicit_value.ok_or_else(|| MetacosmError::ParseError {
+                block: "Measure".into(),
+                detail: format!("empirical observable '{}' requires :value", obs_name),
+            })?;
+            let measurement = Measurement {
+                observable: obs_name.clone(),
+                world: world_name.clone(),
+                target_world: target_name.clone(),
+                value: MeasureValue::Grade(val.clone()),
+            };
+            let msg = format!("[MEASURE] {}({}) = {} (empirical)", obs_name, world_name, val);
+            self.output.push(msg.clone());
+            self.record_result(&format!("{}:{}", obs_name, world_name), "valid", Some(msg));
+            self.measurements.push(measurement);
+            return Ok(());
+        }
+
+        // Get effective epistemic profile (possibly class-specific)
+        let effective_ep = if let Some(ref cn) = class_name {
+            let class = crate::theorem_class::parse_theorem_class(cn)?;
+            world.epistemic.for_class(&class)
+        } else {
+            world.epistemic.clone()
+        };
+
+        let value = if let Some(v) = epistemic::measure_profile(&effective_ep, &obs.kind) {
+            v
+        } else if obs.kind == epistemic::ObservableKind::EpistemicDistance {
+            if let Some(ref target) = target_name {
+                let target_world = self.worlds.get(target)
+                    .ok_or_else(|| MetacosmError::Undefined {
+                        kind: "World".into(),
+                        name: target.clone(),
+                    })?;
+                let target_ep = if let Some(ref cn) = class_name {
+                    let class = crate::theorem_class::parse_theorem_class(cn)?;
+                    target_world.epistemic.for_class(&class)
                 } else {
-                    return Err(MetacosmError::ParseError {
-                        block: "Measure".into(),
-                        detail: "epistemic-distance requires :target".into(),
-                    });
-                }
+                    target_world.epistemic.clone()
+                };
+                let dist = effective_ep.distance(&target_ep);
+                MeasureValue::Distance(dist)
+            } else {
+                return Err(MetacosmError::ParseError {
+                    block: "Measure".into(),
+                    detail: "epistemic-distance requires :target".into(),
+                });
             }
-            epistemic::ObservableKind::Custom => {
-                MeasureValue::Boolean(true)
-            }
+        } else {
+            MeasureValue::Boolean(true)
         };
 
         let measurement = Measurement {
@@ -460,15 +507,268 @@ impl MetacosmSession {
             value: value.clone(),
         };
 
+        let class_suffix = class_name.as_ref().map(|c| format!(" [class={}]", c)).unwrap_or_default();
         let msg = if let Some(ref t) = target_name {
-            format!("[MEASURE] {}({} → {}) = {}", obs_name, world_name, t, value)
+            format!("[MEASURE] {}({} → {}) = {}{}", obs_name, world_name, t, value, class_suffix)
         } else {
-            format!("[MEASURE] {}({}) = {}", obs_name, world_name, value)
+            format!("[MEASURE] {}({}) = {}{}", obs_name, world_name, value, class_suffix)
         };
         self.output.push(msg.clone());
         self.record_result(&format!("{}:{}", obs_name, world_name), "valid", Some(msg));
         self.measurements.push(measurement);
         Ok(())
+    }
+
+    fn process_compose(&mut self, items: &[Sexp]) -> Result<()> {
+        let (name, transition_names) = transition::parse_compose(items)?;
+
+        if self.transitions.contains_key(&name) {
+            return Err(MetacosmError::DuplicateName {
+                kind: "Transition".into(),
+                name,
+            });
+        }
+
+        // Look up all transitions
+        for tn in &transition_names {
+            if !self.transitions.contains_key(tn) {
+                return Err(MetacosmError::Undefined {
+                    kind: "Transition".into(),
+                    name: tn.clone(),
+                });
+            }
+        }
+
+        // Compose pairwise left-to-right
+        let first = self.transitions[&transition_names[0]].clone();
+        let mut composed = first;
+        for tn in &transition_names[1..] {
+            let next = self.transitions[tn].clone();
+            composed = transition::compose_transitions(&composed, &next, &name)?;
+        }
+
+        // Compute the algebraic signature
+        let src_ep = &self.worlds.get(&composed.source)
+            .map(|w| w.epistemic.clone())
+            .unwrap_or_default();
+        let tgt_ep = &self.worlds.get(&composed.target)
+            .map(|w| w.epistemic.clone())
+            .unwrap_or_default();
+        let sig = transition::TransitionSignature::from_transition(&composed, src_ep, tgt_ep);
+
+        let msg = format!(
+            "[COMPOSE] {} = {} → {} (composed from [{}], signature={})",
+            name, composed.source, composed.target,
+            transition_names.join(" ; "),
+            sig,
+        );
+        self.output.push(msg.clone());
+        self.record_result(&name, "valid", Some(msg));
+        self.transitions.insert(name, composed);
+        Ok(())
+    }
+
+    fn process_embedding(&mut self, items: &[Sexp]) -> Result<()> {
+        let emb = embedding::parse_embedding(items)?;
+        let name = emb.name.clone();
+
+        if self.embeddings.contains_key(&name) {
+            return Err(MetacosmError::DuplicateName {
+                kind: "Embedding".into(),
+                name,
+            });
+        }
+
+        // Check properties
+        let mut warnings = Vec::new();
+        match (&emb.source, &emb.target) {
+            (embedding::EmbeddingEndpoint::Layer(src), embedding::EmbeddingEndpoint::Layer(tgt)) => {
+                let results = embedding::check_layer_embedding(src, tgt, &emb.properties);
+                for r in results {
+                    match r {
+                        Ok(msg) => {
+                            self.output.push(format!("[EMBEDDING] {} ✓ {}", name, msg));
+                        }
+                        Err(e) => {
+                            warnings.push(format!("{}", e));
+                        }
+                    }
+                }
+            }
+            (embedding::EmbeddingEndpoint::World(src_w), embedding::EmbeddingEndpoint::World(tgt_w)) => {
+                // World-to-world embedding: check dominance for conservative
+                if emb.properties.contains(&embedding::EmbeddingProperty::Conservative) {
+                    let src_ep = self.worlds.get(src_w)
+                        .ok_or_else(|| MetacosmError::Undefined {
+                            kind: "World".into(),
+                            name: src_w.clone(),
+                        })?
+                        .epistemic.clone();
+                    let tgt_ep = self.worlds.get(tgt_w)
+                        .ok_or_else(|| MetacosmError::Undefined {
+                            kind: "World".into(),
+                            name: tgt_w.clone(),
+                        })?
+                        .epistemic.clone();
+                    if tgt_ep.dominates(&src_ep) {
+                        self.output.push(format!(
+                            "[EMBEDDING] {} ✓ conservative: {} dominates {}",
+                            name, tgt_w, src_w
+                        ));
+                    } else {
+                        return Err(MetacosmError::EmbeddingViolation {
+                            embedding: name,
+                            property: "conservative".into(),
+                            detail: format!("{} does not epistemically dominate {}", tgt_w, src_w),
+                        });
+                    }
+                }
+            }
+            _ => {
+                self.output.push(format!("[EMBEDDING] {} registered (mixed endpoints)", name));
+            }
+        }
+
+        for w in &warnings {
+            self.output.push(format!("[EMBEDDING] Warning: {}", w));
+        }
+
+        let msg = format!(
+            "[EMBEDDING] {} registered ({} → {}, properties=[{}])",
+            name, emb.source, emb.target,
+            emb.properties.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(", "),
+        );
+        self.output.push(msg.clone());
+        self.record_result(&name, "valid", Some(msg));
+        self.embeddings.insert(name, emb);
+        Ok(())
+    }
+
+    fn register_builtin_embeddings(&mut self) {
+        use embedding::*;
+        let builtins = vec![
+            EmbeddingDef {
+                name: "OmegaInHyperion".into(),
+                source: EmbeddingEndpoint::Layer(LayerName::Omega),
+                target: EmbeddingEndpoint::Layer(LayerName::Hyperion),
+                properties: vec![
+                    EmbeddingProperty::Conservative,
+                    EmbeddingProperty::DefinableFragment,
+                    EmbeddingProperty::StrictExtension,
+                    EmbeddingProperty::NonPerturbing,
+                ],
+                checked: true,
+            },
+            EmbeddingDef {
+                name: "HyperionInMetacosm".into(),
+                source: EmbeddingEndpoint::Layer(LayerName::Hyperion),
+                target: EmbeddingEndpoint::Layer(LayerName::Metacosm),
+                properties: vec![
+                    EmbeddingProperty::Conservative,
+                    EmbeddingProperty::DefinableFragment,
+                    EmbeddingProperty::StrictExtension,
+                    EmbeddingProperty::NonPerturbing,
+                ],
+                checked: true,
+            },
+            EmbeddingDef {
+                name: "OmegaInMetacosm".into(),
+                source: EmbeddingEndpoint::Layer(LayerName::Omega),
+                target: EmbeddingEndpoint::Layer(LayerName::Metacosm),
+                properties: vec![
+                    EmbeddingProperty::Conservative,
+                    EmbeddingProperty::DefinableFragment,
+                    EmbeddingProperty::StrictExtension,
+                    EmbeddingProperty::NonPerturbing,
+                ],
+                checked: true,
+            },
+        ];
+        for emb in builtins {
+            self.embeddings.insert(emb.name.clone(), emb);
+        }
+    }
+
+    /// Derive epistemic properties from substrate/category structure.
+    /// Only fills in fields that are at their default values.
+    fn derive_epistemic_properties(&mut self, world_name: &str) -> Vec<String> {
+        use crate::knowledge::PropertyStatus;
+
+        let world = match self.worlds.get(world_name) {
+            Some(w) => w,
+            None => return vec![],
+        };
+
+        if !world.derive_epistemics {
+            return vec![];
+        }
+
+        let substrate_name = world.substrate.clone();
+        let defaults = crate::epistemic::EpistemicProfile::trivial();
+        let mut msgs = Vec::new();
+        let mut derived_props = Vec::new();
+
+        // Look up substrate properties from Hyperion
+        if let Some(sub) = self.hyperion.substrates.get(&substrate_name) {
+            let equality = format!("{:?}", sub.equality);
+            let engine = format!("{:?}", sub.engine);
+
+            let world = self.worlds.get_mut(world_name).unwrap();
+
+            // equality-saturation → confluence
+            if equality.contains("EqualitySaturation") && !world.epistemic.canonicalize.confluence {
+                if world.epistemic.canonicalize == defaults.canonicalize {
+                    world.epistemic.canonicalize.confluence = true;
+                    let rule = "equality-saturation → confluence";
+                    msgs.push(format!("[DERIVED] {}: confluence=true (from {})", world_name, rule));
+                    derived_props.push((rule.to_string(), PropertyStatus::Derived { rule: rule.to_string() }));
+                }
+            }
+
+            // interaction-graph engine → semi-decidable discovery
+            if engine.contains("InteractionGraph") && world.epistemic.discover == defaults.discover {
+                world.epistemic.discover = crate::epistemic::DiscoveryStrength::SemiDecidable;
+                let rule = "interaction-graph → semi-decidable discovery";
+                msgs.push(format!("[DERIVED] {}: discover=semi-decidable (from {})", world_name, rule));
+                derived_props.push((rule.to_string(), PropertyStatus::Derived { rule: rule.to_string() }));
+            }
+
+            // abstract-machine engine → codegen compression
+            if engine.contains("AbstractMachine") && world.epistemic.compress == defaults.compress {
+                world.epistemic.compress = crate::epistemic::CompressionProfile {
+                    mode: crate::epistemic::CompressionMode::Codegen,
+                    lossy: true,
+                    invertible: false,
+                };
+                let rule = "abstract-machine → codegen compression";
+                msgs.push(format!("[DERIVED] {}: compress=codegen (from {})", world_name, rule));
+                derived_props.push((rule.to_string(), PropertyStatus::Derived { rule: rule.to_string() }));
+            }
+
+            // term-tree + rewrite-equivalence → weak normalization
+            if engine.contains("TermTree")
+                && equality.contains("RewriteEquivalence")
+                && world.epistemic.canonicalize.normalization == defaults.canonicalize.normalization
+            {
+                world.epistemic.canonicalize.normalization = crate::epistemic::NormalizationStrength::Weak;
+                let rule = "term-tree+rewrite-equivalence → weak normalization";
+                msgs.push(format!("[DERIVED] {}: normalization=weak (from {})", world_name, rule));
+                derived_props.push((rule.to_string(), PropertyStatus::Derived { rule: rule.to_string() }));
+            }
+
+            world.derived_properties = derived_props;
+        }
+
+        // Record as semantic properties
+        for (rule, status) in &self.worlds.get(world_name).unwrap().derived_properties {
+            self.semantic_properties.push(SemanticProperty {
+                name: rule.clone(),
+                holder: world_name.to_string(),
+                status: status.clone(),
+            });
+        }
+
+        msgs
     }
 
     pub fn json_output(&self, had_errors: bool, elapsed_ms: f64) -> serde_json::Value {

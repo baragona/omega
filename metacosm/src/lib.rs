@@ -1,6 +1,9 @@
 pub mod error;
+pub mod knowledge;
+pub mod theorem_class;
 pub mod epistemic;
 pub mod transition;
 pub mod world;
 pub mod pipeline;
+pub mod embedding;
 pub mod session;

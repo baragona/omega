@@ -43,11 +43,13 @@
 ;; --- Layer 3: Metacosm worlds with typed epistemic profiles ---
 ;;
 ;; Each axis is now a grade in an explicit lattice:
-;;   discover:     none < heuristic < semi-decidable < complete-fragment < complete
-;;   verify:       none < heuristic < sound < sound-complete < decidable
-;;   canonicalize: none < weak-nf < normalizing < confluent < unique-nf
-;;   compress:     none | lossless | lossy | quotient | abstraction | codegen
+;;   discover:     none < heuristic < semi-decidable < complete-fragment < complete (single chain)
+;;   verify:       soundness x completeness x termination (product, not total order)
+;;   canonicalize: normalization x confluence x unique-normal-forms (product, not total order)
+;;   compress:     mode + lossy + invertible (tag + semantic properties)
 
+;; Explorer uses theorem-class sensitivity: excellent at equational reasoning,
+;; weak at resource-sensitive reasoning
 [World Explorer
     :category CartesianClosed
     :substrate EGraphSubstrate
@@ -57,17 +59,22 @@
         :canonicalize weak-nf
         :compress none
     ]
+    :class-epistemic [
+        [Equational :discover complete :verify decidable]
+        [ResourceSensitive :discover none :verify heuristic]
+    ]
     :admits [Split Tunnel]
 ]
 
+;; Certifier uses full decomposed syntax to show the product structure
 [World Certifier
     :category CartesianClosed
     :substrate RewriteSubstrate
     :epistemic [
         :discover heuristic
-        :verify decidable
-        :canonicalize unique-nf
-        :compress lossless
+        :verify [:soundness sound :completeness complete :termination decidable]
+        :canonicalize [:normalization strong :confluence yes :unique-normal-forms yes]
+        :compress [:mode lossless :lossy no :invertible yes]
     ]
     :admits [CoarseGrain]
 ]
@@ -114,8 +121,12 @@
 
 [Observable DiscoveryPower :kind discovery-strength]
 [Observable VerificationClarity :kind verification-strength]
+[Observable VerifySoundness :kind verification-soundness]
+[Observable VerifyTermination :kind verification-termination]
 [Observable CanonicalStrength :kind canonicality-strength]
+[Observable Confluence :kind canonicality-confluence]
 [Observable CompressCapability :kind compression-mode]
+[Observable CompressLossy :kind compression-lossy]
 [Observable EpistemicDistance :kind epistemic-distance]
 
 ;; --- Measurements: typed grades, not adjectives ---
@@ -134,9 +145,40 @@
 [Measure :observable CompressCapability :world Explorer]
 [Measure :observable CompressCapability :world Executor]
 
+;; Sub-axis measurements: drilling into the product structure
+[Measure :observable VerifySoundness :world Certifier]
+[Measure :observable VerifyTermination :world Certifier]
+[Measure :observable Confluence :world Certifier]
+[Measure :observable Confluence :world Explorer]
+[Measure :observable CompressLossy :world Executor]
+
 [Measure :observable EpistemicDistance :world Explorer :target Certifier]
 [Measure :observable EpistemicDistance :world Certifier :target Executor]
 [Measure :observable EpistemicDistance :world Explorer :target Executor]
+
+;; --- Theorem-class-sensitive measurements ---
+
+[Measure :observable DiscoveryPower :world Explorer :class Equational]
+[Measure :observable DiscoveryPower :world Explorer :class ResourceSensitive]
+
+;; --- Transition algebra: composition ---
+
+[Compose ExplorerToExecutor :transitions [DiscoverTunnel CertifyToExecute]]
+
+;; --- Empirical observables: operational, not meta-theoretic ---
+
+[Observable SearchTime :kind search-cost]
+[Measure :observable SearchTime :world Explorer :value 3200ms]
+
+;; --- Conservative embedding declarations ---
+
+;; Layer-to-layer: verify Omega is a conservative, definable fragment of Metacosm.
+;; The builtin embeddings are auto-registered; this user-declared one is checked.
+[Embedding DemoLayerCheck
+    :from Omega
+    :to Hyperion
+    :properties [conservative definable-fragment strict-extension]
+]
 
 ;; --- The pipeline ---
 

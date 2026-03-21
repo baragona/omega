@@ -94,18 +94,22 @@ fn world_with_full_epistemic_syntax() {
             :substrate ApeironStandard
             :epistemic [
                 :discover [:strength semi-decidable]
-                :verify [:capability yes :strength sound-complete]
-                :canonicalize [:strength confluent]
-                :compress [:strength codegen]
+                :verify [:soundness sound :completeness complete :termination decidable]
+                :canonicalize [:normalization none :confluence yes :unique-normal-forms no]
+                :compress [:mode codegen :lossy yes :invertible no]
             ]
         ]
     "#);
     assert!(errors.is_empty(), "errors: {:?}", errors);
     let w = &session.worlds["W"];
     assert_eq!(w.epistemic.discover, metacosm::epistemic::DiscoveryStrength::SemiDecidable);
-    assert_eq!(w.epistemic.verify, metacosm::epistemic::VerificationStrength::SoundComplete);
-    assert_eq!(w.epistemic.canonicalize, metacosm::epistemic::CanonicalityStrength::Confluent);
-    assert_eq!(w.epistemic.compress, metacosm::epistemic::CompressionMode::Codegen);
+    assert_eq!(w.epistemic.verify.soundness, metacosm::epistemic::Soundness::Sound);
+    assert_eq!(w.epistemic.verify.completeness, metacosm::epistemic::Completeness::Complete);
+    assert_eq!(w.epistemic.verify.termination, metacosm::epistemic::Termination::Decidable);
+    assert!(w.epistemic.canonicalize.confluence);
+    assert!(!w.epistemic.canonicalize.unique_normal_forms);
+    assert_eq!(w.epistemic.compress.mode, metacosm::epistemic::CompressionMode::Codegen);
+    assert!(w.epistemic.compress.lossy);
 }
 
 #[test]
@@ -327,11 +331,15 @@ fn cosmology_demo_file() {
     assert!(errors.is_empty(), "errors: {:?}", errors);
 
     assert_eq!(session.worlds.len(), 3);
-    assert_eq!(session.transitions.len(), 2);
-    assert_eq!(session.observables.len(), 5);
+    assert_eq!(session.transitions.len(), 3); // 2 declared + 1 composed
+    assert_eq!(session.observables.len(), 10);
     assert_eq!(session.families.len(), 1);
     assert_eq!(session.pipelines.len(), 1);
-    assert_eq!(session.measurements.len(), 13);
+    assert_eq!(session.measurements.len(), 21);
+    // Transition algebra: composed transition exists
+    assert!(session.transitions.contains_key("ExplorerToExecutor"));
+    // Embeddings exist (3 builtin + 1 declared)
+    assert_eq!(session.embeddings.len(), 4);
 
     // Hyperion layer also populated
     assert!(session.hyperion.categories.contains_key("CartesianClosed"));
@@ -364,15 +372,27 @@ fn epistemic_dominance_is_partial_order() {
     use metacosm::epistemic::*;
     let a = EpistemicProfile {
         discover: DiscoveryStrength::Complete,
-        verify: VerificationStrength::Heuristic,
-        canonicalize: CanonicalityStrength::None,
-        compress: CompressionMode::None,
+        verify: VerificationProfile {
+            soundness: Soundness::Heuristic,
+            completeness: Completeness::None,
+            termination: Termination::Unknown,
+        },
+        canonicalize: CanonicalityProfile::none(),
+        ..Default::default()
     };
     let b = EpistemicProfile {
         discover: DiscoveryStrength::None,
-        verify: VerificationStrength::Decidable,
-        canonicalize: CanonicalityStrength::UniqueNf,
-        compress: CompressionMode::None,
+        verify: VerificationProfile {
+            soundness: Soundness::Sound,
+            completeness: Completeness::Complete,
+            termination: Termination::Decidable,
+        },
+        canonicalize: CanonicalityProfile {
+            normalization: NormalizationStrength::Strong,
+            confluence: true,
+            unique_normal_forms: true,
+        },
+        ..Default::default()
     };
     // Neither dominates the other (a has better discovery, b has better verify+canonicalize)
     assert!(!a.dominates(&b));
@@ -382,19 +402,312 @@ fn epistemic_dominance_is_partial_order() {
 }
 
 #[test]
-fn strength_lattice_ordering() {
+fn sub_axis_lattice_ordering() {
     use metacosm::epistemic::*;
-    // Discovery lattice
+    // Discovery lattice (unchanged)
     assert!(DiscoveryStrength::None < DiscoveryStrength::Heuristic);
     assert!(DiscoveryStrength::Heuristic < DiscoveryStrength::SemiDecidable);
     assert!(DiscoveryStrength::SemiDecidable < DiscoveryStrength::CompleteFragment);
     assert!(DiscoveryStrength::CompleteFragment < DiscoveryStrength::Complete);
-    // Verification lattice
-    assert!(VerificationStrength::None < VerificationStrength::Heuristic);
-    assert!(VerificationStrength::Sound < VerificationStrength::SoundComplete);
-    assert!(VerificationStrength::SoundComplete < VerificationStrength::Decidable);
-    // Canonicality lattice
-    assert!(CanonicalityStrength::None < CanonicalityStrength::WeakNf);
-    assert!(CanonicalityStrength::Normalizing < CanonicalityStrength::Confluent);
-    assert!(CanonicalityStrength::Confluent < CanonicalityStrength::UniqueNf);
+    // Verification sub-axes
+    assert!(Soundness::None < Soundness::Heuristic);
+    assert!(Soundness::Heuristic < Soundness::Sound);
+    assert!(Completeness::None < Completeness::Partial);
+    assert!(Completeness::Partial < Completeness::Complete);
+    assert!(Termination::Unknown < Termination::SemiDecidable);
+    assert!(Termination::SemiDecidable < Termination::Decidable);
+    // Normalization sub-axis
+    assert!(NormalizationStrength::None < NormalizationStrength::Weak);
+    assert!(NormalizationStrength::Weak < NormalizationStrength::Strong);
+}
+
+// ========== Feature 1: Derived observables ==========
+
+#[test]
+fn derive_confluence_from_egraph_substrate() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [Category CCC
+            [Object Type]
+            [Morphism app :domain [Type Type] :codomain Type]
+        ]
+        [Substrate EGraphSub
+            @engine interaction-graph
+            @resource-mode optimal-sharing
+            @barrier transparent
+            @equality equality-saturation
+        ]
+        [World Explorer :category CCC :substrate EGraphSub]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+    let w = &session.worlds["Explorer"];
+    // Derived from equality-saturation
+    assert!(w.epistemic.canonicalize.confluence);
+    assert!(!w.derived_properties.is_empty());
+}
+
+#[test]
+fn derive_does_not_override_explicit() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [Category CCC
+            [Object Type]
+            [Morphism app :domain [Type Type] :codomain Type]
+        ]
+        [Substrate EGraphSub
+            @engine interaction-graph
+            @resource-mode optimal-sharing
+            @barrier transparent
+            @equality equality-saturation
+        ]
+        [World Explorer :category CCC :substrate EGraphSub
+            :epistemic [:discover complete]]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+    let w = &session.worlds["Explorer"];
+    // Explicit :discover complete is preserved, not overridden
+    assert_eq!(w.epistemic.discover, metacosm::epistemic::DiscoveryStrength::Complete);
+}
+
+#[test]
+fn derive_disabled_with_flag() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [Category CCC
+            [Object Type]
+            [Morphism app :domain [Type Type] :codomain Type]
+        ]
+        [Substrate EGraphSub
+            @engine interaction-graph
+            @resource-mode optimal-sharing
+            @barrier transparent
+            @equality equality-saturation
+        ]
+        [World Explorer :category CCC :substrate EGraphSub :derive no]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+    let w = &session.worlds["Explorer"];
+    // Derivation suppressed
+    assert!(w.derived_properties.is_empty());
+}
+
+// ========== Feature 2: Theorem-class sensitivity ==========
+
+#[test]
+fn class_override_discovery() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [World Explorer
+            :category CartesianClosed
+            :substrate ApeironStandard
+            :epistemic [:discover complete :verify sound]
+            :class-epistemic [
+                [Equational :discover complete :verify decidable]
+                [ResourceSensitive :discover none :verify heuristic]
+            ]
+        ]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+    let w = &session.worlds["Explorer"];
+
+    // Default profile
+    assert_eq!(w.epistemic.discover, metacosm::epistemic::DiscoveryStrength::Complete);
+
+    // Class-specific profiles
+    let eq_profile = w.epistemic.for_class(&metacosm::theorem_class::TheoremClass::Equational);
+    assert_eq!(eq_profile.discover, metacosm::epistemic::DiscoveryStrength::Complete);
+    assert_eq!(eq_profile.verify.soundness, metacosm::epistemic::Soundness::Sound);
+    assert_eq!(eq_profile.verify.completeness, metacosm::epistemic::Completeness::Complete);
+    assert_eq!(eq_profile.verify.termination, metacosm::epistemic::Termination::Decidable);
+
+    let rs_profile = w.epistemic.for_class(&metacosm::theorem_class::TheoremClass::ResourceSensitive);
+    assert_eq!(rs_profile.discover, metacosm::epistemic::DiscoveryStrength::None);
+    assert_eq!(rs_profile.verify.soundness, metacosm::epistemic::Soundness::Heuristic);
+}
+
+#[test]
+fn measure_with_class() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [World Explorer
+            :category CartesianClosed
+            :substrate ApeironStandard
+            :epistemic [:discover complete]
+            :class-epistemic [
+                [Equational :discover complete]
+                [ResourceSensitive :discover none]
+            ]
+        ]
+        [Observable DiscPower :kind discovery-strength]
+        [Measure :observable DiscPower :world Explorer :class ResourceSensitive]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+    assert_eq!(session.measurements.len(), 1);
+    // Should measure the class-specific profile
+    assert!(session.output.iter().any(|s| s.contains("none") && s.contains("ResourceSensitive")));
+}
+
+// ========== Feature 3: Transition algebra ==========
+
+#[test]
+fn compose_two_transitions() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [World A :category CartesianClosed :substrate ApeironStandard
+            :epistemic [:discover complete :verify sound]
+            :admits [Tunnel]]
+        [World B :category CartesianClosed :substrate ApeironStandard
+            :epistemic [:verify decidable]
+            :admits [CoarseGrain]]
+        [World C :category CartesianClosed :substrate ApeironStandard
+            :epistemic [:verify sound]]
+        [Transition AB :kind Tunnel :from A :to B
+            :preserves [Soundness Normalization]
+            :transport [:mode witness :loss [PathStructure]]]
+        [Transition BC :kind CoarseGrain :from B :to C
+            :preserves [Soundness]
+            :breaks [ResourceSensitivity]
+            :transport [:mode lossy :loss [ResourceSensitivity]]]
+        [Compose AC :transitions [AB BC]]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+    let ac = &session.transitions["AC"];
+    // Source and target
+    assert_eq!(ac.source, "A");
+    assert_eq!(ac.target, "C");
+    // Preserves = intersection: only Soundness (Normalization not in BC)
+    assert_eq!(ac.preserves.len(), 1);
+    assert!(ac.preserves.contains(&metacosm::transition::Invariant::Soundness));
+    // Breaks = union: ResourceSensitivity
+    assert!(ac.breaks.contains(&metacosm::transition::Invariant::ResourceSensitivity));
+    // Transport: witness + lossy = lossy
+    assert_eq!(ac.transport.mode, metacosm::transition::TransportMode::Lossy);
+    // Loss = union: PathStructure + ResourceSensitivity
+    assert_eq!(ac.transport.loss.len(), 2);
+}
+
+#[test]
+fn compose_undefined_middle() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [World A :category CartesianClosed :substrate ApeironStandard :admits [Tunnel]]
+        [World B :category CartesianClosed :substrate ApeironStandard]
+        [World C :category CartesianClosed :substrate ApeironStandard]
+        [Transition AB :kind Tunnel :from A :to B]
+        [Transition CD :kind Tunnel :from C :to B]
+        [Compose Bad :transitions [AB CD]]
+    "#);
+    assert_eq!(errors.len(), 1);
+    assert!(errors[0].contains("composition"));
+}
+
+// ========== Feature 4: Semantic vs empirical ==========
+
+#[test]
+fn observable_default_semantic() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [Observable DiscPower :kind discovery-strength]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+    let obs = &session.observables["DiscPower"];
+    assert_eq!(obs.species, metacosm::knowledge::KnowledgeSpecies::Semantic);
+}
+
+#[test]
+fn observable_explicit_empirical() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [Observable SearchTime :kind search-cost]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+    let obs = &session.observables["SearchTime"];
+    assert_eq!(obs.species, metacosm::knowledge::KnowledgeSpecies::Empirical);
+}
+
+#[test]
+fn empirical_measure_requires_value() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [World A :category CartesianClosed :substrate ApeironStandard]
+        [Observable SearchTime :kind search-cost]
+        [Measure :observable SearchTime :world A]
+    "#);
+    assert_eq!(errors.len(), 1);
+    assert!(errors[0].contains("empirical"));
+}
+
+#[test]
+fn empirical_measure_with_value() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [World A :category CartesianClosed :substrate ApeironStandard]
+        [Observable SearchTime :kind search-cost]
+        [Measure :observable SearchTime :world A :value 42ms]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+    assert_eq!(session.measurements.len(), 1);
+    assert!(session.output.iter().any(|s| s.contains("empirical") && s.contains("42ms")));
+}
+
+// ========== Feature 5: Conservative embedding ==========
+
+#[test]
+fn builtin_embeddings_exist() {
+    let session = MetacosmSession::new();
+    assert!(session.embeddings.contains_key("OmegaInHyperion"));
+    assert!(session.embeddings.contains_key("HyperionInMetacosm"));
+    assert!(session.embeddings.contains_key("OmegaInMetacosm"));
+}
+
+#[test]
+fn embedding_layer_check() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [Embedding TestEmbed
+            :from Omega
+            :to Metacosm
+            :properties [conservative definable-fragment strict-extension non-perturbing]
+        ]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+    assert!(session.embeddings.contains_key("TestEmbed"));
+    // Should have check messages in output
+    assert!(session.output.iter().any(|s| s.contains("[EMBEDDING]") && s.contains("conservative")));
+}
+
+#[test]
+fn embedding_world_conservative() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [World Weak :category CartesianClosed :substrate ApeironStandard
+            :epistemic [:discover heuristic :verify sound]]
+        [World Strong :category CartesianClosed :substrate ApeironStandard
+            :epistemic [:discover complete :verify decidable
+                :canonicalize [:normalization strong :confluence yes :unique-normal-forms yes]]]
+        [Embedding WeakInStrong
+            :from Weak
+            :to Strong
+            :properties [conservative]
+        ]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+}
+
+#[test]
+fn embedding_violation_detected() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [World Strong :category CartesianClosed :substrate ApeironStandard
+            :epistemic [:discover complete :verify decidable]]
+        [World Weak :category CartesianClosed :substrate ApeironStandard
+            :epistemic [:discover heuristic :verify sound]]
+        [Embedding Bad
+            :from Strong
+            :to Weak
+            :properties [conservative]
+        ]
+    "#);
+    assert_eq!(errors.len(), 1);
+    assert!(errors[0].contains("conservative") || errors[0].contains("dominate"));
 }

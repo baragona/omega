@@ -3,11 +3,11 @@ use apeiron::parser::Sexp;
 use crate::error::{MetacosmError, Result};
 
 // ============================================================================
-// Layer A: Strength grades — finite explicit lattices, not adjectives
+// Layer A: Primitive grades — the atoms of epistemic structure
 // ============================================================================
 
 /// Discovery strength: what class of search/derivation a world supports.
-/// none < heuristic < semi_decidable < complete_fragment < complete
+/// This axis is clean as a single chain: none < heuristic < semi-decidable < complete-fragment < complete
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DiscoveryStrength {
     None = 0,
@@ -52,99 +52,459 @@ fn parse_discovery_strength(s: &str) -> Result<DiscoveryStrength> {
     }
 }
 
-/// Verification strength: what kind of checking judgment a world supports.
-/// none < heuristic < sound < sound_complete < decidable
+// ============================================================================
+// Verification — decomposed into soundness x completeness x termination
+// ============================================================================
+
+/// Soundness: does the checker reject invalid things?
+/// none < heuristic < sound
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum VerificationStrength {
+pub enum Soundness {
     None = 0,
     Heuristic = 1,
     Sound = 2,
-    SoundComplete = 3,
-    Decidable = 4,
 }
 
-impl Default for VerificationStrength {
+impl Default for Soundness {
     fn default() -> Self {
-        VerificationStrength::Sound
+        Soundness::Sound
     }
 }
 
-impl std::fmt::Display for VerificationStrength {
+impl std::fmt::Display for Soundness {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            VerificationStrength::None => write!(f, "none"),
-            VerificationStrength::Heuristic => write!(f, "heuristic"),
-            VerificationStrength::Sound => write!(f, "sound"),
-            VerificationStrength::SoundComplete => write!(f, "sound-complete"),
-            VerificationStrength::Decidable => write!(f, "decidable"),
+            Soundness::None => write!(f, "none"),
+            Soundness::Heuristic => write!(f, "heuristic"),
+            Soundness::Sound => write!(f, "sound"),
         }
     }
 }
 
-fn parse_verification_strength(s: &str) -> Result<VerificationStrength> {
+fn parse_soundness(s: &str) -> Result<Soundness> {
     match s {
-        "none" => Ok(VerificationStrength::None),
-        "heuristic" => Ok(VerificationStrength::Heuristic),
-        "sound" => Ok(VerificationStrength::Sound),
-        "sound-complete" => Ok(VerificationStrength::SoundComplete),
-        "decidable" => Ok(VerificationStrength::Decidable),
+        "none" => Ok(Soundness::None),
+        "heuristic" => Ok(Soundness::Heuristic),
+        "sound" => Ok(Soundness::Sound),
         _ => Err(MetacosmError::ParseError {
-            block: "EpistemicProfile".into(),
-            detail: format!(
-                "unknown verification strength: '{}' (expected none/heuristic/sound/sound-complete/decidable)",
-                s
-            ),
+            block: "EpistemicProfile/verification".into(),
+            detail: format!("unknown soundness: '{}' (expected none/heuristic/sound)", s),
         }),
     }
 }
 
-/// Canonicality strength: normalization-theoretic properties.
-/// none < weak_nf < normalizing < confluent < unique_nf
+/// Completeness: does the checker accept all valid things?
+/// none < partial < complete
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum CanonicalityStrength {
+pub enum Completeness {
     None = 0,
-    WeakNf = 1,
-    Normalizing = 2,
-    Confluent = 3,
-    UniqueNf = 4,
+    Partial = 1,
+    Complete = 2,
 }
 
-impl Default for CanonicalityStrength {
+impl Default for Completeness {
     fn default() -> Self {
-        CanonicalityStrength::Normalizing
+        Completeness::None
     }
 }
 
-impl std::fmt::Display for CanonicalityStrength {
+impl std::fmt::Display for Completeness {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CanonicalityStrength::None => write!(f, "none"),
-            CanonicalityStrength::WeakNf => write!(f, "weak-nf"),
-            CanonicalityStrength::Normalizing => write!(f, "normalizing"),
-            CanonicalityStrength::Confluent => write!(f, "confluent"),
-            CanonicalityStrength::UniqueNf => write!(f, "unique-nf"),
+            Completeness::None => write!(f, "none"),
+            Completeness::Partial => write!(f, "partial"),
+            Completeness::Complete => write!(f, "complete"),
         }
     }
 }
 
-fn parse_canonicality_strength(s: &str) -> Result<CanonicalityStrength> {
+fn parse_completeness(s: &str) -> Result<Completeness> {
     match s {
-        "none" => Ok(CanonicalityStrength::None),
-        "weak-nf" => Ok(CanonicalityStrength::WeakNf),
-        "normalizing" => Ok(CanonicalityStrength::Normalizing),
-        "confluent" => Ok(CanonicalityStrength::Confluent),
-        "unique-nf" => Ok(CanonicalityStrength::UniqueNf),
+        "none" => Ok(Completeness::None),
+        "partial" => Ok(Completeness::Partial),
+        "complete" => Ok(Completeness::Complete),
+        _ => Err(MetacosmError::ParseError {
+            block: "EpistemicProfile/verification".into(),
+            detail: format!("unknown completeness: '{}' (expected none/partial/complete)", s),
+        }),
+    }
+}
+
+/// Termination: does the checker always halt?
+/// unknown < semi-decidable < decidable
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Termination {
+    Unknown = 0,
+    SemiDecidable = 1,
+    Decidable = 2,
+}
+
+impl Default for Termination {
+    fn default() -> Self {
+        Termination::Unknown
+    }
+}
+
+impl std::fmt::Display for Termination {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Termination::Unknown => write!(f, "unknown"),
+            Termination::SemiDecidable => write!(f, "semi-decidable"),
+            Termination::Decidable => write!(f, "decidable"),
+        }
+    }
+}
+
+fn parse_termination(s: &str) -> Result<Termination> {
+    match s {
+        "unknown" => Ok(Termination::Unknown),
+        "semi-decidable" => Ok(Termination::SemiDecidable),
+        "decidable" => Ok(Termination::Decidable),
+        _ => Err(MetacosmError::ParseError {
+            block: "EpistemicProfile/verification".into(),
+            detail: format!("unknown termination: '{}' (expected unknown/semi-decidable/decidable)", s),
+        }),
+    }
+}
+
+/// Verification profile: the product of soundness x completeness x termination.
+///
+/// NOT a single linear order. A sound-and-complete verifier that doesn't terminate
+/// is genuinely different from a decidable checker with no completeness guarantee.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct VerificationProfile {
+    pub soundness: Soundness,
+    pub completeness: Completeness,
+    pub termination: Termination,
+}
+
+impl Default for VerificationProfile {
+    fn default() -> Self {
+        VerificationProfile {
+            soundness: Soundness::default(),
+            completeness: Completeness::default(),
+            termination: Termination::default(),
+        }
+    }
+}
+
+impl VerificationProfile {
+    pub fn none() -> Self {
+        VerificationProfile {
+            soundness: Soundness::None,
+            completeness: Completeness::None,
+            termination: Termination::Unknown,
+        }
+    }
+
+    pub fn can_verify(&self) -> bool {
+        self.soundness > Soundness::None
+    }
+
+    pub fn dominates(&self, other: &Self) -> bool {
+        self.soundness >= other.soundness
+            && self.completeness >= other.completeness
+            && self.termination >= other.termination
+    }
+
+    pub fn distance(&self, other: &Self) -> u32 {
+        (self.soundness as i32 - other.soundness as i32).unsigned_abs()
+            + (self.completeness as i32 - other.completeness as i32).unsigned_abs()
+            + (self.termination as i32 - other.termination as i32).unsigned_abs()
+    }
+}
+
+impl std::fmt::Display for VerificationProfile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.soundness == Soundness::None {
+            return write!(f, "none");
+        }
+        let mut parts = vec![self.soundness.to_string()];
+        if self.completeness > Completeness::None {
+            parts.push(self.completeness.to_string());
+        }
+        if self.termination > Termination::Unknown {
+            parts.push(self.termination.to_string());
+        }
+        write!(f, "{}", parts.join("+"))
+    }
+}
+
+/// Parse short verification sugar into a profile.
+///
+/// Short syntax sugar (backward-compatible):
+///   none         → {none, none, unknown}
+///   heuristic    → {heuristic, none, unknown}
+///   sound        → {sound, none, unknown}
+///   sound-complete → {sound, complete, unknown}
+///   decidable    → {sound, complete, decidable}
+fn parse_verification_sugar(s: &str) -> Result<VerificationProfile> {
+    match s {
+        "none" => Ok(VerificationProfile::none()),
+        "heuristic" => Ok(VerificationProfile {
+            soundness: Soundness::Heuristic,
+            completeness: Completeness::None,
+            termination: Termination::Unknown,
+        }),
+        "sound" => Ok(VerificationProfile {
+            soundness: Soundness::Sound,
+            completeness: Completeness::None,
+            termination: Termination::Unknown,
+        }),
+        "sound-complete" => Ok(VerificationProfile {
+            soundness: Soundness::Sound,
+            completeness: Completeness::Complete,
+            termination: Termination::Unknown,
+        }),
+        "decidable" => Ok(VerificationProfile {
+            soundness: Soundness::Sound,
+            completeness: Completeness::Complete,
+            termination: Termination::Decidable,
+        }),
         _ => Err(MetacosmError::ParseError {
             block: "EpistemicProfile".into(),
             detail: format!(
-                "unknown canonicality strength: '{}' (expected none/weak-nf/normalizing/confluent/unique-nf)",
+                "unknown verification sugar: '{}' (expected none/heuristic/sound/sound-complete/decidable, or use full syntax [:soundness S :completeness C :termination T])",
                 s
             ),
         }),
     }
 }
 
-/// Compression mode: what kind of compression/compilation a world supports.
+/// Parse full verification sub-block: `[:soundness S :completeness C :termination T]`
+fn parse_verification_block(items: &[Sexp]) -> Result<VerificationProfile> {
+    let mut p = VerificationProfile::default();
+    let mut i = 0;
+    while i < items.len() {
+        let key = items[i].as_atom().unwrap_or("");
+        match key {
+            ":soundness" => {
+                i += 1;
+                if let Some(v) = items.get(i).and_then(|s| s.as_atom()) {
+                    p.soundness = parse_soundness(v)?;
+                }
+            }
+            ":completeness" => {
+                i += 1;
+                if let Some(v) = items.get(i).and_then(|s| s.as_atom()) {
+                    p.completeness = parse_completeness(v)?;
+                }
+            }
+            ":termination" => {
+                i += 1;
+                if let Some(v) = items.get(i).and_then(|s| s.as_atom()) {
+                    p.termination = parse_termination(v)?;
+                }
+            }
+            _ => {
+                return Err(MetacosmError::ParseError {
+                    block: "EpistemicProfile/verification".into(),
+                    detail: format!("unknown key: {} (expected :soundness/:completeness/:termination)", key),
+                });
+            }
+        }
+        i += 1;
+    }
+    Ok(p)
+}
+
+// ============================================================================
+// Canonicality — decomposed into normalization x confluence x unique-nf
+// ============================================================================
+
+/// Normalization strength: does the system reach normal forms?
+/// none < weak < strong
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum NormalizationStrength {
+    None = 0,
+    Weak = 1,
+    Strong = 2,
+}
+
+impl Default for NormalizationStrength {
+    fn default() -> Self {
+        NormalizationStrength::Weak
+    }
+}
+
+impl std::fmt::Display for NormalizationStrength {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NormalizationStrength::None => write!(f, "none"),
+            NormalizationStrength::Weak => write!(f, "weak"),
+            NormalizationStrength::Strong => write!(f, "strong"),
+        }
+    }
+}
+
+fn parse_normalization_strength(s: &str) -> Result<NormalizationStrength> {
+    match s {
+        "none" => Ok(NormalizationStrength::None),
+        "weak" => Ok(NormalizationStrength::Weak),
+        "strong" => Ok(NormalizationStrength::Strong),
+        _ => Err(MetacosmError::ParseError {
+            block: "EpistemicProfile/canonicality".into(),
+            detail: format!("unknown normalization: '{}' (expected none/weak/strong)", s),
+        }),
+    }
+}
+
+/// Canonicality profile: the product of normalization x confluence x unique-normal-forms.
+///
+/// NOT a total order. A system can be confluent without being normalizing,
+/// or normalizing without being confluent. unique-normal-forms typically
+/// requires both confluence and normalization.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CanonicalityProfile {
+    pub normalization: NormalizationStrength,
+    pub confluence: bool,
+    pub unique_normal_forms: bool,
+}
+
+impl Default for CanonicalityProfile {
+    fn default() -> Self {
+        CanonicalityProfile {
+            normalization: NormalizationStrength::default(),
+            confluence: false,
+            unique_normal_forms: false,
+        }
+    }
+}
+
+impl CanonicalityProfile {
+    pub fn none() -> Self {
+        CanonicalityProfile {
+            normalization: NormalizationStrength::None,
+            confluence: false,
+            unique_normal_forms: false,
+        }
+    }
+
+    pub fn dominates(&self, other: &Self) -> bool {
+        self.normalization >= other.normalization
+            && (self.confluence || !other.confluence)
+            && (self.unique_normal_forms || !other.unique_normal_forms)
+    }
+
+    pub fn distance(&self, other: &Self) -> u32 {
+        (self.normalization as i32 - other.normalization as i32).unsigned_abs()
+            + if self.confluence != other.confluence { 1 } else { 0 }
+            + if self.unique_normal_forms != other.unique_normal_forms { 1 } else { 0 }
+    }
+}
+
+impl std::fmt::Display for CanonicalityProfile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.normalization == NormalizationStrength::None && !self.confluence && !self.unique_normal_forms {
+            return write!(f, "none");
+        }
+        let mut parts = Vec::new();
+        if self.normalization > NormalizationStrength::None {
+            parts.push(format!("norm={}", self.normalization));
+        }
+        if self.confluence {
+            parts.push("confluent".to_string());
+        }
+        if self.unique_normal_forms {
+            parts.push("unique-nf".to_string());
+        }
+        write!(f, "{}", parts.join("+"))
+    }
+}
+
+/// Parse short canonicality sugar.
+///
+///   none       → {none, false, false}
+///   weak-nf    → {weak, false, false}
+///   normalizing → {strong, false, false}
+///   confluent  → {none, true, false}
+///   unique-nf  → {strong, true, true}
+fn parse_canonicality_sugar(s: &str) -> Result<CanonicalityProfile> {
+    match s {
+        "none" => Ok(CanonicalityProfile::none()),
+        "weak-nf" => Ok(CanonicalityProfile {
+            normalization: NormalizationStrength::Weak,
+            confluence: false,
+            unique_normal_forms: false,
+        }),
+        "normalizing" => Ok(CanonicalityProfile {
+            normalization: NormalizationStrength::Strong,
+            confluence: false,
+            unique_normal_forms: false,
+        }),
+        "confluent" => Ok(CanonicalityProfile {
+            normalization: NormalizationStrength::None,
+            confluence: true,
+            unique_normal_forms: false,
+        }),
+        "unique-nf" => Ok(CanonicalityProfile {
+            normalization: NormalizationStrength::Strong,
+            confluence: true,
+            unique_normal_forms: true,
+        }),
+        _ => Err(MetacosmError::ParseError {
+            block: "EpistemicProfile".into(),
+            detail: format!(
+                "unknown canonicality sugar: '{}' (expected none/weak-nf/normalizing/confluent/unique-nf, or use full syntax [:normalization N :confluence B :unique-normal-forms B])",
+                s
+            ),
+        }),
+    }
+}
+
+fn parse_bool(s: &str) -> Result<bool> {
+    match s {
+        "yes" | "true" => Ok(true),
+        "no" | "false" => Ok(false),
+        _ => Err(MetacosmError::ParseError {
+            block: "EpistemicProfile".into(),
+            detail: format!("expected yes/no or true/false, got: '{}'", s),
+        }),
+    }
+}
+
+/// Parse full canonicality sub-block: `[:normalization N :confluence B :unique-normal-forms B]`
+fn parse_canonicality_block(items: &[Sexp]) -> Result<CanonicalityProfile> {
+    let mut p = CanonicalityProfile::default();
+    let mut i = 0;
+    while i < items.len() {
+        let key = items[i].as_atom().unwrap_or("");
+        match key {
+            ":normalization" => {
+                i += 1;
+                if let Some(v) = items.get(i).and_then(|s| s.as_atom()) {
+                    p.normalization = parse_normalization_strength(v)?;
+                }
+            }
+            ":confluence" => {
+                i += 1;
+                if let Some(v) = items.get(i).and_then(|s| s.as_atom()) {
+                    p.confluence = parse_bool(v)?;
+                }
+            }
+            ":unique-normal-forms" => {
+                i += 1;
+                if let Some(v) = items.get(i).and_then(|s| s.as_atom()) {
+                    p.unique_normal_forms = parse_bool(v)?;
+                }
+            }
+            _ => {
+                return Err(MetacosmError::ParseError {
+                    block: "EpistemicProfile/canonicality".into(),
+                    detail: format!("unknown key: {} (expected :normalization/:confluence/:unique-normal-forms)", key),
+                });
+            }
+        }
+        i += 1;
+    }
+    Ok(p)
+}
+
+// ============================================================================
+// Compression — mode + semantic properties (lossy, invertible)
+// ============================================================================
+
+/// Compression mode: the kind of compression/compilation.
 /// Not ordinal — these are qualitatively different morphism semantics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CompressionMode {
@@ -193,36 +553,170 @@ fn parse_compression_mode(s: &str) -> Result<CompressionMode> {
     }
 }
 
+/// Compression profile: mode + semantic properties.
+///
+/// The mode is a tag (non-ordinal). The properties give compositional
+/// structure: whether the compression is lossy, whether it is invertible.
+/// More properties (preserves_proofs, preserves_executability, target_operational)
+/// can be added later without breaking syntax.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CompressionProfile {
+    pub mode: CompressionMode,
+    pub lossy: bool,
+    pub invertible: bool,
+}
+
+impl Default for CompressionProfile {
+    fn default() -> Self {
+        CompressionProfile {
+            mode: CompressionMode::None,
+            lossy: false,
+            invertible: false,
+        }
+    }
+}
+
+impl CompressionProfile {
+    pub fn distance(&self, other: &Self) -> u32 {
+        (if self.mode != other.mode { 1 } else { 0 })
+            + (if self.lossy != other.lossy { 1 } else { 0 })
+            + (if self.invertible != other.invertible { 1 } else { 0 })
+    }
+}
+
+impl std::fmt::Display for CompressionProfile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.mode == CompressionMode::None {
+            return write!(f, "none");
+        }
+        let mut props = Vec::new();
+        if self.lossy {
+            props.push("lossy");
+        }
+        if self.invertible {
+            props.push("invertible");
+        }
+        if props.is_empty() {
+            write!(f, "{}", self.mode)
+        } else {
+            write!(f, "{}({})", self.mode, props.join(","))
+        }
+    }
+}
+
+/// Parse short compression sugar.
+///
+///   none        → {None, false, false}
+///   lossless    → {Lossless, false, true}
+///   lossy       → {Lossy, true, false}
+///   quotient    → {Quotient, true, false}
+///   abstraction → {Abstraction, true, false}
+///   codegen     → {Codegen, true, false}
+fn parse_compression_sugar(s: &str) -> Result<CompressionProfile> {
+    let mode = parse_compression_mode(s)?;
+    let (lossy, invertible) = match mode {
+        CompressionMode::None => (false, false),
+        CompressionMode::Lossless => (false, true),
+        CompressionMode::Lossy => (true, false),
+        CompressionMode::Quotient => (true, false),
+        CompressionMode::Abstraction => (true, false),
+        CompressionMode::Codegen => (true, false),
+    };
+    Ok(CompressionProfile { mode, lossy, invertible })
+}
+
+/// Parse full compression sub-block: `[:mode M :lossy B :invertible B]`
+fn parse_compression_block(items: &[Sexp]) -> Result<CompressionProfile> {
+    let mut p = CompressionProfile::default();
+    let mut i = 0;
+    while i < items.len() {
+        let key = items[i].as_atom().unwrap_or("");
+        match key {
+            ":mode" => {
+                i += 1;
+                if let Some(v) = items.get(i).and_then(|s| s.as_atom()) {
+                    p.mode = parse_compression_mode(v)?;
+                }
+            }
+            ":lossy" => {
+                i += 1;
+                if let Some(v) = items.get(i).and_then(|s| s.as_atom()) {
+                    p.lossy = parse_bool(v)?;
+                }
+            }
+            ":invertible" => {
+                i += 1;
+                if let Some(v) = items.get(i).and_then(|s| s.as_atom()) {
+                    p.invertible = parse_bool(v)?;
+                }
+            }
+            _ => {
+                return Err(MetacosmError::ParseError {
+                    block: "EpistemicProfile/compression".into(),
+                    detail: format!("unknown key: {} (expected :mode/:lossy/:invertible)", key),
+                });
+            }
+        }
+        i += 1;
+    }
+    Ok(p)
+}
+
 // ============================================================================
 // Layer B: Epistemic profile — intrinsic, unary properties of a world
 // ============================================================================
 
+/// A partial override of an epistemic profile for a specific theorem class.
+/// Only fields that are `Some` override the default.
+#[derive(Debug, Clone, Default)]
+pub struct EpistemicOverride {
+    pub discover: Option<DiscoveryStrength>,
+    pub verify: Option<VerificationProfile>,
+    pub canonicalize: Option<CanonicalityProfile>,
+    pub compress: Option<CompressionProfile>,
+}
+
 /// The epistemic signature of a world.
 ///
-/// Each axis separates capability (can it do this at all?) from strength
-/// (with what formal guarantees?). Transportability is NOT here — it is
-/// relational and belongs on transitions.
+/// Four axes, each now a typed product rather than a single scalar:
+///   discover:      what class of search the world supports (single chain — clean)
+///   verify:        soundness x completeness x termination (product — these are independent)
+///   canonicalize:  normalization x confluence x unique-nf (product — not a total order)
+///   compress:      mode + lossy + invertible (tag + properties — compositional)
 ///
-/// Four axes:
-///   discover:     what class of search the world supports
-///   verify:       what kind of checking judgment it supports
-///   canonicalize:  normalization-theoretic properties of the substrate
-///   compress:     what kind of compression/compilation is available
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Transportability is NOT here — it is relational and belongs on transitions.
+///
+/// The `class_overrides` map allows theorem-class-sensitive epistemic claims.
+/// A world might be excellent at equational discovery but weak at resource-sensitive reasoning.
+#[derive(Debug, Clone)]
 pub struct EpistemicProfile {
     pub discover: DiscoveryStrength,
-    pub verify: VerificationStrength,
-    pub canonicalize: CanonicalityStrength,
-    pub compress: CompressionMode,
+    pub verify: VerificationProfile,
+    pub canonicalize: CanonicalityProfile,
+    pub compress: CompressionProfile,
+    /// Per-theorem-class overrides. If a class is absent, the default profile applies.
+    pub class_overrides: std::collections::HashMap<crate::theorem_class::TheoremClass, EpistemicOverride>,
 }
+
+impl PartialEq for EpistemicProfile {
+    fn eq(&self, other: &Self) -> bool {
+        self.discover == other.discover
+            && self.verify == other.verify
+            && self.canonicalize == other.canonicalize
+            && self.compress == other.compress
+    }
+}
+
+impl Eq for EpistemicProfile {}
 
 impl Default for EpistemicProfile {
     fn default() -> Self {
         EpistemicProfile {
             discover: DiscoveryStrength::default(),
-            verify: VerificationStrength::default(),
-            canonicalize: CanonicalityStrength::default(),
-            compress: CompressionMode::default(),
+            verify: VerificationProfile::default(),
+            canonicalize: CanonicalityProfile::default(),
+            compress: CompressionProfile::default(),
+            class_overrides: std::collections::HashMap::new(),
         }
     }
 }
@@ -238,35 +732,60 @@ impl EpistemicProfile {
     }
 
     pub fn can_verify(&self) -> bool {
-        self.verify > VerificationStrength::None
+        self.verify.can_verify()
     }
 
-    /// Epistemic distance on the ordinal axes (discover, verify, canonicalize).
-    /// Compression is non-ordinal so contributes 0 if equal, 1 if different.
+    /// Get the effective profile for a specific theorem class.
+    /// Merges class-specific overrides onto the default profile.
+    pub fn for_class(&self, class: &crate::theorem_class::TheoremClass) -> EpistemicProfile {
+        if let Some(ovr) = self.class_overrides.get(class) {
+            EpistemicProfile {
+                discover: ovr.discover.unwrap_or(self.discover),
+                verify: ovr.verify.clone().unwrap_or_else(|| self.verify.clone()),
+                canonicalize: ovr.canonicalize.clone().unwrap_or_else(|| self.canonicalize.clone()),
+                compress: ovr.compress.clone().unwrap_or_else(|| self.compress.clone()),
+                class_overrides: std::collections::HashMap::new(),
+            }
+        } else {
+            self.clone()
+        }
+    }
+
+    /// Provisional epistemic distance. Sum of per-sub-axis differences.
+    ///
+    /// This is a debugging/demo metric, not yet a deep semantic notion.
+    /// A proper treatment would define separate capability, guarantee,
+    /// transport-loss, and operational distances.
     pub fn distance(&self, other: &EpistemicProfile) -> u32 {
         let d_disc = (self.discover as i32 - other.discover as i32).unsigned_abs();
-        let d_ver = (self.verify as i32 - other.verify as i32).unsigned_abs();
-        let d_can = (self.canonicalize as i32 - other.canonicalize as i32).unsigned_abs();
-        let d_comp = if self.compress == other.compress { 0 } else { 1 };
-        d_disc + d_ver + d_can + d_comp
+        d_disc + self.verify.distance(&other.verify)
+            + self.canonicalize.distance(&other.canonicalize)
+            + self.compress.distance(&other.compress)
     }
 
-    /// Does this profile dominate another on ordinal axes?
-    /// Compression is non-ordinal — not compared.
+    /// Does this profile dominate another on all ordinal sub-axes?
+    /// Compression mode is non-ordinal — only lossy/invertible compared.
     pub fn dominates(&self, other: &EpistemicProfile) -> bool {
         self.discover >= other.discover
-            && self.verify >= other.verify
-            && self.canonicalize >= other.canonicalize
+            && self.verify.dominates(&other.verify)
+            && self.canonicalize.dominates(&other.canonicalize)
     }
 }
 
 /// Parse an epistemic profile from S-expression items.
 ///
-/// Two syntax forms per axis:
-///   Short: `:discover heuristic`           (strength directly, implies capability)
-///   Full:  `:discover [:strength heuristic]` (explicit sub-block)
+/// Syntax per axis:
+///   Short: `:verify sound`                  (sugar → product defaults)
+///   Full:  `:verify [:soundness sound :completeness complete :termination decidable]`
 ///
-/// Axes: :discover, :verify, :canonicalize, :compress
+///   Short: `:canonicalize confluent`         (sugar → product defaults)
+///   Full:  `:canonicalize [:normalization strong :confluence yes :unique-normal-forms yes]`
+///
+///   Short: `:compress codegen`              (sugar → mode + default properties)
+///   Full:  `:compress [:mode codegen :lossy yes :invertible no]`
+///
+///   Short: `:discover complete`             (single chain, no decomposition needed)
+///   Full:  `:discover [:strength complete]`
 pub fn parse_epistemic_profile(items: &[Sexp]) -> Result<EpistemicProfile> {
     let mut profile = EpistemicProfile::default();
 
@@ -280,9 +799,8 @@ pub fn parse_epistemic_profile(items: &[Sexp]) -> Result<EpistemicProfile> {
                     if let Some(v) = item.as_atom() {
                         profile.discover = parse_discovery_strength(v)?;
                     } else if let Some(inner) = item.as_list() {
-                        profile.discover = parse_axis_block(inner, "discover",
-                            |s| parse_discovery_strength(s).map(|v| Box::new(v) as Box<dyn std::any::Any>)
-                        )?.downcast::<DiscoveryStrength>().map(|b| *b).unwrap_or_default();
+                        // Full: [:strength S]
+                        profile.discover = parse_discovery_block(inner)?;
                     }
                 }
             }
@@ -290,11 +808,9 @@ pub fn parse_epistemic_profile(items: &[Sexp]) -> Result<EpistemicProfile> {
                 i += 1;
                 if let Some(item) = items.get(i) {
                     if let Some(v) = item.as_atom() {
-                        profile.verify = parse_verification_strength(v)?;
+                        profile.verify = parse_verification_sugar(v)?;
                     } else if let Some(inner) = item.as_list() {
-                        profile.verify = parse_axis_block(inner, "verify",
-                            |s| parse_verification_strength(s).map(|v| Box::new(v) as Box<dyn std::any::Any>)
-                        )?.downcast::<VerificationStrength>().map(|b| *b).unwrap_or_default();
+                        profile.verify = parse_verification_block(inner)?;
                     }
                 }
             }
@@ -302,11 +818,9 @@ pub fn parse_epistemic_profile(items: &[Sexp]) -> Result<EpistemicProfile> {
                 i += 1;
                 if let Some(item) = items.get(i) {
                     if let Some(v) = item.as_atom() {
-                        profile.canonicalize = parse_canonicality_strength(v)?;
+                        profile.canonicalize = parse_canonicality_sugar(v)?;
                     } else if let Some(inner) = item.as_list() {
-                        profile.canonicalize = parse_axis_block(inner, "canonicalize",
-                            |s| parse_canonicality_strength(s).map(|v| Box::new(v) as Box<dyn std::any::Any>)
-                        )?.downcast::<CanonicalityStrength>().map(|b| *b).unwrap_or_default();
+                        profile.canonicalize = parse_canonicality_block(inner)?;
                     }
                 }
             }
@@ -314,11 +828,9 @@ pub fn parse_epistemic_profile(items: &[Sexp]) -> Result<EpistemicProfile> {
                 i += 1;
                 if let Some(item) = items.get(i) {
                     if let Some(v) = item.as_atom() {
-                        profile.compress = parse_compression_mode(v)?;
+                        profile.compress = parse_compression_sugar(v)?;
                     } else if let Some(inner) = item.as_list() {
-                        profile.compress = parse_axis_block(inner, "compress",
-                            |s| parse_compression_mode(s).map(|v| Box::new(v) as Box<dyn std::any::Any>)
-                        )?.downcast::<CompressionMode>().map(|b| *b).unwrap_or_default();
+                        profile.compress = parse_compression_block(inner)?;
                     }
                 }
             }
@@ -335,38 +847,31 @@ pub fn parse_epistemic_profile(items: &[Sexp]) -> Result<EpistemicProfile> {
     Ok(profile)
 }
 
-/// Parse `[:strength S]` sub-block for an axis.
-fn parse_axis_block<F>(items: &[Sexp], axis_name: &str, parse_strength: F) -> Result<Box<dyn std::any::Any>>
-where
-    F: Fn(&str) -> Result<Box<dyn std::any::Any>>,
-{
+/// Parse `[:strength S]` for the discovery axis (still a single chain).
+fn parse_discovery_block(items: &[Sexp]) -> Result<DiscoveryStrength> {
     let mut i = 0;
-    let mut result: Option<Box<dyn std::any::Any>> = None;
+    let mut result = None;
     while i < items.len() {
         let key = items[i].as_atom().unwrap_or("");
         match key {
             ":strength" => {
                 i += 1;
                 if let Some(v) = items.get(i).and_then(|s| s.as_atom()) {
-                    result = Some(parse_strength(v)?);
+                    result = Some(parse_discovery_strength(v)?);
                 }
-            }
-            ":capability" => {
-                // Accepted but redundant — strength != none implies capability
-                i += 1;
             }
             _ => {
                 return Err(MetacosmError::ParseError {
-                    block: "EpistemicProfile".into(),
-                    detail: format!("unknown key in {} block: {}", axis_name, key),
+                    block: "EpistemicProfile/discovery".into(),
+                    detail: format!("unknown key: {} (expected :strength)", key),
                 });
             }
         }
         i += 1;
     }
     result.ok_or_else(|| MetacosmError::ParseError {
-        block: "EpistemicProfile".into(),
-        detail: format!("{} block missing :strength", axis_name),
+        block: "EpistemicProfile/discovery".into(),
+        detail: "block missing :strength".into(),
     })
 }
 
@@ -379,21 +884,45 @@ where
 pub struct Observable {
     pub name: String,
     pub kind: ObservableKind,
+    /// Whether this is a semantic (meta-theoretic) or empirical (operational) observable.
+    pub species: crate::knowledge::KnowledgeSpecies,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ObservableKind {
-    /// Discovery strength of a world
+    // --- Single-axis observables ---
     DiscoveryStrength,
-    /// Verification strength of a world
-    VerificationStrength,
-    /// Canonicality strength of a world
-    CanonicalityStrength,
-    /// Compression mode of a world
+
+    // --- Verification sub-axes ---
+    VerificationSoundness,
+    VerificationCompleteness,
+    VerificationTermination,
+    /// Summary: the full verification profile
+    VerificationProfile,
+
+    // --- Canonicality sub-axes ---
+    CanonicalityNormalization,
+    CanonicalityConfluence,
+    CanonicalityUniqueNf,
+    /// Summary: the full canonicality profile
+    CanonicalityProfile,
+
+    // --- Compression sub-axes ---
     CompressionMode,
-    /// Epistemic distance between two worlds (relational)
+    CompressionLossy,
+    CompressionInvertible,
+    /// Summary: the full compression profile
+    CompressionProfile,
+
+    // --- Relational ---
     EpistemicDistance,
-    /// Custom observable
+
+    // --- Empirical (operational, not derivable from profile) ---
+    ProofSize,
+    SearchCost,
+    Runtime,
+    WitnessExtractionCost,
+
     Custom,
 }
 
@@ -414,6 +943,7 @@ pub fn parse_observable(items: &[Sexp]) -> Result<Observable> {
         .to_string();
 
     let mut kind = ObservableKind::Custom;
+    let mut species = crate::knowledge::KnowledgeSpecies::Semantic;
 
     let mut i = 2;
     while i < items.len() {
@@ -424,11 +954,44 @@ pub fn parse_observable(items: &[Sexp]) -> Result<Observable> {
                 if let Some(k) = items.get(i).and_then(|s| s.as_atom()) {
                     kind = match k {
                         "discovery-strength" => ObservableKind::DiscoveryStrength,
-                        "verification-strength" => ObservableKind::VerificationStrength,
-                        "canonicality-strength" => ObservableKind::CanonicalityStrength,
+                        // Verification
+                        "verification-soundness" => ObservableKind::VerificationSoundness,
+                        "verification-completeness" => ObservableKind::VerificationCompleteness,
+                        "verification-termination" => ObservableKind::VerificationTermination,
+                        "verification-strength" | "verification-profile" => ObservableKind::VerificationProfile,
+                        // Canonicality
+                        "canonicality-normalization" => ObservableKind::CanonicalityNormalization,
+                        "canonicality-confluence" => ObservableKind::CanonicalityConfluence,
+                        "canonicality-unique-nf" => ObservableKind::CanonicalityUniqueNf,
+                        "canonicality-strength" | "canonicality-profile" => ObservableKind::CanonicalityProfile,
+                        // Compression
                         "compression-mode" => ObservableKind::CompressionMode,
+                        "compression-lossy" => ObservableKind::CompressionLossy,
+                        "compression-invertible" => ObservableKind::CompressionInvertible,
+                        "compression-profile" => ObservableKind::CompressionProfile,
+                        // Relational
                         "epistemic-distance" => ObservableKind::EpistemicDistance,
+                        // Empirical
+                        "proof-size" => { species = crate::knowledge::KnowledgeSpecies::Empirical; ObservableKind::ProofSize }
+                        "search-cost" => { species = crate::knowledge::KnowledgeSpecies::Empirical; ObservableKind::SearchCost }
+                        "runtime" => { species = crate::knowledge::KnowledgeSpecies::Empirical; ObservableKind::Runtime }
+                        "witness-extraction-cost" => { species = crate::knowledge::KnowledgeSpecies::Empirical; ObservableKind::WitnessExtractionCost }
                         _ => ObservableKind::Custom,
+                    };
+                }
+            }
+            ":species" => {
+                i += 1;
+                if let Some(v) = items.get(i).and_then(|s| s.as_atom()) {
+                    species = match v {
+                        "semantic" => crate::knowledge::KnowledgeSpecies::Semantic,
+                        "empirical" => crate::knowledge::KnowledgeSpecies::Empirical,
+                        _ => {
+                            return Err(MetacosmError::ParseError {
+                                block: "Observable".into(),
+                                detail: format!("unknown species: {} (expected semantic/empirical)", v),
+                            });
+                        }
                     };
                 }
             }
@@ -442,7 +1005,7 @@ pub fn parse_observable(items: &[Sexp]) -> Result<Observable> {
         i += 1;
     }
 
-    Ok(Observable { name, kind })
+    Ok(Observable { name, kind, species })
 }
 
 /// Measure result: the outcome of evaluating an observable.
@@ -456,11 +1019,8 @@ pub struct Measurement {
 
 #[derive(Debug, Clone)]
 pub enum MeasureValue {
-    /// A strength grade (formatted as its Display)
     Grade(String),
-    /// A numeric distance
     Distance(u32),
-    /// A boolean
     Boolean(bool),
 }
 
@@ -471,6 +1031,29 @@ impl std::fmt::Display for MeasureValue {
             MeasureValue::Distance(n) => write!(f, "{}", n),
             MeasureValue::Boolean(b) => write!(f, "{}", b),
         }
+    }
+}
+
+/// Extract a measurement value from an epistemic profile for a given observable kind.
+pub fn measure_profile(ep: &EpistemicProfile, kind: &ObservableKind) -> Option<MeasureValue> {
+    match kind {
+        ObservableKind::DiscoveryStrength => Some(MeasureValue::Grade(ep.discover.to_string())),
+        // Verification sub-axes
+        ObservableKind::VerificationSoundness => Some(MeasureValue::Grade(ep.verify.soundness.to_string())),
+        ObservableKind::VerificationCompleteness => Some(MeasureValue::Grade(ep.verify.completeness.to_string())),
+        ObservableKind::VerificationTermination => Some(MeasureValue::Grade(ep.verify.termination.to_string())),
+        ObservableKind::VerificationProfile => Some(MeasureValue::Grade(ep.verify.to_string())),
+        // Canonicality sub-axes
+        ObservableKind::CanonicalityNormalization => Some(MeasureValue::Grade(ep.canonicalize.normalization.to_string())),
+        ObservableKind::CanonicalityConfluence => Some(MeasureValue::Boolean(ep.canonicalize.confluence)),
+        ObservableKind::CanonicalityUniqueNf => Some(MeasureValue::Boolean(ep.canonicalize.unique_normal_forms)),
+        ObservableKind::CanonicalityProfile => Some(MeasureValue::Grade(ep.canonicalize.to_string())),
+        // Compression sub-axes
+        ObservableKind::CompressionMode => Some(MeasureValue::Grade(ep.compress.mode.to_string())),
+        ObservableKind::CompressionLossy => Some(MeasureValue::Boolean(ep.compress.lossy)),
+        ObservableKind::CompressionInvertible => Some(MeasureValue::Boolean(ep.compress.invertible)),
+        ObservableKind::CompressionProfile => Some(MeasureValue::Grade(ep.compress.to_string())),
+        _ => None,
     }
 }
 
@@ -486,103 +1069,192 @@ mod tests {
         let items = sexps[0].as_list().unwrap();
         let p = parse_epistemic_profile(items).unwrap();
         assert_eq!(p.discover, DiscoveryStrength::Complete);
-        assert_eq!(p.verify, VerificationStrength::Sound);
-        assert_eq!(p.canonicalize, CanonicalityStrength::Confluent);
-        assert_eq!(p.compress, CompressionMode::Lossless);
+        assert_eq!(p.verify.soundness, Soundness::Sound);
+        assert_eq!(p.verify.completeness, Completeness::None);
+        assert_eq!(p.verify.termination, Termination::Unknown);
+        assert!(p.canonicalize.confluence);
+        assert!(!p.canonicalize.unique_normal_forms);
+        assert_eq!(p.compress.mode, CompressionMode::Lossless);
+        assert!(!p.compress.lossy);
+        assert!(p.compress.invertible);
     }
 
     #[test]
-    fn parse_profile_full_syntax() {
+    fn parse_profile_full_verification() {
         let input = r#"[
             :discover [:strength semi-decidable]
-            :verify [:strength sound-complete]
-            :canonicalize [:strength unique-nf]
-            :compress [:strength codegen]
+            :verify [:soundness sound :completeness complete :termination decidable]
+            :canonicalize [:normalization strong :confluence yes :unique-normal-forms yes]
+            :compress [:mode codegen :lossy yes :invertible no]
         ]"#;
         let sexps = parse(input).unwrap();
         let items = sexps[0].as_list().unwrap();
         let p = parse_epistemic_profile(items).unwrap();
         assert_eq!(p.discover, DiscoveryStrength::SemiDecidable);
-        assert_eq!(p.verify, VerificationStrength::SoundComplete);
-        assert_eq!(p.canonicalize, CanonicalityStrength::UniqueNf);
-        assert_eq!(p.compress, CompressionMode::Codegen);
+        assert_eq!(p.verify.soundness, Soundness::Sound);
+        assert_eq!(p.verify.completeness, Completeness::Complete);
+        assert_eq!(p.verify.termination, Termination::Decidable);
+        assert_eq!(p.canonicalize.normalization, NormalizationStrength::Strong);
+        assert!(p.canonicalize.confluence);
+        assert!(p.canonicalize.unique_normal_forms);
+        assert_eq!(p.compress.mode, CompressionMode::Codegen);
+        assert!(p.compress.lossy);
+        assert!(!p.compress.invertible);
     }
 
     #[test]
-    fn parse_profile_with_capability() {
-        let input = "[:discover [:capability yes :strength heuristic] :verify sound]";
-        let sexps = parse(input).unwrap();
-        let items = sexps[0].as_list().unwrap();
-        let p = parse_epistemic_profile(items).unwrap();
-        assert_eq!(p.discover, DiscoveryStrength::Heuristic);
-        assert_eq!(p.verify, VerificationStrength::Sound);
+    fn verification_sugar_decidable() {
+        let p = parse_verification_sugar("decidable").unwrap();
+        assert_eq!(p.soundness, Soundness::Sound);
+        assert_eq!(p.completeness, Completeness::Complete);
+        assert_eq!(p.termination, Termination::Decidable);
+    }
+
+    #[test]
+    fn verification_sugar_sound() {
+        let p = parse_verification_sugar("sound").unwrap();
+        assert_eq!(p.soundness, Soundness::Sound);
+        assert_eq!(p.completeness, Completeness::None);
+        assert_eq!(p.termination, Termination::Unknown);
+    }
+
+    #[test]
+    fn canonicality_sugar_confluent() {
+        let p = parse_canonicality_sugar("confluent").unwrap();
+        assert_eq!(p.normalization, NormalizationStrength::None);
+        assert!(p.confluence);
+        assert!(!p.unique_normal_forms);
+    }
+
+    #[test]
+    fn canonicality_sugar_unique_nf() {
+        let p = parse_canonicality_sugar("unique-nf").unwrap();
+        assert_eq!(p.normalization, NormalizationStrength::Strong);
+        assert!(p.confluence);
+        assert!(p.unique_normal_forms);
+    }
+
+    #[test]
+    fn compression_sugar_lossless() {
+        let p = parse_compression_sugar("lossless").unwrap();
+        assert_eq!(p.mode, CompressionMode::Lossless);
+        assert!(!p.lossy);
+        assert!(p.invertible);
+    }
+
+    #[test]
+    fn compression_sugar_codegen() {
+        let p = parse_compression_sugar("codegen").unwrap();
+        assert_eq!(p.mode, CompressionMode::Codegen);
+        assert!(p.lossy);
+        assert!(!p.invertible);
+    }
+
+    #[test]
+    fn canonicality_not_total_order() {
+        // Confluent but not normalizing
+        let a = CanonicalityProfile {
+            normalization: NormalizationStrength::None,
+            confluence: true,
+            unique_normal_forms: false,
+        };
+        // Normalizing but not confluent
+        let b = CanonicalityProfile {
+            normalization: NormalizationStrength::Strong,
+            confluence: false,
+            unique_normal_forms: false,
+        };
+        // Neither dominates the other
+        assert!(!a.dominates(&b));
+        assert!(!b.dominates(&a));
+    }
+
+    #[test]
+    fn verification_product_incomparable() {
+        // Sound but not complete, decidable
+        let a = VerificationProfile {
+            soundness: Soundness::Sound,
+            completeness: Completeness::None,
+            termination: Termination::Decidable,
+        };
+        // Heuristic but complete, unknown termination
+        let b = VerificationProfile {
+            soundness: Soundness::Heuristic,
+            completeness: Completeness::Complete,
+            termination: Termination::Unknown,
+        };
+        assert!(!a.dominates(&b));
+        assert!(!b.dominates(&a));
     }
 
     #[test]
     fn epistemic_distance() {
         let a = EpistemicProfile {
-            discover: DiscoveryStrength::Complete,     // 4
-            verify: VerificationStrength::Sound,        // 2
-            canonicalize: CanonicalityStrength::None,   // 0
-            compress: CompressionMode::Lossless,
-        };
-        let b = EpistemicProfile {
-            discover: DiscoveryStrength::Heuristic,     // 1
-            verify: VerificationStrength::Decidable,    // 4
-            canonicalize: CanonicalityStrength::Confluent, // 3
-            compress: CompressionMode::Codegen,         // different
-        };
-        // |4-1| + |2-4| + |0-3| + 1(different compress) = 3 + 2 + 3 + 1 = 9
-        assert_eq!(a.distance(&b), 9);
-    }
-
-    #[test]
-    fn epistemic_distance_same_compress() {
-        let a = EpistemicProfile {
             discover: DiscoveryStrength::Complete,
-            verify: VerificationStrength::Sound,
-            canonicalize: CanonicalityStrength::None,
-            compress: CompressionMode::Lossless,
+            verify: VerificationProfile {
+                soundness: Soundness::Sound,
+                completeness: Completeness::None,
+                termination: Termination::Unknown,
+            },
+            canonicalize: CanonicalityProfile::none(),
+            compress: CompressionProfile {
+                mode: CompressionMode::Lossless,
+                lossy: false,
+                invertible: true,
+            },
+            ..Default::default()
         };
         let b = EpistemicProfile {
             discover: DiscoveryStrength::Heuristic,
-            verify: VerificationStrength::Decidable,
-            canonicalize: CanonicalityStrength::Confluent,
-            compress: CompressionMode::Lossless,         // same
+            verify: VerificationProfile {
+                soundness: Soundness::Sound,
+                completeness: Completeness::Complete,
+                termination: Termination::Decidable,
+            },
+            canonicalize: CanonicalityProfile {
+                normalization: NormalizationStrength::None,
+                confluence: true,
+                unique_normal_forms: false,
+            },
+            compress: CompressionProfile {
+                mode: CompressionMode::Codegen,
+                lossy: true,
+                invertible: false,
+            },
+            ..Default::default()
         };
-        // 3 + 2 + 3 + 0 = 8
-        assert_eq!(a.distance(&b), 8);
+        // disc: |4-1| = 3
+        // ver: |2-2| + |0-2| + |0-2| = 0+2+2 = 4
+        // can: |0-0| + (f!=t) + (f!=f) = 0+1+0 = 1
+        // comp: (lossless!=codegen) + (f!=t) + (t!=f) = 1+1+1 = 3
+        // total = 3+4+1+3 = 11
+        assert_eq!(a.distance(&b), 11);
     }
 
     #[test]
     fn dominance() {
         let strong = EpistemicProfile {
             discover: DiscoveryStrength::Complete,
-            verify: VerificationStrength::Decidable,
-            canonicalize: CanonicalityStrength::UniqueNf,
-            compress: CompressionMode::Codegen,
+            verify: VerificationProfile {
+                soundness: Soundness::Sound,
+                completeness: Completeness::Complete,
+                termination: Termination::Decidable,
+            },
+            canonicalize: CanonicalityProfile {
+                normalization: NormalizationStrength::Strong,
+                confluence: true,
+                unique_normal_forms: true,
+            },
+            compress: CompressionProfile {
+                mode: CompressionMode::Codegen,
+                lossy: true,
+                invertible: false,
+            },
+            ..Default::default()
         };
         let weak = EpistemicProfile::default();
         assert!(strong.dominates(&weak));
         assert!(!weak.dominates(&strong));
-    }
-
-    #[test]
-    fn incomparable_profiles() {
-        let a = EpistemicProfile {
-            discover: DiscoveryStrength::Complete,
-            verify: VerificationStrength::Heuristic,
-            canonicalize: CanonicalityStrength::None,
-            compress: CompressionMode::None,
-        };
-        let b = EpistemicProfile {
-            discover: DiscoveryStrength::None,
-            verify: VerificationStrength::Decidable,
-            canonicalize: CanonicalityStrength::UniqueNf,
-            compress: CompressionMode::None,
-        };
-        assert!(!a.dominates(&b));
-        assert!(!b.dominates(&a));
     }
 
     #[test]
@@ -594,7 +1266,7 @@ mod tests {
     fn none_strength_means_no_capability() {
         let p = EpistemicProfile {
             discover: DiscoveryStrength::None,
-            verify: VerificationStrength::None,
+            verify: VerificationProfile::none(),
             ..Default::default()
         };
         assert!(!p.can_discover());
@@ -612,10 +1284,48 @@ mod tests {
     }
 
     #[test]
+    fn parse_observable_sub_axes() {
+        let input = "[Observable VSoundness :kind verification-soundness]";
+        let sexps = parse(input).unwrap();
+        let items = sexps[0].as_list().unwrap();
+        let obs = parse_observable(items).unwrap();
+        assert_eq!(obs.kind, ObservableKind::VerificationSoundness);
+    }
+
+    #[test]
+    fn parse_observable_backward_compat() {
+        // Old kind name still works
+        let input = "[Observable VStr :kind verification-strength]";
+        let sexps = parse(input).unwrap();
+        let items = sexps[0].as_list().unwrap();
+        let obs = parse_observable(items).unwrap();
+        assert_eq!(obs.kind, ObservableKind::VerificationProfile);
+    }
+
+    #[test]
     fn compression_modes_are_non_ordinal() {
-        // Lossless and Quotient are qualitatively different, not ranked
         assert_ne!(CompressionMode::Lossless, CompressionMode::Quotient);
-        // But both are != None
         assert_ne!(CompressionMode::Lossless, CompressionMode::None);
+    }
+
+    #[test]
+    fn sub_axis_lattice_ordering() {
+        // Soundness
+        assert!(Soundness::None < Soundness::Heuristic);
+        assert!(Soundness::Heuristic < Soundness::Sound);
+        // Completeness
+        assert!(Completeness::None < Completeness::Partial);
+        assert!(Completeness::Partial < Completeness::Complete);
+        // Termination
+        assert!(Termination::Unknown < Termination::SemiDecidable);
+        assert!(Termination::SemiDecidable < Termination::Decidable);
+        // Normalization
+        assert!(NormalizationStrength::None < NormalizationStrength::Weak);
+        assert!(NormalizationStrength::Weak < NormalizationStrength::Strong);
+        // Discovery (unchanged)
+        assert!(DiscoveryStrength::None < DiscoveryStrength::Heuristic);
+        assert!(DiscoveryStrength::Heuristic < DiscoveryStrength::SemiDecidable);
+        assert!(DiscoveryStrength::SemiDecidable < DiscoveryStrength::CompleteFragment);
+        assert!(DiscoveryStrength::CompleteFragment < DiscoveryStrength::Complete);
     }
 }

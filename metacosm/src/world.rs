@@ -2,6 +2,7 @@ use apeiron::parser::Sexp;
 
 use crate::epistemic::EpistemicProfile;
 use crate::error::{MetacosmError, Result};
+use crate::knowledge::PropertyStatus;
 use crate::transition::TransitionKind;
 
 /// A Metacosm world: the core meta-IR object.
@@ -20,6 +21,10 @@ pub struct WorldDef {
     pub epistemic: EpistemicProfile,
     /// Admissible transition kinds
     pub admissible_transitions: Vec<TransitionKind>,
+    /// Whether to derive epistemic properties from substrate/category structure
+    pub derive_epistemics: bool,
+    /// Properties that were derived (not declared)
+    pub derived_properties: Vec<(String, PropertyStatus)>,
 }
 
 impl WorldDef {
@@ -31,6 +36,8 @@ impl WorldDef {
             substrate: "Default".to_string(),
             epistemic: EpistemicProfile::trivial(),
             admissible_transitions: vec![],
+            derive_epistemics: true,
+            derived_properties: vec![],
         }
     }
 
@@ -42,6 +49,8 @@ impl WorldDef {
             substrate: substrate.to_string(),
             epistemic: EpistemicProfile::trivial(),
             admissible_transitions: vec![],
+            derive_epistemics: true,
+            derived_properties: vec![],
         }
     }
 
@@ -80,6 +89,7 @@ pub fn parse_world(items: &[Sexp]) -> Result<WorldDef> {
     let mut substrate = "Default".to_string();
     let mut epistemic = EpistemicProfile::trivial();
     let mut admissible = Vec::new();
+    let mut derive_epistemics = true;
 
     let mut i = 2;
     while i < items.len() {
@@ -103,6 +113,20 @@ pub fn parse_world(items: &[Sexp]) -> Result<WorldDef> {
                     epistemic = crate::epistemic::parse_epistemic_profile(list)?;
                 }
             }
+            ":class-epistemic" => {
+                i += 1;
+                if let Some(list) = items.get(i).and_then(|s| s.as_list()) {
+                    for item in list {
+                        if let Some(inner) = item.as_list() {
+                            if inner.is_empty() { continue; }
+                            let class_name = inner[0].as_atom().unwrap_or("");
+                            let class = crate::theorem_class::parse_theorem_class(class_name)?;
+                            let ovr = parse_class_override(&inner[1..])?;
+                            epistemic.class_overrides.insert(class, ovr);
+                        }
+                    }
+                }
+            }
             ":admits" => {
                 i += 1;
                 if let Some(list) = items.get(i).and_then(|s| s.as_list()) {
@@ -111,6 +135,12 @@ pub fn parse_world(items: &[Sexp]) -> Result<WorldDef> {
                             admissible.push(crate::transition::parse_transition_kind(name)?);
                         }
                     }
+                }
+            }
+            ":derive" => {
+                i += 1;
+                if let Some(v) = items.get(i).and_then(|s| s.as_atom()) {
+                    derive_epistemics = v != "no" && v != "false";
                 }
             }
             _ => {
@@ -129,6 +159,23 @@ pub fn parse_world(items: &[Sexp]) -> Result<WorldDef> {
         substrate,
         epistemic,
         admissible_transitions: admissible,
+        derive_epistemics,
+        derived_properties: vec![],
+    })
+}
+
+/// Parse a class-epistemic override: `[ClassName :discover V :verify V ...]`
+/// Items start after the class name.
+fn parse_class_override(items: &[Sexp]) -> Result<crate::epistemic::EpistemicOverride> {
+    use crate::epistemic::EpistemicOverride;
+    // Re-use the profile parser then extract fields that differ from default
+    let profile = crate::epistemic::parse_epistemic_profile(items)?;
+    let defaults = EpistemicProfile::trivial();
+    Ok(EpistemicOverride {
+        discover: if profile.discover != defaults.discover { Some(profile.discover) } else { None },
+        verify: if profile.verify != defaults.verify { Some(profile.verify) } else { None },
+        canonicalize: if profile.canonicalize != defaults.canonicalize { Some(profile.canonicalize) } else { None },
+        compress: if profile.compress != defaults.compress { Some(profile.compress) } else { None },
     })
 }
 

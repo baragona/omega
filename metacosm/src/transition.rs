@@ -359,7 +359,7 @@ pub fn check_transition_epistemic(
             }
         }
         TransitionKind::CoarseGrain => {
-            if target_ep.verify < source_ep.verify {
+            if !target_ep.verify.dominates(&source_ep.verify) {
                 warnings.push(format!(
                     "coarse-grain {} → {} loses verification strength",
                     transition.source, transition.target
@@ -381,6 +381,193 @@ pub fn check_transition_epistemic(
     }
 
     Ok(warnings)
+}
+
+// ============================================================================
+// Transition algebra: composition
+// ============================================================================
+
+/// The algebraic signature of a transition, for composition.
+#[derive(Debug, Clone)]
+pub struct TransitionSignature {
+    /// Does the transition preserve full witnesses/proofs?
+    pub preserves_witnesses: bool,
+    /// Is information lost?
+    pub lossy: bool,
+    /// Can the transition be reversed?
+    pub invertible: bool,
+    /// Does the target have weaker verification than source?
+    pub verification_weakening: bool,
+    /// Accumulated provisional epistemic distance.
+    pub epistemic_distance: u32,
+}
+
+impl TransitionSignature {
+    pub fn from_transition(
+        t: &TransitionDef,
+        src_ep: &EpistemicProfile,
+        tgt_ep: &EpistemicProfile,
+    ) -> Self {
+        TransitionSignature {
+            preserves_witnesses: matches!(
+                t.transport.mode,
+                TransportMode::Witness | TransportMode::Conservative
+            ),
+            lossy: matches!(t.transport.mode, TransportMode::Lossy)
+                || !t.transport.loss.is_empty(),
+            invertible: t.transport.mode == TransportMode::Conservative
+                && t.transport.loss.is_empty(),
+            verification_weakening: !tgt_ep.verify.dominates(&src_ep.verify),
+            epistemic_distance: src_ep.distance(tgt_ep),
+        }
+    }
+
+    /// Compose two signatures: A→B ; B→C = A→C
+    pub fn compose(&self, other: &TransitionSignature) -> TransitionSignature {
+        TransitionSignature {
+            preserves_witnesses: self.preserves_witnesses && other.preserves_witnesses,
+            lossy: self.lossy || other.lossy,
+            invertible: self.invertible && other.invertible,
+            verification_weakening: self.verification_weakening || other.verification_weakening,
+            epistemic_distance: self.epistemic_distance + other.epistemic_distance,
+        }
+    }
+}
+
+impl std::fmt::Display for TransitionSignature {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut props = Vec::new();
+        if self.preserves_witnesses { props.push("witness-preserving"); }
+        if self.lossy { props.push("lossy"); }
+        if self.invertible { props.push("invertible"); }
+        if self.verification_weakening { props.push("verification-weakening"); }
+        write!(f, "[{}](dist={})", props.join(", "), self.epistemic_distance)
+    }
+}
+
+/// Compose two transitions A→B and B→C into a derived A→C.
+///
+/// Composition laws:
+///   preserves(A→C) = preserves(A→B) ∩ preserves(B→C)
+///   breaks(A→C) = breaks(A→B) ∪ breaks(B→C)
+///   loss(A→C) = loss(A→B) ∪ loss(B→C)
+///   transport mode: Witness∘Witness=Witness, anything∘Lossy=Lossy, TheoremOnly absorbs witness info
+pub fn compose_transitions(
+    ab: &TransitionDef,
+    bc: &TransitionDef,
+    name: &str,
+) -> Result<TransitionDef> {
+    if ab.target != bc.source {
+        return Err(MetacosmError::CompositionError {
+            detail: format!(
+                "cannot compose {} → {} with {} → {}: target '{}' ≠ source '{}'",
+                ab.source, ab.target, bc.source, bc.target, ab.target, bc.source
+            ),
+        });
+    }
+
+    // Preserves = intersection
+    let preserves: Vec<Invariant> = ab
+        .preserves
+        .iter()
+        .filter(|inv| bc.preserves.contains(inv))
+        .cloned()
+        .collect();
+
+    // Breaks = union (deduplicated)
+    let mut breaks = ab.breaks.clone();
+    for inv in &bc.breaks {
+        if !breaks.contains(inv) {
+            breaks.push(inv.clone());
+        }
+    }
+
+    // Loss = union (deduplicated)
+    let mut loss = ab.transport.loss.clone();
+    for inv in &bc.transport.loss {
+        if !loss.contains(inv) {
+            loss.push(inv.clone());
+        }
+    }
+
+    // Transport mode composition
+    let mode = compose_transport_modes(&ab.transport.mode, &bc.transport.mode);
+
+    Ok(TransitionDef {
+        name: name.to_string(),
+        kind: TransitionKind::Transport, // composed transitions are generic transport
+        source: ab.source.clone(),
+        target: bc.target.clone(),
+        preserves,
+        breaks,
+        transport: TransportEpistemics { mode, loss },
+    })
+}
+
+fn compose_transport_modes(a: &TransportMode, b: &TransportMode) -> TransportMode {
+    match (a, b) {
+        (TransportMode::Conservative, TransportMode::Conservative) => TransportMode::Conservative,
+        (TransportMode::Witness, TransportMode::Witness) => TransportMode::Witness,
+        (TransportMode::Witness, TransportMode::Conservative)
+        | (TransportMode::Conservative, TransportMode::Witness) => TransportMode::Witness,
+        (TransportMode::TheoremOnly, _) | (_, TransportMode::TheoremOnly) => {
+            TransportMode::TheoremOnly
+        }
+        _ => TransportMode::Lossy,
+    }
+}
+
+/// Parse `[Compose Name :transitions [T1 T2 ...]]`
+pub fn parse_compose(items: &[Sexp]) -> Result<(String, Vec<String>)> {
+    if items.len() < 2 {
+        return Err(MetacosmError::ParseError {
+            block: "Compose".into(),
+            detail: "missing compose name".into(),
+        });
+    }
+
+    let name = items[1]
+        .as_atom()
+        .ok_or_else(|| MetacosmError::ParseError {
+            block: "Compose".into(),
+            detail: "compose name must be an atom".into(),
+        })?
+        .to_string();
+
+    let mut transition_names = Vec::new();
+
+    let mut i = 2;
+    while i < items.len() {
+        let key = items[i].as_atom().unwrap_or("");
+        match key {
+            ":transitions" => {
+                i += 1;
+                if let Some(list) = items.get(i).and_then(|s| s.as_list()) {
+                    for item in list {
+                        if let Some(n) = item.as_atom() {
+                            transition_names.push(n.to_string());
+                        }
+                    }
+                }
+            }
+            _ => {
+                return Err(MetacosmError::ParseError {
+                    block: "Compose".into(),
+                    detail: format!("unknown keyword: {}", key),
+                });
+            }
+        }
+        i += 1;
+    }
+
+    if transition_names.len() < 2 {
+        return Err(MetacosmError::ParseError {
+            block: "Compose".into(),
+            detail: "need at least 2 transitions to compose".into(),
+        });
+    }
+
+    Ok((name, transition_names))
 }
 
 #[cfg(test)]
@@ -439,7 +626,7 @@ mod tests {
             ..Default::default()
         };
         let tgt = EpistemicProfile {
-            verify: VerificationStrength::None,
+            verify: crate::epistemic::VerificationProfile::none(),
             ..Default::default()
         };
         assert!(check_transition_epistemic(&t, &src, &tgt).is_err());
