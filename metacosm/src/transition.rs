@@ -172,6 +172,8 @@ pub struct TransitionDef {
     pub breaks: Vec<Invariant>,
     /// Relational epistemic data (transport mode, information loss)
     pub transport: TransportEpistemics,
+    /// Optional functor reference (for world morphism promotion)
+    pub functor: Option<String>,
 }
 
 /// Parse `[Transition Name :kind K :from S :to T :preserves [...] :breaks [...] :transport [...]]`
@@ -197,6 +199,7 @@ pub fn parse_transition(items: &[Sexp]) -> Result<TransitionDef> {
     let mut preserves = Vec::new();
     let mut breaks = Vec::new();
     let mut transport = TransportEpistemics::default();
+    let mut functor: Option<String> = None;
 
     let mut i = 2;
     while i < items.len() {
@@ -242,6 +245,10 @@ pub fn parse_transition(items: &[Sexp]) -> Result<TransitionDef> {
                     transport = parse_transport_epistemics(list)?;
                 }
             }
+            ":functor" => {
+                i += 1;
+                functor = items.get(i).and_then(|s| s.as_atom()).map(|s| s.to_string());
+            }
             _ => {
                 return Err(MetacosmError::ParseError {
                     block: "Transition".into(),
@@ -273,6 +280,7 @@ pub fn parse_transition(items: &[Sexp]) -> Result<TransitionDef> {
         preserves,
         breaks,
         transport,
+        functor,
     })
 }
 
@@ -340,6 +348,20 @@ pub fn check_transition_epistemic(
                     "tunnel source {} has no discovery capability",
                     transition.source
                 ));
+            }
+            // Cannot preserve Soundness if source has no verification
+            if transition.preserves.contains(&Invariant::Soundness)
+                && source_ep.verify.soundness == crate::epistemic::Soundness::None
+            {
+                return Err(MetacosmError::InvalidTransition {
+                    from: transition.source.clone(),
+                    to: transition.target.clone(),
+                    detail: format!(
+                        "tunnel claims to preserve Soundness but source '{}' has verify=none — \
+                         cannot preserve a property the source lacks",
+                        transition.source
+                    ),
+                });
             }
         }
         TransitionKind::ConservativeExtension => {
@@ -501,6 +523,7 @@ pub fn compose_transitions(
         preserves,
         breaks,
         transport: TransportEpistemics { mode, loss },
+        functor: None, // composed at morphism level
     })
 }
 
@@ -620,6 +643,7 @@ mod tests {
             preserves: vec![],
             breaks: vec![],
             transport: TransportEpistemics::default(),
+            functor: None,
         };
         let src = EpistemicProfile {
             discover: DiscoveryStrength::Complete,
@@ -642,6 +666,7 @@ mod tests {
             preserves: vec![Invariant::Soundness],
             breaks: vec![Invariant::Soundness],
             transport: TransportEpistemics::default(),
+            functor: None,
         };
         let ep = EpistemicProfile::default();
         assert!(check_transition_epistemic(&t, &ep, &ep).is_err());

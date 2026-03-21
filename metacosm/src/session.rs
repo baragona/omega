@@ -7,6 +7,7 @@ use crate::embedding::{self, EmbeddingDef};
 use crate::epistemic::{self, Measurement, MeasureValue, Observable};
 use crate::error::{MetacosmError, Result};
 use crate::knowledge::{self, SemanticProperty};
+use crate::morphism::WorldMorphism;
 use crate::pipeline::{self, PipelineAction, PipelineDef};
 use crate::transition::{self, TransitionDef};
 use crate::world::{self, FamilyDef, WorldDef};
@@ -33,7 +34,11 @@ pub struct MetacosmSession {
     pub families: HashMap<String, FamilyDef>,
     pub pipelines: HashMap<String, PipelineDef>,
     pub measurements: Vec<Measurement>,
+    pub morphisms: HashMap<String, WorldMorphism>,
     pub embeddings: HashMap<String, EmbeddingDef>,
+    pub lemmas: HashMap<String, crate::lemma::CrossWorldLemma>,
+    pub laws: HashMap<String, crate::law::CosmologicalLaw>,
+    pub impossibilities: HashMap<String, crate::refute::ImpossibilityProof>,
     pub semantic_properties: Vec<SemanticProperty>,
     pub output: Vec<String>,
     pub structured_output: Vec<ResultEntry>,
@@ -49,7 +54,11 @@ impl MetacosmSession {
             families: HashMap::new(),
             pipelines: HashMap::new(),
             measurements: Vec::new(),
+            morphisms: HashMap::new(),
             embeddings: HashMap::new(),
+            lemmas: HashMap::new(),
+            laws: HashMap::new(),
+            impossibilities: HashMap::new(),
             semantic_properties: Vec::new(),
             output: Vec::new(),
             structured_output: Vec::new(),
@@ -104,6 +113,13 @@ impl MetacosmSession {
             "Measure" => self.process_measure(items),
             "Compose" => self.process_compose(items),
             "Embedding" => self.process_embedding(items),
+            "Assert" => self.process_assertion(items),
+            "CheckWorld" => self.process_check_world(items),
+            "Lemma" => self.process_lemma(items),
+            "Materialize" => self.process_materialize(items),
+            "Promote" => self.process_promote(items),
+            "Law" => self.process_law(items),
+            "Refute" => self.process_refute(items),
 
             // --- Hyperion pass-through (Layer 2: category + substrate) ---
             "Category" | "Substrate" | "Universe" | "Functor"
@@ -183,6 +199,11 @@ impl MetacosmSession {
             self.output.push(m);
         }
 
+        // Register identity morphism
+        let structures = self.category_structure_names(&self.worlds[&name].category);
+        let id_morph = WorldMorphism::identity(&name, structures);
+        self.morphisms.insert(format!("id_{}", name), id_morph);
+
         Ok(())
     }
 
@@ -232,14 +253,51 @@ impl MetacosmSession {
             self.output.push(format!("[TRANSITION] Warning: {}", w));
         }
 
+        // Create world morphism
+        let mut morph = if let Some(ref functor_name) = t.functor {
+            WorldMorphism::with_functor(t.clone(), functor_name.clone())
+        } else if t.source == t.target {
+            // Same-world transition: identity functor
+            let structures = self.category_structure_names(&self.worlds.get(&t.source).unwrap().category);
+            let mut m = WorldMorphism::opaque(t.clone());
+            m.functor = Some(crate::morphism::FunctorRef::Identity);
+            m.properties = crate::morphism::MorphismProperties {
+                preserves_structure: structures,
+                ..crate::morphism::MorphismProperties::identity()
+            };
+            m
+        } else {
+            WorldMorphism::opaque(t.clone())
+        };
+
+        // Validate functor consistency if functor is named
+        if matches!(&morph.functor, Some(crate::morphism::FunctorRef::Named(_))) {
+            let warnings = crate::morphism::validate_morphism(
+                &mut morph,
+                &self.worlds,
+                &self.hyperion,
+            )?;
+            for w in &warnings {
+                self.output.push(format!("[MORPHISM] Warning: {}", w));
+            }
+        }
+
+        let morph_info = if morph.functor.is_some() {
+            format!(", morphism={}", morph.properties)
+        } else {
+            String::new()
+        };
+
         let msg = format!(
-            "[TRANSITION] {} registered ({}: {} → {}, transport={}, preserves=[{}], breaks=[{}])",
+            "[TRANSITION] {} registered ({}: {} → {}, transport={}, preserves=[{}], breaks=[{}]{})",
             name, t.kind, t.source, t.target, t.transport.mode,
             t.preserves.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(", "),
             t.breaks.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(", "),
+            morph_info,
         );
         self.output.push(msg.clone());
         self.record_result(&name, "valid", Some(msg));
+        self.morphisms.insert(name.clone(), morph);
         self.transitions.insert(name, t);
         Ok(())
     }
@@ -324,21 +382,36 @@ impl MetacosmSession {
         // Validate epistemic feasibility
         for step in &pipe.steps {
             let world = self.worlds.get(&step.world).unwrap();
+            // Use class-specific epistemic profile if :class is specified
+            let ep = if let Some(ref class_name) = step.class {
+                let tc = crate::theorem_class::parse_theorem_class(class_name)
+                    .map_err(|_| MetacosmError::PipelineError {
+                        pipeline: name.clone(),
+                        step: step.name.clone(),
+                        detail: format!("unknown theorem class: '{}'", class_name),
+                    })?;
+                world.epistemic.for_class(&tc)
+            } else {
+                world.epistemic.clone()
+            };
             match step.action {
                 PipelineAction::Discover => {
-                    if !world.epistemic.can_discover() {
+                    if !ep.can_discover() {
+                        let class_msg = step.class.as_ref()
+                            .map(|c| format!(" for class {}", c))
+                            .unwrap_or_default();
                         return Err(MetacosmError::PipelineError {
                             pipeline: name.clone(),
                             step: step.name.clone(),
                             detail: format!(
-                                "world '{}' has discover=none, cannot discover",
-                                step.world
+                                "world '{}' has discover=none{}, cannot discover",
+                                step.world, class_msg
                             ),
                         });
                     }
                 }
                 PipelineAction::Verify => {
-                    if !world.epistemic.can_verify() {
+                    if !ep.can_verify() {
                         return Err(MetacosmError::PipelineError {
                             pipeline: name.clone(),
                             step: step.name.clone(),
@@ -556,14 +629,31 @@ impl MetacosmSession {
             .unwrap_or_default();
         let sig = transition::TransitionSignature::from_transition(&composed, src_ep, tgt_ep);
 
+        // Compose morphisms too
+        let first_morph = self.morphisms.get(&transition_names[0]).cloned()
+            .unwrap_or_else(|| WorldMorphism::opaque(self.transitions[&transition_names[0]].clone()));
+        let mut composed_morph = first_morph;
+        for tn in &transition_names[1..] {
+            let next_morph = self.morphisms.get(tn).cloned()
+                .unwrap_or_else(|| WorldMorphism::opaque(self.transitions[tn].clone()));
+            composed_morph = crate::morphism::compose_morphisms(&composed_morph, &next_morph, &name)?;
+        }
+
+        let morph_info = if composed_morph.functor.is_some() {
+            format!(", morphism={}", composed_morph.properties)
+        } else {
+            String::new()
+        };
+
         let msg = format!(
-            "[COMPOSE] {} = {} → {} (composed from [{}], signature={})",
+            "[COMPOSE] {} = {} → {} (composed from [{}], signature={}{})",
             name, composed.source, composed.target,
             transition_names.join(" ; "),
-            sig,
+            sig, morph_info,
         );
         self.output.push(msg.clone());
         self.record_result(&name, "valid", Some(msg));
+        self.morphisms.insert(name.clone(), composed_morph);
         self.transitions.insert(name, composed);
         Ok(())
     }
@@ -641,6 +731,308 @@ impl MetacosmSession {
         self.output.push(msg.clone());
         self.record_result(&name, "valid", Some(msg));
         self.embeddings.insert(name, emb);
+        Ok(())
+    }
+
+    fn process_assertion(&mut self, items: &[Sexp]) -> Result<()> {
+        let assertion = crate::assertion::parse_assertion(items)?;
+        let result = crate::assertion::check_assertion(
+            &assertion,
+            &self.worlds,
+            &self.families,
+            &self.transitions,
+            &self.morphisms,
+        );
+
+        let status = if result.passed { "pass" } else { "fail" };
+        let msg = format!("[ASSERT] {}", result);
+        self.output.push(msg.clone());
+        self.record_result(&result.assertion, status, Some(msg));
+
+        if !result.passed {
+            return Err(MetacosmError::AssertionFailed {
+                assertion: result.assertion,
+                detail: result.detail,
+            });
+        }
+
+        Ok(())
+    }
+
+    fn process_check_world(&mut self, items: &[Sexp]) -> Result<()> {
+        if items.len() < 2 {
+            return Err(MetacosmError::ParseError {
+                block: "CheckWorld".into(),
+                detail: "missing world name".into(),
+            });
+        }
+        let name = items[1].as_atom().ok_or_else(|| MetacosmError::ParseError {
+            block: "CheckWorld".into(),
+            detail: "world name must be an atom".into(),
+        })?;
+
+        let world = self.worlds.get(name).ok_or_else(|| MetacosmError::Undefined {
+            kind: "World".into(),
+            name: name.into(),
+        })?.clone();
+
+        let result = crate::audit::audit_world(&world, &self.hyperion);
+
+        for issue in &result.issues {
+            self.output.push(format!("[AUDIT] {}: {}", name, issue));
+        }
+
+        let status = if result.passed { "pass" } else { "fail" };
+        let msg = format!("[AUDIT] {}", result);
+        self.output.push(msg.clone());
+        self.record_result(name, status, Some(msg));
+        Ok(())
+    }
+
+    fn process_lemma(&mut self, items: &[Sexp]) -> Result<()> {
+        let (name, source, transition_name, target, statement) =
+            crate::lemma::parse_cross_world_lemma(items)?;
+
+        let transition = self.transitions.get(&transition_name).ok_or_else(|| MetacosmError::Undefined {
+            kind: "Transition".into(),
+            name: transition_name.clone(),
+        })?.clone();
+
+        let result = crate::lemma::check_transport(&source, &target, &transition, &self.worlds)?;
+
+        // Apply functor maps to the statement if the transition has a functor
+        let (transported_statement, obj_maps, morph_maps) = crate::lemma::apply_functor_maps(
+            &statement,
+            &self.hyperion,
+            transition.functor.as_deref(),
+        );
+
+        let provenance = crate::lemma::LemmaProvenance {
+            origin_world: source.clone(),
+            via_transition: transition_name.clone(),
+            functor: transition.functor.clone(),
+            object_maps: obj_maps,
+            morphism_maps: morph_maps,
+        };
+
+        for w in &result.warnings {
+            self.output.push(format!("[LEMMA] Warning: {}: {}", name, w));
+        }
+
+        let transport_info = if transported_statement != statement {
+            format!(" (renamed: {} → {})", statement, transported_statement)
+        } else {
+            String::new()
+        };
+
+        let msg = format!("[LEMMA] {} ({} in {} → {} via {}): {}{}",
+            name, statement, source, target, transition_name, result, transport_info
+        );
+        self.output.push(msg.clone());
+        self.record_result(&name, if result.valid { "valid" } else { "invalid" }, Some(msg));
+
+        self.lemmas.insert(name.clone(), crate::lemma::CrossWorldLemma {
+            name,
+            source,
+            transition: transition_name,
+            target,
+            statement,
+            transported_statement,
+            provenance,
+            result,
+        });
+        Ok(())
+    }
+
+    fn process_materialize(&mut self, items: &[Sexp]) -> Result<()> {
+        if items.len() < 2 {
+            return Err(MetacosmError::ParseError {
+                block: "Materialize".into(),
+                detail: "missing materialization name".into(),
+            });
+        }
+        let name = items[1].as_atom().ok_or_else(|| MetacosmError::ParseError {
+            block: "Materialize".into(),
+            detail: "name must be an atom".into(),
+        })?.to_string();
+
+        let mut pipeline_name = None;
+        let mut i = 2;
+        while i < items.len() {
+            let key = items[i].as_atom().unwrap_or("");
+            match key {
+                ":pipeline" => {
+                    i += 1;
+                    pipeline_name = items.get(i).and_then(|s| s.as_atom()).map(|s| s.to_string());
+                }
+                _ => {
+                    return Err(MetacosmError::ParseError {
+                        block: "Materialize".into(),
+                        detail: format!("unknown keyword: {}", key),
+                    });
+                }
+            }
+            i += 1;
+        }
+
+        let pipeline_name = pipeline_name.ok_or_else(|| MetacosmError::ParseError {
+            block: "Materialize".into(),
+            detail: "missing :pipeline".into(),
+        })?;
+
+        let pipeline = self.pipelines.get(&pipeline_name).ok_or_else(|| MetacosmError::Undefined {
+            kind: "Pipeline".into(),
+            name: pipeline_name.clone(),
+        })?.clone();
+
+        let result = crate::materialize::materialize_pipeline(&pipeline, &self.worlds, &self.transitions)?;
+
+        for (i, step) in result.steps.iter().enumerate() {
+            self.output.push(format!("[MATERIALIZE] Step {}: {}", i + 1, step));
+        }
+
+        let msg = format!("[MATERIALIZE] {}: {}", name, result);
+        self.output.push(msg.clone());
+        self.record_result(&name, "valid", Some(msg));
+        Ok(())
+    }
+
+    fn process_promote(&mut self, items: &[Sexp]) -> Result<()> {
+        let promotion = crate::promote::parse_promotion(items)?;
+
+        // Check the assertion first — must pass
+        let assertion_result = crate::assertion::check_assertion(
+            &promotion.assertion,
+            &self.worlds,
+            &self.families,
+            &self.transitions,
+            &self.morphisms,
+        );
+
+        if !assertion_result.passed {
+            return Err(MetacosmError::AssertionFailed {
+                assertion: assertion_result.assertion,
+                detail: format!("cannot promote: {}", assertion_result.detail),
+            });
+        }
+
+        match &promotion.target {
+            crate::promote::PromotionTarget::Transition { kind } => {
+                // Derive a transition from the assertion
+                if let crate::assertion::Assertion::Dominates { stronger, weaker, .. } = &promotion.assertion {
+                    let t = crate::transition::TransitionDef {
+                        name: promotion.name.clone(),
+                        kind: kind.clone(),
+                        source: weaker.clone(),
+                        target: stronger.clone(),
+                        preserves: vec![
+                            crate::transition::Invariant::Soundness,
+                        ],
+                        breaks: vec![],
+                        transport: crate::transition::TransportEpistemics {
+                            mode: crate::transition::TransportMode::Conservative,
+                            loss: vec![],
+                        },
+                        functor: None,
+                    };
+                    let morph = crate::morphism::WorldMorphism::opaque(t.clone());
+
+                    let msg = format!(
+                        "[PROMOTE] {} → transition {} ({}: {} → {}, licensed by {})",
+                        promotion.name, promotion.name, kind, weaker, stronger, assertion_result.assertion
+                    );
+                    self.output.push(msg.clone());
+                    self.record_result(&promotion.name, "promoted", Some(msg));
+                    self.morphisms.insert(promotion.name.clone(), morph);
+                    self.transitions.insert(promotion.name.clone(), t);
+                } else {
+                    return Err(MetacosmError::ParseError {
+                        block: "Promote".into(),
+                        detail: "only dominates assertions can be promoted to transitions".into(),
+                    });
+                }
+            }
+            crate::promote::PromotionTarget::Constraint => {
+                // Inject the assertion as an inference constraint
+                let constraints = crate::inference::constraints_from_assertion(
+                    &promotion.assertion,
+                    &promotion.name,
+                );
+
+                let mut applied_count = 0;
+                for c in &constraints {
+                    match crate::inference::try_apply_constraint_pub(c, &mut self.worlds) {
+                        crate::inference::ApplyResultPub::Applied => {
+                            self.output.push(format!("[PROMOTE] constraint applied: {}", c));
+                            applied_count += 1;
+                        }
+                        crate::inference::ApplyResultPub::AlreadySatisfied => {}
+                        crate::inference::ApplyResultPub::Conflict => {
+                            self.output.push(format!("[PROMOTE] constraint conflict: {}", c));
+                        }
+                    }
+                }
+
+                let msg = format!(
+                    "[PROMOTE] {} → constraint ({} applied, licensed by {})",
+                    promotion.name, applied_count, assertion_result.assertion
+                );
+                self.output.push(msg.clone());
+                self.record_result(&promotion.name, "promoted", Some(msg));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn process_law(&mut self, items: &[Sexp]) -> Result<()> {
+        let law = crate::law::parse_law(items)?;
+        let name = law.name.clone();
+
+        let result = crate::law::check_law(
+            &law,
+            &self.worlds,
+            &self.families,
+            &self.transitions,
+            &self.morphisms,
+        );
+
+        let (status, msg) = match &result {
+            crate::metatheory::ProofResult::Proved(cert) => {
+                ("proved", format!("[LAW] {} — PROVED ({}): {:?}", name, law.method, cert.witness))
+            }
+            crate::metatheory::ProofResult::Refuted(cx) => {
+                ("refuted", format!("[LAW] {} — REFUTED ({}): {}", name, law.method, cx.detail))
+            }
+        };
+
+        self.output.push(msg.clone());
+        self.record_result(&name, status, Some(msg));
+        self.laws.insert(name, law);
+        Ok(())
+    }
+
+    fn process_refute(&mut self, items: &[Sexp]) -> Result<()> {
+        let proof = crate::refute::parse_refutation(items)?;
+        let name = proof.name.clone();
+
+        let result = crate::refute::check_impossibility(
+            &proof,
+            &self.worlds,
+            &self.families,
+            &self.transitions,
+            &self.morphisms,
+        );
+
+        let (status, msg) = if result.confirmed {
+            ("confirmed", format!("[REFUTE] {} — CONFIRMED ({}): {}", name, proof.method, result.proof))
+        } else {
+            ("refuted", format!("[REFUTE] {} — WITNESS FOUND ({}): {}", name, proof.method, result.proof))
+        };
+
+        self.output.push(msg.clone());
+        self.record_result(&name, status, Some(msg));
+        self.impossibilities.insert(name, proof);
         Ok(())
     }
 
@@ -769,6 +1161,60 @@ impl MetacosmSession {
         }
 
         msgs
+    }
+
+    fn category_structure_names(&self, category_name: &str) -> Vec<String> {
+        self.hyperion.categories.get(category_name)
+            .map(|cat| cat.structure.iter().map(|s| {
+                use hyperion::category::CategoricalStructure::*;
+                match s {
+                    Exponential { name, .. } => format!("Exponential({})", name),
+                    Evaluator { name } => format!("Evaluator({})", name),
+                    ModalOperator { name } => format!("Modal({})", name),
+                    ContextDecl { name } => format!("Context({})", name),
+                    TensorProduct { name } => format!("Tensor({})", name),
+                    Unit { name } => format!("Unit({})", name),
+                    Preorder { relation } => format!("Preorder({})", relation),
+                    PathType { .. } => "PathType".to_string(),
+                    JType { .. } => "JType".to_string(),
+                    PartialElement { .. } => "PartialElement".to_string(),
+                }
+            }).collect())
+            .unwrap_or_default()
+    }
+
+    /// Run epistemic inference to fixpoint.
+    ///
+    /// Propagates constraints from transitions through the world graph.
+    /// Updates world profiles when inferred values are stronger than defaults.
+    /// Returns the inference result with propagated constraints and violations.
+    pub fn run_inference(&mut self) -> crate::inference::InferenceResult {
+        let result = crate::inference::infer_epistemics(
+            &mut self.worlds,
+            &self.transitions,
+            &self.morphisms,
+        );
+
+        for c in &result.propagated {
+            self.output.push(format!("[INFERRED] {}", c));
+        }
+        for c in &result.violations {
+            self.output.push(format!("[INFERENCE CONFLICT] {}", c));
+        }
+
+        if !result.propagated.is_empty() || !result.violations.is_empty() {
+            self.output.push(format!(
+                "[INFERENCE] {} constraints propagated, {} conflicts, {} iterations",
+                result.propagated.len(), result.violations.len(), result.iterations,
+            ));
+        }
+
+        result
+    }
+
+    /// Run all metatheorems and return results.
+    pub fn verify_metatheorems(&self) -> Vec<crate::metatheory::ProofResult> {
+        crate::metatheory::verify_all(self)
     }
 
     pub fn json_output(&self, had_errors: bool, elapsed_ms: f64) -> serde_json::Value {

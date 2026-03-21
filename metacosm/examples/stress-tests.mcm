@@ -1,0 +1,280 @@
+;; ============================================================
+;; STRESS TESTS: 6 adversarial scenarios to break Metacosm
+;; ============================================================
+;;
+;; These tests verify that Metacosm's inference engine,
+;; composition algebra, and substrate routing are not just
+;; blindly accepting metadata — they enforce real constraints.
+;;
+;; ALL 6 TESTS PRODUCE THE EXPECTED FAILURE/REJECTION.
+
+;; Minimal Hyperion infrastructure (needed for worlds)
+[Category Minimal
+    [Object Type]
+    [Morphism id :domain [Type] :codomain Type]
+]
+
+[Substrate GenericSubstrate
+    @engine term-tree
+    @resource-mode optimal-sharing
+    @barrier transparent
+    @equality rewrite-equivalence
+]
+
+;; ============================================================
+;; TEST 1: "Epistemic Bottleneck" (Composition Algebra)
+;;
+;; Compose Explorer->Certifier->Compiler. Transition 2 breaks
+;; Soundness, so composed transition CANNOT preserve it.
+;; Lossy transport taints the chain, so faithful must fail.
+;;
+;; RESULT: BOTH assertions correctly FAIL.
+;;   - preserves-transition: T1_CoarseGrain breaks Soundness,
+;;     so composed transition inherits the break (union rule)
+;;   - faithful: lossy transport in step 2 taints the chain
+;; ============================================================
+
+[World T1_Explorer
+    :category Minimal
+    :substrate GenericSubstrate
+    :epistemic [:discover complete :verify sound :canonicalize weak-nf]
+    :admits [Tunnel]
+]
+
+[World T1_Certifier
+    :category Minimal
+    :substrate GenericSubstrate
+    :epistemic [:discover heuristic :verify decidable :canonicalize unique-nf]
+    :admits [Tunnel CoarseGrain]
+]
+
+[World T1_Compiler
+    :category Minimal
+    :substrate GenericSubstrate
+    :epistemic [:discover none :verify none :canonicalize none :compress codegen]
+    :admits [CoarseGrain]
+]
+
+[Transition T1_Tunnel
+    :kind Tunnel
+    :from T1_Explorer :to T1_Certifier
+    :transport [:mode witness]
+    :preserves [Soundness]
+]
+
+[Transition T1_CoarseGrain
+    :kind CoarseGrain
+    :from T1_Certifier :to T1_Compiler
+    :transport [:mode lossy]
+    :breaks [PathStructure Soundness]
+]
+
+[Compose T1_ExplorerToCompiler
+    :transitions [T1_Tunnel T1_CoarseGrain]
+]
+
+;; Attack: composed transition cannot preserve what step 2 breaks
+[Assert [preserves-transition T1_ExplorerToCompiler Soundness]]
+
+;; Attack: lossy transport taints the whole chain
+[Assert [faithful T1_ExplorerToCompiler]]
+
+
+;; ============================================================
+;; TEST 2: "Something from Nothing" (Inference Engine)
+;;
+;; A world with verify=none tries to preserve Soundness
+;; via a Tunnel. You can't preserve what you don't have.
+;;
+;; RESULT: ERROR at transition registration.
+;;   "tunnel claims to preserve Soundness but source 'T2_Liar'
+;;    has verify=none — cannot preserve a property the source lacks"
+;; ============================================================
+
+[World T2_Liar
+    :category Minimal
+    :substrate GenericSubstrate
+    :epistemic [:discover none :verify none :canonicalize none]
+    :admits [Tunnel]
+]
+
+[World T2_Target
+    :category Minimal
+    :substrate GenericSubstrate
+    :epistemic [:discover none :verify sound :canonicalize none]
+]
+
+;; Attack: tunnel preserving Soundness from a world with no verification
+[Transition T2_MagicTrick
+    :kind Tunnel
+    :from T2_Liar :to T2_Target
+    :transport [:mode witness]
+    :preserves [Soundness]
+]
+
+
+;; ============================================================
+;; TEST 3: "Domain-Blindness" (Theorem-Class Sensitivity)
+;;
+;; EGraphWorld is complete for Equational but none for
+;; ResourceSensitive. Pipeline must reject Discover on the
+;; wrong theorem class.
+;;
+;; RESULT: PIPELINE VALIDATION ERROR.
+;;   "world 'T3_EGraphWorld' has discover=none for class
+;;    ResourceSensitive, cannot discover"
+;; ============================================================
+
+[World T3_EGraphWorld
+    :category Minimal
+    :substrate GenericSubstrate
+    :epistemic [:discover complete :verify sound]
+    :class-epistemic [
+        [Equational :discover complete :verify decidable]
+        [ResourceSensitive :discover none :verify none]
+    ]
+    :admits [Tunnel]
+]
+
+;; Attack: pipeline discovers ResourceSensitive theorems in EGraphWorld
+[Pipeline T3_BadPipeline
+    [Step bad-discover :action Discover :world T3_EGraphWorld :class ResourceSensitive]
+]
+
+
+;; ============================================================
+;; TEST 4: "Physics Defier" (Substrate Binding)
+;;
+;; Functor maps EGraph->VonNeumann, but transition goes
+;; World_A(EGraph) -> World_B(Rewrite). Substrate mismatch.
+;;
+;; RESULT: FUNCTOR REGISTRATION ERROR.
+;;   The functor can't even be created because no universe
+;;   pairs EGraphSub with VonNeumannSub through the Minimal
+;;   category. Metacosm catches the mismatch at the Hyperion
+;;   layer, before the transition is even declared.
+;; ============================================================
+
+[Substrate EGraphSub
+    @engine interaction-graph
+    @resource-mode optimal-sharing
+    @barrier transparent
+    @equality equality-saturation
+]
+
+[Substrate RewriteSub
+    @engine term-tree
+    @resource-mode optimal-sharing
+    @barrier transparent
+    @equality rewrite-equivalence
+]
+
+[Substrate VonNeumannSub
+    @engine abstract-machine
+    @resource-mode deep-copy
+    @barrier transparent
+    @equality rewrite-equivalence
+]
+
+[Functor BadMap
+    :from EGraphSub :to VonNeumannSub
+    :map-object [Type Type]
+    :map-morphism [id id]
+]
+
+[World T4_WorldA
+    :category Minimal
+    :substrate EGraphSub
+    :epistemic [:discover complete :verify sound]
+    :admits [Tunnel]
+]
+
+[World T4_WorldB
+    :category Minimal
+    :substrate RewriteSub
+    :epistemic [:discover heuristic :verify sound]
+]
+
+;; Attack: functor targets VonNeumann but WorldB uses Rewrite
+[Transition T4_BadTransition
+    :kind Tunnel
+    :from T4_WorldA :to T4_WorldB
+    :functor BadMap
+    :transport [:mode witness]
+    :preserves [Soundness]
+]
+
+
+;; ============================================================
+;; TEST 5: "False Prophet" Metatheorem
+;;
+;; Three worlds all have decidable termination.
+;; A Law claims "for all worlds, termination is decidable."
+;; Model-check must NOT claim universal truth.
+;;
+;; RESULT: REFUTED.
+;;   The law is model-checked over ALL registered worlds
+;;   (not just T5_*). It finds T2_Target (verify=sound,
+;;   termination=unknown) as a counterexample. Even if all
+;;   T5 worlds have decidable termination, the system won't
+;;   lie about universality.
+;; ============================================================
+
+[World T5_A
+    :category Minimal
+    :substrate GenericSubstrate
+    :epistemic [:discover complete :verify [:soundness sound :completeness complete :termination decidable]]
+]
+
+[World T5_B
+    :category Minimal
+    :substrate GenericSubstrate
+    :epistemic [:discover heuristic :verify [:soundness sound :completeness partial :termination decidable]]
+]
+
+[World T5_C
+    :category Minimal
+    :substrate GenericSubstrate
+    :epistemic [:discover none :verify [:soundness sound :completeness none :termination decidable]]
+]
+
+;; Attack: claim universal decidability from a few examples
+[Law T5_FalseProphet
+    :forall [W]
+    :then [termination-decidable W]
+    :method model-check
+]
+
+
+;; ============================================================
+;; TEST 6: "Backwards Conservative Extension"
+;;
+;; Rich is strong, Poor is weak. Embedding Poor as a
+;; conservative extension of Rich is backwards — you can't
+;; conservatively extend into a weaker system.
+;;
+;; RESULT: EMBEDDING ERROR.
+;;   "T6_Poor does not epistemically dominate T6_Rich"
+;; ============================================================
+
+[World T6_Rich
+    :category Minimal
+    :substrate GenericSubstrate
+    :epistemic [
+        :discover complete
+        :verify [:soundness sound :completeness complete :termination decidable]
+        :canonicalize unique-nf
+    ]
+]
+
+[World T6_Poor
+    :category Minimal
+    :substrate GenericSubstrate
+    :epistemic [:discover heuristic :verify none :canonicalize none]
+]
+
+;; Attack: conservative embedding from strong to weak
+[Embedding T6_BadIdea
+    :from T6_Rich :to T6_Poor
+    :properties [conservative]
+]

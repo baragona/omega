@@ -10,6 +10,8 @@ pub struct PipelineStep {
     pub world: String,
     /// Optional target world (for transitions)
     pub target: Option<String>,
+    /// Optional theorem class (for class-sensitive epistemic checks)
+    pub class: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,6 +125,7 @@ fn parse_step(items: &[Sexp]) -> Result<PipelineStep> {
     let mut action: Option<PipelineAction> = None;
     let mut world: Option<String> = None;
     let mut target: Option<String> = None;
+    let mut class: Option<String> = None;
 
     let mut i = 2;
     while i < items.len() {
@@ -141,6 +144,10 @@ fn parse_step(items: &[Sexp]) -> Result<PipelineStep> {
             ":target" => {
                 i += 1;
                 target = items.get(i).and_then(|s| s.as_atom()).map(|s| s.to_string());
+            }
+            ":class" => {
+                i += 1;
+                class = items.get(i).and_then(|s| s.as_atom()).map(|s| s.to_string());
             }
             _ => {
                 return Err(MetacosmError::ParseError {
@@ -166,6 +173,7 @@ fn parse_step(items: &[Sexp]) -> Result<PipelineStep> {
         action,
         world,
         target,
+        class,
     })
 }
 
