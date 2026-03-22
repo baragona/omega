@@ -2,7 +2,7 @@
 
 **Apeiron** is a **logic compiler** built on interaction nets. Instead of hardwiring one logical system, it lets you **choose your physics**: configure the binding strategy and checking strategy, then write axioms and prove theorems within that system.
 
-The kernel is ~6,000 lines of Rust. No dependencies. 29 examples. 122 tests.
+The kernel is ~6,000 lines of Rust. One dependency (egg for e-graphs). 29 examples. 68 tests.
 
 ---
 
@@ -79,8 +79,63 @@ The separation matters: if you accidentally put `@rule` inside a `[Proofs]` bloc
 | `unification` | Pattern matching with meta-variables | Logic programming, type inference |
 | `reversible` | Every rule auto-generates its inverse | Reversible computing |
 | `confluent-race` | Multiple rules may match; non-deterministic | Concurrent/probabilistic systems |
+| `equality-saturation` | Bidirectional `@law` rules via e-graph | Equational reasoning, algebraic simplification |
+| `eta` | Eta-contraction: `(lam x (app f x)) = f` | Extensional equality |
 
 Modes compose: `[@check rewriting beta-reduction]` gives you both.
+
+---
+
+## Proof-Term Extraction and Existence Queries
+
+### `extract-proof`: Witness the Rewrite Chain
+
+When the e-graph proves `a ≡ b`, `extract-proof` returns a structured proof term showing exactly which rules fired:
+
+```lisp
+[Proofs Check :in MyTheory
+  [extract-proof my-proof [comp [comp f g] h] [comp f [comp g h]]]
+]
+```
+
+Output:
+```
+[PROOF] my-proof = {"type":"step","rule":"assoc-fwd","from":"(comp (comp f g) h)","to":"(comp f (comp g h))","sub_proofs":[]}
+```
+
+Multi-step proofs show the full chain:
+```json
+{"type":"concat",
+  "left":{"type":"step","rule":"unit-l-fwd","from":"(comp id a)","to":"a"},
+  "right":{"type":"step","rule":"unit-r-fwd","from":"(comp a id)","to":"a"}}
+```
+
+Proof terms are built from five constructors: `Refl` (identity), `Step` (single rule application), `Concat` (transitivity), `Inv` (symmetry), and `Cong` (congruence).
+
+### `assert-exists`: Existential Queries
+
+Check whether a term satisfying a set of equality constraints exists:
+
+```lisp
+[Proofs Check :in MyTheory
+  [assert-exists filler-exists
+    :such-that
+    [= [src [comp f g]] a]
+    [= [tgt [comp f g]] c]]
+]
+```
+
+Each constraint is a `[= lhs rhs]` pair. All constraints must be simultaneously satisfiable (via direct normalization or e-graph fallback).
+
+### `assert-distinct-paths`: Proof-Relevant Separation
+
+Verify that two path terms are genuinely distinct — not collapsed by the e-graph:
+
+```lisp
+[assert-distinct-paths loop-nontrivial [refl base] loop 2]
+```
+
+In proof-relevant mode, if the two terms remain in different e-classes after saturation, they are counted as distinct (non-collapse = success).
 
 ---
 
@@ -159,7 +214,7 @@ The most innovative port. Omega's STLC uses explicit judgments and derivation tr
 # Run an example
 cargo run -- examples/omega-stlc.ap
 
-# Run all tests (122 tests, ~1s)
+# Run all tests (68 tests, ~1s)
 cargo test
 
 # Try your own
@@ -172,6 +227,7 @@ cargo run -- my-theory.ap
 src/
   arena.rs      — Node arena with recycling and scope management
   builder.rs    — S-expression → interaction net graph compiler
+  egraph.rs     — E-graph equality saturation (via egg), proof-term extraction, proof-relevant mode
   hash.rs       — Topological hashing (alpha-equivalence, equality)
   interact.rs   — Interaction rules: beta, dup, erase, barrier, sym
   morphism.rs   — AutoMorphism engine: binding/checking/op translation

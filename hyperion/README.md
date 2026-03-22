@@ -2,6 +2,8 @@
 
 **A Logical Framework Framework Framework.**
 
+A research prototype exploring whether category theory can systematically classify the design space of logical frameworks. It's closer to a "type system for type systems" than a compiler tool.
+
 Hyperion is a meta-system for building logical frameworks. You describe the *mathematics* you want (a category) and the *computational physics* you want it to run on (a substrate), and Hyperion compiles the two together into a working logical system, verifying that your math is actually implementable on your chosen physics.
 
 The core insight: not every mathematical structure can run on every computational substrate. Lambda calculus needs an engine that supports closures. Modal logic needs scope isolation. Tensor products need parallel composition. Hyperion enforces these constraints at compile time, then generates the correct backend configuration automatically.
@@ -58,7 +60,7 @@ It strips everything away until all you are left with is the pure relationship b
 
 A **Category** declares pure mathematical structure: what your sorts are (Objects), what operations exist (Morphisms), and what higher structure is present (Exponentials for lambda, TensorProducts for parallel composition, ModalOperators for necessity, PathType for HoTT, Preorder for reflexive relations).
 
-A **Substrate** declares computational physics: what engine executes your terms (interaction graphs, term trees, cellular automata, symmetric monoidal nets, von Neumann machines), how resources are managed (optimal sharing, linear, affine, deep copy), how scoping works (transparent, contextual membranes, cryptographic), and what notion of equality the system uses (rewriting, hashing, unification, homotopy, equality saturation).
+A **Substrate** declares computational physics: what engine executes your terms (interaction graphs, term trees, cellular automata, symmetric monoidal nets, von Neumann machines), how resources are managed (optimal sharing, linear, affine, deep copy), how scoping works (transparent, contextual membranes, cryptographic), and what notion of equality the system uses (rewriting, hashing, unification, homotopy, equality saturation, proof-relevant).
 
 A **Universe** binds a Category to a Substrate. Hyperion checks compatibility, then compiles both into an [Apeiron](../apeiron/) system configuration with the correct binding mode, checking strategy, and scope declarations.
 
@@ -324,6 +326,129 @@ PathType composes freely with other categorical structures. Users can add rules 
 ```
 
 See `modal-hott.hyp` and `monoidal-hott.hyp` for full examples of PathType composed with CCC+Modal and SymmetricMonoidal respectively.
+
+## Proof-Term Extraction
+
+When the e-graph proves an equality, `extract-proof` returns a structured proof term showing the chain of named rewrite steps. This is critical for higher-categorical verification where the proof term IS the higher-dimensional cell (e.g., the associator 2-cell in a 2-category).
+
+```
+[Proofs MonoidCheck :in MonoidTheory
+  ;; Extract the associator as a proof term
+  [extract-proof alpha_fgh
+    [comp [comp f g] h]
+    [comp f [comp g h]]]
+
+  ;; Multi-step proof: unit-l then unit-r
+  [extract-proof unit-chain
+    [comp id [comp a id]]
+    a]
+]
+```
+
+Output:
+```
+[PROOF] alpha_fgh = {"type":"step","rule":"assoc-fwd","from":"(comp (comp f g) h)","to":"(comp f (comp g h))"}
+[PROOF] unit-chain = {"type":"concat",
+  "left":{"type":"step","rule":"unit-l-fwd","from":"(comp id (comp a id))","to":"(comp a id)"},
+  "right":{"type":"step","rule":"unit-r-fwd","from":"(comp a id)","to":"a"}}
+```
+
+Proof terms are built from five constructors:
+- **Refl**: identity (`a ≡ a`)
+- **Step**: single rule application with rule name, source, target
+- **Concat**: transitivity (chain two proofs)
+- **Inv**: symmetry (reverse a proof)
+- **Cong**: congruence (same head, proofs for each argument)
+
+When `assert-eq` succeeds via the e-graph, the proof term is now included in the output automatically.
+
+## Existence Queries (`assert-exists`)
+
+Check whether terms satisfying equality constraints exist, without providing explicit witnesses:
+
+```
+[Proofs KanCheck :in KanTheory
+  ;; Does a composite with the right source and target exist?
+  [assert-exists composite_exists
+    :such-that
+    [= [src [comp f g]] a]
+    [= [tgt [comp f g]] c]]
+
+  ;; Does an associator 2-cell exist?
+  [assert-exists assoc_exists
+    :such-that
+    [= [src2 [assoc_cell f g h]] [comp [comp f g] h]]
+    [= [tgt2 [assoc_cell f g h]] [comp f [comp g h]]]]
+]
+```
+
+Each constraint is a `[= lhs rhs]` pair. All constraints must be simultaneously satisfiable via direct normalization or e-graph fallback. This enables verification of Kan conditions: "for every composable pair, there exists a filler."
+
+## Proof-Relevant Equality Mode
+
+A substrate mode where the e-graph tracks labeled edges instead of collapsing identity. Two terms can be connected by multiple distinct paths:
+
+```
+[Substrate HoTTSub
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality proof-relevant        ;; NEW MODE
+]
+```
+
+Use `assert-distinct-paths` to verify that two path terms are genuinely distinct — not collapsed by the e-graph:
+
+```
+[Proofs CircleCheck :in CircleTheory
+  ;; refl(base) and loop are both base=base paths, but distinct
+  [assert-distinct-paths loop_nontrivial [refl base] loop 2]
+
+  ;; loop and loop∘loop are also distinct
+  [assert-distinct-paths winding_distinct loop [concat loop loop] 2]
+]
+```
+
+In proof-relevant mode, if the two terms remain in different e-classes after saturation, they are counted as distinct (non-collapse = success). This preserves path spaces for HoTT: `refl` and `loop` on S¹ are different paths even though they share endpoints.
+
+## Kernel Cubical Reduction
+
+The `[IntervalSort]` categorical structure enables kernel-level reduction rules for cubical type theory. These fire as directed `@rule` rewrites before e-graph saturation:
+
+```
+[Category CubicalCat
+  [Object Type]
+  [Morphism coe    :domain [Type Type Type] :codomain Type]
+  [Morphism hcomp  :domain [Type Type]      :codomain Type]
+  [Morphism refl   :domain [Type]           :codomain Type]
+  [Morphism concat :domain [Type Type]      :codomain Type]
+  [Morphism inv    :domain [Type]           :codomain Type]
+  [Morphism ap     :domain [Type Type]      :codomain Type]
+  [PathType :refl refl :concat concat :inv inv :ap ap]
+  [PartialElement :hcomp hcomp :coe coe]
+  [IntervalSort :interval I :endpoints [i0 i1]]   ;; NEW
+]
+```
+
+When `IntervalSort`, `PathType`, and `PartialElement` are all present, Hyperion auto-injects kernel cubical reduction rules:
+
+| Rule | Reduction |
+|------|-----------|
+| `coe(refl(A), i, x)` | `x` (from PartialElement) |
+| `hcomp(refl(a), base)` | `base` (from PartialElement) |
+| `coe(concat(p, q), i, x)` | `coe(q, i, coe(p, i, x))` (composite path decomposition) |
+| `coe(inv(p), i, x)` | `coe(p, i, x)` (inverse path unwrapping) |
+
+These are deterministic reductions that fire at the kernel level. Without them, `coe` along complex paths doesn't simplify and verification times out.
+
+```
+[Proofs CubicalCheck :in CubicalTT
+  [assert-eq coe-refl    [coe [refl A] i0 x] x]
+  [assert-eq coe-concat  [coe [concat p q] i0 x] [coe q i0 [coe p i0 x]]]
+  [assert-eq coe-inv     [coe [inv p] i0 x] [coe p i0 x]]
+  [assert-eq hcomp-refl  [hcomp [refl A] x] x]
+]
+```
 
 ## Equational Laws (`@law`) and E-Graph Simplification
 
@@ -845,6 +970,8 @@ Several categorical structures auto-inject rules or ops into theories. This tabl
 | SymmetricMonoidal | `tensor`, `unit` | None | Associativity + unit `@rule`s |
 | PathType (with Evaluator) | `refl`, `concat`, `inv`, `ap` | 5 path algebra `@rule`s | Nothing |
 | PathType (no Evaluator) | `refl`, `concat`, `inv`, `ap` | 4 path algebra `@rule`s (no ap-refl) | Nothing |
+| PartialElement | `hcomp`, `coe` | 2 cubical `@rule`s (coe-refl, hcomp-refl) | Nothing |
+| IntervalSort + PathType + PartialElement | `I`, `i0`, `i1` | 2 kernel cubical `@rule`s (coe-concat, coe-inv) | Nothing |
 | Preorder | `true` | Reflexivity `@rule` | Nothing |
 | ModalOperator | `box` | None | Modal distribution rules |
 
@@ -875,21 +1002,22 @@ User theories can also declare `@law` equational laws (bidirectional in e-graph)
 | `schrodinger-egraph.hyp` | E-graph meets modal barriers --- scope isolation stress test |
 | `verify-functor-resource.hyp` | Resource-aware VerifyFunctor (linear-to-linear transport) |
 | `prelude-demo.hyp` | Using prelude categories and substrates |
+| `catlab-features.hyp` | Proof-term extraction, assert-exists, proof-relevant mode, kernel cubical reduction |
 
 ## Architecture
 
 ```
 hyperion/
   src/
-    category.rs      Category definitions and parsing (CCC, Monoidal, PathType, Preorder, Modal)
-    substrate.rs     Substrate definitions (Engine, ResourceMode, BarrierMode, EqualityMode)
+    category.rs      Category definitions and parsing (CCC, Monoidal, PathType, Preorder, Modal, IntervalSort)
+    substrate.rs     Substrate definitions (Engine, ResourceMode, BarrierMode, EqualityMode incl. ProofRelevant)
     universe.rs      Universe binding and naming
     compile.rs       Compatibility checking + Apeiron system generation
     functor.rs       Cross-substrate functor definitions (incl. :verify flag)
     nat_trans.rs     Natural transformation definitions
     adjunction.rs    Adjunction definitions
     laws.rs          Categorical law auto-generation (flat + structural witnesses)
-    session.rs       Main session orchestration (VerifyFunctor, PathType/Preorder injection)
+    session.rs       Main session orchestration (VerifyFunctor, PathType/Preorder/Cubical injection)
     codegen/
       mod.rs         Von Neumann kompile entry point
       rust_ast.rs    Lightweight Rust AST types
@@ -907,7 +1035,7 @@ Hyperion depends on [Apeiron](../apeiron/) for term rewriting, beta reduction, a
 ## CLI Reference
 
 ```
-hyperion check <file.hyp> [-v] [--no-prelude] [--skip-laws]
+hyperion check <file.hyp> [-v] [--no-prelude] [--skip-laws] [--json] [--stdin]
 hyperion kompile <file.hyp> --theory <name> -o <output_dir/>
 ```
 
@@ -916,12 +1044,14 @@ hyperion kompile <file.hyp> --theory <name> -o <output_dir/>
 | `-v` | Print stats (categories, substrates, universes, Apeiron node counts) |
 | `--no-prelude` | Don't load the standard prelude |
 | `--skip-laws` | Don't verify categorical laws after theory loading |
+| `--json` | Output structured JSON (CatLab schema: status, results, discoveries) |
+| `--stdin` | Read input from stdin instead of a file |
 | `--theory` | Theory name for kompile |
 | `-o` | Output directory for generated Rust crate |
 
 ## Tests
 
-134 tests (27 unit + 107 integration), covering:
+160 tests (42 unit + 118 integration), covering:
 
 - Category/substrate/universe parsing and validation
 - All compatibility rejection rules (PathType with/without Evaluator, modal, tensor, VN)
@@ -937,7 +1067,11 @@ hyperion kompile <file.hyp> --theory <name> -o <output_dir/>
 - `@law` vs `@rule` distinction, `eval-simplify`, and law propagation through imports
 - Autonomous e-graph discovery (Eckmann-Hilton coincidence + commutativity from independent axioms)
 - Cross-physics epistemic transport (e-graph → functor → directed verification + physics gap)
-- All 21 example files
+- Proof-term extraction via egg's Explanation API (`extract-proof`)
+- Existence queries (`assert-exists` with `:such-that` constraints)
+- Proof-relevant equality mode (`@equality proof-relevant`, `assert-distinct-paths`)
+- Kernel cubical reduction (`IntervalSort` + auto-injected coe-concat, coe-inv rules)
+- All example files
 
 ```bash
 cargo test
