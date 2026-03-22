@@ -119,7 +119,8 @@ impl MetacosmSession {
             "Materialize" => self.process_materialize(items),
             "Promote" => self.process_promote(items),
             "Law" => self.process_law(items),
-            "Refute" => self.process_refute(items),
+            "Refute" | "Impossibility" => self.process_refute(items),
+            "Emit" => self.process_emit(items),
 
             // --- Hyperion pass-through (Layer 2: category + substrate) ---
             "Category" | "Substrate" | "Universe" | "Functor"
@@ -1045,6 +1046,132 @@ impl MetacosmSession {
         self.output.push(msg.clone());
         self.record_result(&name, status, Some(msg));
         self.impossibilities.insert(name, proof);
+        Ok(())
+    }
+
+    fn process_emit(&mut self, items: &[Sexp]) -> Result<()> {
+        let decl = crate::emit::parse_emit(items)?;
+
+        // Validate references
+        let pipeline = self.pipelines.get(&decl.pipeline).ok_or_else(|| MetacosmError::Undefined {
+            kind: "Pipeline".into(),
+            name: decl.pipeline.clone(),
+        })?.clone();
+
+        // Check that the theory exists in Hyperion
+        if !self.hyperion.theory_universes.contains_key(&decl.theory) {
+            return Err(MetacosmError::Undefined {
+                kind: "Theory".into(),
+                name: decl.theory.clone(),
+            });
+        }
+
+        let input_str = format!("{}", decl.term);
+        let input_size = crate::emit::sexp_size(&decl.term);
+
+        // Construct a synthetic [Proofs __EmitProof :in TheoryName [eval __emit EXPR]]
+        use apeiron::parser::Span;
+        let sp = Span::default();
+        let proofs_sexp = Sexp::List(vec![
+            Sexp::Atom("Proofs".into(), sp),
+            Sexp::Atom("__EmitProof".into(), sp),
+            Sexp::Atom(":in".into(), sp),
+            Sexp::Atom(decl.theory.clone(), sp),
+            Sexp::List(vec![
+                Sexp::Atom("eval".into(), sp),
+                Sexp::Atom(format!("__emit_{}", decl.name), sp),
+                decl.term.clone(),
+            ], sp),
+        ], sp);
+
+        // Process through Hyperion → Apeiron to normalize the term
+        self.hyperion.process(&proofs_sexp).map_err(MetacosmError::from)?;
+
+        // Capture the eval output from Hyperion
+        let eval_prefix = format!("[EVAL] __emit_{}", decl.name);
+        let mut normalized_str = String::new();
+        let mut interactions: u64 = 0;
+
+        // Drain Hyperion output, capturing the eval result
+        let hyp_output: Vec<String> = self.hyperion.output.drain(..).collect();
+        for line in &hyp_output {
+            if line.starts_with(&eval_prefix) {
+                // Parse: "[EVAL] __emit_Name = RESULT (N interactions)"
+                if let Some(eq_pos) = line.find(" = ") {
+                    let rest = &line[eq_pos + 3..];
+                    if let Some(paren_pos) = rest.rfind(" (") {
+                        normalized_str = rest[..paren_pos].to_string();
+                        // Extract interaction count
+                        let cost_str = &rest[paren_pos + 2..];
+                        if let Some(space) = cost_str.find(' ') {
+                            interactions = cost_str[..space].parse().unwrap_or(0);
+                        }
+                    } else {
+                        normalized_str = rest.to_string();
+                    }
+                }
+            } else {
+                self.output.push(line.clone());
+            }
+        }
+
+        // Also drain Apeiron output through Hyperion
+        let ap_output: Vec<String> = self.hyperion.apeiron.output.drain(..).collect();
+        for line in &ap_output {
+            if line.starts_with(&eval_prefix) {
+                if let Some(eq_pos) = line.find(" = ") {
+                    let rest = &line[eq_pos + 3..];
+                    if let Some(paren_pos) = rest.rfind(" (") {
+                        normalized_str = rest[..paren_pos].to_string();
+                        let cost_str = &rest[paren_pos + 2..];
+                        if let Some(space) = cost_str.find(' ') {
+                            interactions = cost_str[..space].parse().unwrap_or(0);
+                        }
+                    } else {
+                        normalized_str = rest.to_string();
+                    }
+                }
+            }
+        }
+
+        if normalized_str.is_empty() {
+            normalized_str = format!("{}", decl.term);
+        }
+
+        let output_size = normalized_str.len();
+
+        // Execute pipeline materialization (epistemic journey)
+        let journey = crate::materialize::materialize_pipeline(
+            &pipeline, &self.worlds, &self.transitions,
+        )?;
+
+        let result = crate::emit::EmitResult {
+            name: decl.name.clone(),
+            input: input_str,
+            output: normalized_str.clone(),
+            interactions,
+            theory: decl.theory.clone(),
+            journey,
+            cost: crate::emit::EmitCost {
+                interactions,
+                term_size_input: input_size,
+                term_size_output: output_size,
+            },
+        };
+
+        // Format output based on requested format
+        match decl.format {
+            crate::emit::EmitFormat::EpistemicReceipt => {
+                for line in format!("{}", result).lines() {
+                    self.output.push(format!("[EMIT] {}", line));
+                }
+            }
+            crate::emit::EmitFormat::Term => {
+                self.output.push(format!("[EMIT] {} = {}", decl.name, normalized_str));
+            }
+        }
+
+        self.record_result(&decl.name, "emitted", Some(format!("[EMIT] {} → {}", decl.name, normalized_str)));
         Ok(())
     }
 

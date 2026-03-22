@@ -33,6 +33,8 @@ pub enum VerificationMethod {
     ModelCheck,
     /// Structural/algebraic proof. True metatheory.
     Structural,
+    /// Tactic-based proof script. True metatheory via proof engine.
+    Proof,
 }
 
 impl std::fmt::Display for VerificationMethod {
@@ -40,6 +42,7 @@ impl std::fmt::Display for VerificationMethod {
         match self {
             VerificationMethod::ModelCheck => write!(f, "model-check"),
             VerificationMethod::Structural => write!(f, "structural"),
+            VerificationMethod::Proof => write!(f, "proof"),
         }
     }
 }
@@ -50,12 +53,16 @@ pub struct CosmologicalLaw {
     pub name: String,
     /// Quantified variable names (bound to worlds during checking)
     pub quantified: Vec<String>,
+    /// Typed variable bindings (for proof mode)
+    pub variable_types: Vec<(String, crate::proof_engine::VarType)>,
     /// Premises: assertions that must hold for the law to apply
     pub premises: Vec<Assertion>,
     /// Conclusion: assertion that should follow
     pub conclusion: Assertion,
     /// How to verify
     pub method: VerificationMethod,
+    /// Tactic proof script (for :method proof)
+    pub proof_script: Vec<crate::proof_engine::Tactic>,
 }
 
 /// Parse a `[Law Name :forall [...] :where [[...] ...] :then [...] :method M]` block.
@@ -73,9 +80,11 @@ pub fn parse_law(items: &[Sexp]) -> Result<CosmologicalLaw> {
     })?.to_string();
 
     let mut quantified = Vec::new();
+    let mut variable_types = Vec::new();
     let mut premises = Vec::new();
     let mut conclusion: Option<Assertion> = None;
     let mut method = VerificationMethod::ModelCheck;
+    let mut proof_script = Vec::new();
 
     let mut i = 2;
     while i < items.len() {
@@ -84,14 +93,21 @@ pub fn parse_law(items: &[Sexp]) -> Result<CosmologicalLaw> {
             ":forall" => {
                 i += 1;
                 if let Some(vars) = items.get(i).and_then(|s| s.as_list()) {
-                    for v in vars {
-                        if let Some(name) = v.as_atom() {
-                            quantified.push(name.to_string());
+                    // Check if it's a typed forall (contains :type)
+                    let has_type = vars.iter().any(|v| v.as_atom() == Some(":type"));
+                    if has_type {
+                        variable_types = crate::proof_engine::parse_typed_forall(vars)?;
+                        quantified = variable_types.iter().map(|(n, _)| n.clone()).collect();
+                    } else {
+                        for v in vars {
+                            if let Some(name) = v.as_atom() {
+                                quantified.push(name.to_string());
+                            }
                         }
                     }
                 }
             }
-            ":where" => {
+            ":where" | ":assume" => {
                 i += 1;
                 if let Some(prem_list) = items.get(i).and_then(|s| s.as_list()) {
                     for p in prem_list {
@@ -101,7 +117,7 @@ pub fn parse_law(items: &[Sexp]) -> Result<CosmologicalLaw> {
                     }
                 }
             }
-            ":then" => {
+            ":then" | ":show" => {
                 i += 1;
                 if let Some(body) = items.get(i).and_then(|s| s.as_list()) {
                     conclusion = Some(parse_assertion_body(body)?);
@@ -113,11 +129,18 @@ pub fn parse_law(items: &[Sexp]) -> Result<CosmologicalLaw> {
                     method = match m {
                         "model-check" => VerificationMethod::ModelCheck,
                         "structural" => VerificationMethod::Structural,
+                        "proof" => VerificationMethod::Proof,
                         _ => return Err(MetacosmError::ParseError {
                             block: "Law".into(),
-                            detail: format!("unknown method: '{}' (expected model-check or structural)", m),
+                            detail: format!("unknown method: '{}' (expected model-check, structural, or proof)", m),
                         }),
                     };
+                }
+            }
+            ":proof" => {
+                i += 1;
+                if let Some(tac_list) = items.get(i).and_then(|s| s.as_list()) {
+                    proof_script = crate::proof_engine::parse_tactics(tac_list)?;
                 }
             }
             _ => {
@@ -132,15 +155,17 @@ pub fn parse_law(items: &[Sexp]) -> Result<CosmologicalLaw> {
 
     let conclusion = conclusion.ok_or_else(|| MetacosmError::ParseError {
         block: "Law".into(),
-        detail: "missing :then".into(),
+        detail: "missing :then or :show".into(),
     })?;
 
     Ok(CosmologicalLaw {
         name,
         quantified,
+        variable_types,
         premises,
         conclusion,
         method,
+        proof_script,
     })
 }
 
@@ -158,6 +183,9 @@ pub fn check_law(
         }
         VerificationMethod::Structural => {
             structural_check_law(law)
+        }
+        VerificationMethod::Proof => {
+            proof_check_law(law)
         }
     }
 }
@@ -216,6 +244,48 @@ fn structural_check_law(law: &CosmologicalLaw) -> ProofResult {
         detail: "structural proof not available for this law form — use :method model-check instead".into(),
         witness: vec![],
     })
+}
+
+/// Tactic-based proof: evaluate a proof script against the proof engine.
+fn proof_check_law(law: &CosmologicalLaw) -> ProofResult {
+    use crate::proof_engine;
+
+    // Build variable types (use parsed types or default to World)
+    let var_types = if !law.variable_types.is_empty() {
+        law.variable_types.clone()
+    } else {
+        law.quantified.iter()
+            .map(|n| (n.clone(), proof_engine::VarType::World))
+            .collect()
+    };
+
+    // Convert premises to Props
+    let premises: Vec<(String, proof_engine::Prop)> = law.premises.iter()
+        .enumerate()
+        .map(|(i, a)| (format!("h{}", i + 1), proof_engine::assertion_to_prop(a)))
+        .collect();
+
+    // Convert conclusion to Prop
+    let conclusion = proof_engine::assertion_to_prop(&law.conclusion);
+
+    let state = proof_engine::ProofState::new(var_types, premises, conclusion);
+
+    match proof_engine::evaluate_proof(&law.name, state, &law.proof_script) {
+        Ok(cert) => ProofResult::Proved(ProofCertificate {
+            theorem: cert.theorem,
+            witness: Witness::ByConstruction(
+                format!("proved by tactic script ({} steps):\n{}",
+                    cert.trace.len(),
+                    cert.trace.join("\n")
+                ),
+            ),
+        }),
+        Err(e) => ProofResult::Refuted(Counterexample {
+            theorem: law.name.clone(),
+            detail: format!("{}", e),
+            witness: vec![],
+        }),
+    }
 }
 
 /// Model-check a law over all registered worlds.

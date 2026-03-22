@@ -1,0 +1,576 @@
+;; ============================================================
+;; THE GOLDEN PATH: End-to-End Theorem Pipeline
+;;
+;; A complete, realistic theorem-proving workflow modeled as
+;; a three-stage epistemic pipeline:
+;;
+;;   Stage 1: EXPLORATION (EGraph)
+;;     Complete discovery via equality saturation. The e-graph
+;;     finds ALL equivalent forms of a term — exhaustive, slow,
+;;     memory-hungry, but mathematically complete.
+;;
+;;   Stage 2: CERTIFICATION (Rewrite)
+;;     Decidable verification via directed term rewriting. The
+;;     rewriter takes a candidate equivalence from Stage 1 and
+;;     produces a structural witness — a concrete chain of
+;;     rewrites proving the equality. Strong normalization
+;;     guarantees termination.
+;;
+;;   Stage 3: EXECUTION (VonNeumann)
+;;     Compiled artifact on a von Neumann machine. All proof
+;;     structure is erased; only the computational content
+;;     survives. Fast, deterministic, deployable.
+;;
+;; The pipeline preserves Soundness end-to-end but sacrifices
+;; PathStructure at the certification stage (e-graph equivalence
+;; classes don't map 1:1 to rewrite chains) and sacrifices
+;; ResourceSensitivity at the compilation stage (the compiler
+;; doesn't track resource usage).
+;;
+;; This is how real theorem provers work:
+;;   Lean's elaborator → kernel → compiler
+;;   Coq's tactics → Gallina → extraction
+;;   Omega's e-graph → rewrite → kompile
+;; ============================================================
+
+
+;; ============================================================
+;; LAYER 2: Hyperion Infrastructure
+;;
+;; A simply-typed lambda calculus category with application,
+;; lambda abstraction, and evaluation. Three substrates with
+;; radically different computational physics.
+;; ============================================================
+
+[Category STLC
+    [Object Type]
+    [Object Term]
+    [Morphism app :domain [Term Term] :codomain Term]
+    [Exponential lam :object Type]
+    [Evaluator app]
+]
+
+;; Stage 1 substrate: interaction graphs with equality saturation.
+;; The e-graph represents ALL equivalent terms simultaneously
+;; via equivalence classes. Exploration is complete but expensive.
+[Substrate EGraph
+    @engine interaction-graph
+    @resource-mode optimal-sharing
+    @barrier transparent
+    @equality equality-saturation
+]
+
+;; Stage 2 substrate: term trees with directed rewriting.
+;; The rewriter applies rules in a fixed strategy (innermost-first)
+;; to produce a unique normal form. Decidable, confluent, efficient.
+[Substrate Rewrite
+    @engine term-tree
+    @resource-mode optimal-sharing
+    @barrier transparent
+    @equality rewrite-equivalence
+]
+
+;; Stage 3 substrate: abstract machine with deep copy.
+;; A von-Neumann-style evaluator. No term structure, no proof
+;; objects — just a call stack and heap. The endpoint of
+;; compilation.
+[Substrate VonNeumann
+    @engine abstract-machine
+    @resource-mode deep-copy
+    @barrier transparent
+    @equality rewrite-equivalence
+]
+
+
+;; ============================================================
+;; LAYER 3: Metacosm Worlds
+;;
+;; Each world pairs a substrate with an epistemic profile that
+;; declares what the world CAN do (soundly, not aspirationally).
+;; The audit system cross-checks these claims against the
+;; substrate's physical capabilities.
+;; ============================================================
+
+;; EXPLORER: The e-graph searcher.
+;; Complete discovery (equality saturation enumerates all equivalences).
+;; Sound but not complete verification (it finds, it doesn't prove).
+;; Weak canonicalization (e-graphs don't produce unique normal forms).
+;; No compression.
+;;
+;; Class sensitivity: equational reasoning is the sweet spot;
+;; resource-sensitive reasoning (linear types, affine resources)
+;; is impossible in an e-graph that freely duplicates terms.
+[World Explorer
+    :category STLC
+    :substrate EGraph
+    :epistemic [
+        :discover complete
+        :verify sound
+        :canonicalize [:normalization weak :confluence yes]
+        :compress none
+    ]
+    :class-epistemic [
+        [Equational    :discover complete :verify decidable]
+        [Inductive     :discover semi-decidable :verify sound]
+        [Linear        :discover none :verify none]
+    ]
+    :admits [Tunnel Split]
+]
+
+;; CERTIFIER: The structural witness builder.
+;; Heuristic discovery (directed search, not exhaustive).
+;; Decidable verification with strong normalization.
+;; Unique normal forms (confluence + termination = canonical representatives).
+;; Lossless compression (proof terms can be serialized and replayed).
+[World Certifier
+    :category STLC
+    :substrate Rewrite
+    :epistemic [
+        :discover heuristic
+        :verify [:soundness sound :completeness complete :termination decidable]
+        :canonicalize [:normalization strong :confluence yes :unique-normal-forms yes]
+        :compress [:mode lossless :lossy no :invertible yes]
+    ]
+    :class-epistemic [
+        [Equational :discover heuristic :verify decidable]
+        [Inductive  :discover heuristic :verify decidable]
+        [Linear     :discover heuristic :verify decidable]
+    ]
+    :admits [CoarseGrain Tunnel]
+]
+
+;; EXECUTOR: The compiled artifact.
+;; No discovery (it runs, it doesn't search).
+;; Heuristic verification (runtime assertions, not proofs).
+;; No canonicalization (compiled code has no normal forms).
+;; Codegen compression (proof → executable, lossy, non-invertible).
+[World Executor
+    :category STLC
+    :substrate VonNeumann
+    :epistemic [
+        :discover none
+        :verify heuristic
+        :canonicalize none
+        :compress [:mode codegen :lossy yes :invertible no]
+    ]
+]
+
+
+;; ============================================================
+;; FUNCTORS: Structure-Preserving Maps Between Substrates
+;;
+;; Each functor maps the STLC category between substrates,
+;; preserving the type/term distinction and the app morphism.
+;; ============================================================
+
+;; E-graph → Rewrite: extract a representative from each e-class
+;; and map it to the corresponding term tree.
+[Functor Extract
+    :from EGraph :to Rewrite
+    :map-object [Type Type]
+    :map-object [Term Term]
+    :map-morphism [app app]
+]
+
+;; Rewrite → VonNeumann: compile term trees to machine code.
+;; The lam/app structure becomes closure allocation + function calls.
+[Functor Compile
+    :from Rewrite :to VonNeumann
+    :map-object [Type Type]
+    :map-object [Term Term]
+    :map-morphism [app app]
+]
+
+
+;; ============================================================
+;; TRANSITIONS: Epistemic Morphisms Between Worlds
+;;
+;; Each transition carries transport metadata: what mode of
+;; evidence transfer is used, what is preserved, what breaks.
+;; ============================================================
+
+;; Stage 1 → Stage 2: Tunnel from Explorer to Certifier.
+;; The e-graph's equivalence class becomes a rewrite witness.
+;; Soundness is preserved (if the e-graph says A=B, there exists
+;; a rewrite chain A→...→B). PathStructure breaks (the specific
+;; path through the e-graph is not preserved).
+[Transition ExploreToCertify
+    :kind Tunnel
+    :from Explorer :to Certifier
+    :functor Extract
+    :transport [:mode witness :loss [PathStructure]]
+    :preserves [Soundness Completeness]
+    :breaks [PathStructure]
+]
+
+;; Stage 2 → Stage 3: Coarse-grain from Certifier to Executor.
+;; The rewrite witness is compiled away — only the result survives.
+;; Soundness is preserved (the compiled code computes the same
+;; value). ResourceSensitivity breaks (the compiler doesn't track
+;; which resources were consumed by the proof).
+[Transition CertifyToExecute
+    :kind CoarseGrain
+    :from Certifier :to Executor
+    :functor Compile
+    :transport [:mode lossy :loss [ResourceSensitivity PathStructure]]
+    :preserves [Soundness]
+    :breaks [ResourceSensitivity PathStructure]
+]
+
+
+;; ============================================================
+;; COMPOSITION: The Full Pipeline as a Single Transition
+;;
+;; Composing the two transitions gives us the end-to-end map.
+;; By the composition algebra:
+;;   preserves = intersection = {Soundness}
+;;   breaks    = union        = {PathStructure, ResourceSensitivity}
+;;   transport = max(witness, lossy) = lossy
+;; ============================================================
+
+[Compose ExploreToExecute
+    :transitions [ExploreToCertify CertifyToExecute]
+]
+
+
+;; ============================================================
+;; FAMILY: The Three Worlds Form a Theorem Pipeline
+;;
+;; The family invariant is Soundness: no matter how many
+;; transformations we apply, the final result is sound with
+;; respect to the original theory.
+;; ============================================================
+
+[Family GoldenPipeline
+    :worlds [Explorer Certifier Executor]
+    :invariants [Soundness]
+]
+
+
+;; ============================================================
+;; OBSERVABLES: What We Can Measure
+;;
+;; Semantic observables are derived from the epistemic profile.
+;; Empirical observables require actual measurement data.
+;; ============================================================
+
+;; --- Semantic: derived from epistemic profiles ---
+[Observable DiscPower :kind discovery-strength]
+[Observable VerifySound :kind verification-soundness]
+[Observable VerifyComplete :kind verification-completeness]
+[Observable VerifyTerminate :kind verification-termination]
+[Observable VerifyProfile :kind verification-strength]
+[Observable CanonNorm :kind canonicality-normalization]
+[Observable CanonConfluence :kind canonicality-confluence]
+[Observable CanonUniqueNF :kind canonicality-unique-nf]
+[Observable CompressMode :kind compression-mode]
+[Observable CompressLossy :kind compression-lossy]
+[Observable EpDist :kind epistemic-distance]
+
+;; --- Empirical: operational measurements ---
+[Observable SearchTime :kind search-cost]
+[Observable ProofSize :kind proof-size]
+[Observable ExecRuntime :kind runtime]
+[Observable WitnessExtract :kind witness-extraction-cost]
+
+
+;; ============================================================
+;; MEASUREMENTS: Semantic Profile Reads
+;;
+;; Each measurement reads a specific axis from a world's
+;; epistemic profile. The system derives the value — you don't
+;; get to make it up.
+;; ============================================================
+
+;; Discovery power across all three stages
+[Measure :observable DiscPower :world Explorer]
+[Measure :observable DiscPower :world Certifier]
+[Measure :observable DiscPower :world Executor]
+
+;; Class-sensitive discovery: Explorer's sweet spot and blind spot
+[Measure :observable DiscPower :world Explorer :class Equational]
+[Measure :observable DiscPower :world Explorer :class Inductive]
+[Measure :observable DiscPower :world Explorer :class Linear]
+
+;; Verification profile across stages
+[Measure :observable VerifySound :world Explorer]
+[Measure :observable VerifySound :world Certifier]
+[Measure :observable VerifySound :world Executor]
+[Measure :observable VerifyComplete :world Certifier]
+[Measure :observable VerifyTerminate :world Certifier]
+[Measure :observable VerifyProfile :world Certifier]
+
+;; Canonicalization profile
+[Measure :observable CanonNorm :world Explorer]
+[Measure :observable CanonNorm :world Certifier]
+[Measure :observable CanonConfluence :world Explorer]
+[Measure :observable CanonConfluence :world Certifier]
+[Measure :observable CanonUniqueNF :world Certifier]
+
+;; Compression profile
+[Measure :observable CompressMode :world Executor]
+[Measure :observable CompressLossy :world Executor]
+
+;; Epistemic distances between stages
+[Measure :observable EpDist :world Explorer :target Certifier]
+[Measure :observable EpDist :world Certifier :target Executor]
+[Measure :observable EpDist :world Explorer :target Executor]
+
+;; --- Empirical measurements: realistic operational data ---
+[Measure :observable SearchTime :world Explorer :value 4200ms]
+[Measure :observable ProofSize :world Certifier :value 1847terms]
+[Measure :observable ExecRuntime :world Executor :value 0.3ms]
+[Measure :observable WitnessExtract :world Certifier :value 120ms]
+
+
+;; ============================================================
+;; ASSERTIONS: Formal Claims About the Pipeline
+;; ============================================================
+
+;; Explorer dominates Certifier on discovery (complete > heuristic)
+;; but Certifier dominates on verification and canonicalization.
+;; Neither dominates the other overall.
+[Assert [dominates Explorer Executor]]
+[Assert [dominates Certifier Executor]]
+
+;; Soundness is preserved through every transition
+[Assert [preserves GoldenPipeline Soundness]]
+[Assert [preserves-transition ExploreToCertify Soundness]]
+[Assert [preserves-transition CertifyToExecute Soundness]]
+[Assert [preserves-transition ExploreToExecute Soundness]]
+
+;; The tunnel from Explorer to Certifier is faithful
+;; (functor-backed, injective on morphisms)
+[Assert [faithful ExploreToCertify]]
+
+
+;; ============================================================
+;; WORLD AUDITS: Substrate Physics Check
+;;
+;; Verify that each world's epistemic claims are achievable
+;; given its substrate's physical capabilities.
+;; ============================================================
+
+[CheckWorld Explorer]
+[CheckWorld Certifier]
+[CheckWorld Executor]
+
+
+;; ============================================================
+;; CROSS-WORLD LEMMAS: Theorems That Travel
+;;
+;; A lemma discovered in the Explorer can be transported to
+;; the Certifier for structural certification.
+;; ============================================================
+
+[Lemma BetaEtaEquivalence
+    :source Explorer
+    :via ExploreToCertify
+    :target Certifier
+    :statement "app(lam(x, body), arg) = subst(body, x, arg)"
+]
+
+[Lemma ChurchRosser
+    :source Certifier
+    :via CertifyToExecute
+    :target Executor
+    :statement "confluence: if t ->* u and t ->* v then exists w. u ->* w and v ->* w"
+]
+
+
+;; ============================================================
+;; LAYER 1 (Omega): Pure Logic Theory
+;;
+;; A simple arithmetic theory embedded as a conservative
+;; extension inside the STLC category. This is the actual
+;; mathematical content that flows through the pipeline.
+;; ============================================================
+
+[Category PeanoCategory
+    [Object Nat]
+    [Morphism z :domain [] :codomain Nat]
+    [Morphism s :domain [Nat] :codomain Nat]
+    [Morphism plus :domain [Nat Nat] :codomain Nat]
+    [Morphism mult :domain [Nat Nat] :codomain Nat]
+]
+
+[Universe PeanoUniverse :category PeanoCategory :substrate Rewrite]
+
+[Theory PeanoArithmetic :in PeanoUniverse
+    [@rule [plus z ?n] ==> ?n]
+    [@rule [plus [s ?n] ?m] ==> [s [plus ?n ?m]]]
+    [@rule [mult z ?n] ==> z]
+    [@rule [mult [s ?n] ?m] ==> [plus ?m [mult ?n ?m]]]
+]
+
+;; Verify the theory works: 2+3=5, 2*3=6
+[Proofs PeanoCheck :in PeanoArithmetic
+    [assert-eq two-plus-three
+        [plus [s [s z]] [s [s [s z]]]]
+        [s [s [s [s [s z]]]]]]
+    [assert-eq two-times-three
+        [mult [s [s z]] [s [s [s z]]]]
+        [s [s [s [s [s [s z]]]]]]]
+]
+
+
+;; ============================================================
+;; CONSERVATIVE EMBEDDINGS: Layer Integrity
+;;
+;; The builtin embeddings (OmegaInHyperion, HyperionInMetacosm,
+;; OmegaInMetacosm) are auto-registered. We verify the full
+;; transitive chain with a user-declared check.
+;; ============================================================
+
+[Embedding FullStack
+    :from Omega :to Metacosm
+    :properties [conservative definable-fragment strict-extension non-perturbing]
+]
+
+
+;; ============================================================
+;; THE PIPELINE: Sequential Epistemic Workflow
+;;
+;; This is the actual workflow a theorem prover executes:
+;;   1. Discover equivalences in the e-graph
+;;   2. Tunnel the result to the rewriter
+;;   3. Verify by normalization (produce structural witness)
+;;   4. Compile to executable artifact
+;;   5. Measure the final result
+;; ============================================================
+
+[Pipeline GoldenPath
+    [Step discover     :action Discover    :world Explorer]
+    [Step transport    :action Tunnel      :world Explorer    :target Certifier]
+    [Step verify       :action Verify      :world Certifier]
+    [Step compile      :action CoarseGrain :world Certifier   :target Executor]
+    [Step measure      :action Measure     :world Executor]
+]
+
+;; --- Class-specific pipeline for equational theorems ---
+[Pipeline EquationalPath
+    [Step discover-eq  :action Discover    :world Explorer    :class Equational]
+    [Step transport-eq :action Tunnel      :world Explorer    :target Certifier]
+    [Step verify-eq    :action Verify      :world Certifier   :class Equational]
+    [Step compile-eq   :action CoarseGrain :world Certifier   :target Executor]
+]
+
+
+;; ============================================================
+;; MATERIALIZATION: Run the Pipeline
+;; ============================================================
+
+[Materialize RunGoldenPath :pipeline GoldenPath]
+[Materialize RunEquational :pipeline EquationalPath]
+
+
+;; ============================================================
+;; EPISTEMIC PROMOTION: Dominance → Licensed Transition
+;;
+;; Because Explorer dominates Executor, we can license a
+;; direct conservative extension (skipping the Certifier).
+;; This is the "fast path" — less safe, but sound.
+;; ============================================================
+
+[Promote DirectPath
+    :assertion [dominates Explorer Executor]
+    :as transition
+    :kind ConservativeExtension
+]
+
+
+;; ============================================================
+;; COSMOLOGICAL LAWS: Proved by Tactic Scripts
+;;
+;; These hold for ALL admissible worlds, not just the three
+;; registered here. They are true metatheorems about the
+;; epistemic lattice.
+;; ============================================================
+
+;; Every world dominates itself (reflexivity of >=)
+[Law DominanceReflexive
+    :forall [?W :type World]
+    :show [dominates ?W ?W]
+    :method proof
+    :proof [
+        [unfold dominates]
+        [intros-axis ?A]
+        [apply lattice-reflexivity]
+        [qed]
+    ]
+]
+
+;; Dominance is transitive (transitivity of >=)
+[Law DominanceTransitive
+    :forall [?W1 ?W2 ?W3 :type World]
+    :assume [[dominates ?W1 ?W2] [dominates ?W2 ?W3]]
+    :show [dominates ?W1 ?W3]
+    :method proof
+    :proof [
+        [unfold dominates]
+        [intros-axis ?A]
+        [apply lattice-transitivity :on ?A]
+        [qed]
+    ]
+]
+
+
+;; ============================================================
+;; IMPOSSIBILITY: What the Pipeline Cannot Do
+;;
+;; No world with no discovery can dominate the Explorer.
+;; Discovery is a monotone axis — you can't fake completeness.
+;; ============================================================
+
+[Refute ExecutorCannotDominateExplorer
+    :forall [W]
+    :impossible [
+        [dominates Executor Explorer]
+    ]
+    :method model-check
+]
+
+;; The compiled pipeline cannot preserve PathStructure
+;; (the CoarseGrain step explicitly breaks it)
+[Refute PipelineCannotPreservePaths
+    :forall [W]
+    :impossible [
+        [preserves-transition ExploreToExecute PathStructure]
+    ]
+    :method model-check
+]
+
+
+;; ============================================================
+;; THE COSMOLOGICAL EMIT: Epistemic Receipt
+;;
+;; This is the capstone: push an actual Omega term through
+;; the full pipeline, normalizing it via the theory's rewrite
+;; rules, and produce the result wrapped in an epistemic
+;; receipt that certifies the journey.
+;;
+;; Input:  mult(s(s(s(z))), s(s(s(z))))  — i.e., 3 * 3
+;; Output: s(s(s(s(s(s(s(s(s(z)))))))))  — i.e., 9
+;;
+;; The receipt stamps:
+;;   - The normalized payload
+;;   - The pipeline journey (Explorer → Certifier → Executor)
+;;   - Preserved invariants (Soundness)
+;;   - Lost structure (PathStructure, ResourceSensitivity)
+;;   - Computational cost (interactions, term sizes)
+;; ============================================================
+
+[Emit ThreeTimesThree
+    :term [mult [s [s [s z]]] [s [s [s z]]]]
+    :theory PeanoArithmetic
+    :pipeline GoldenPath
+    :format epistemic-receipt
+]
+
+;; A second emit: just the term, no receipt
+[Emit TwoPlusTwo
+    :term [plus [s [s z]] [s [s z]]]
+    :theory PeanoArithmetic
+    :pipeline GoldenPath
+    :format term
+]

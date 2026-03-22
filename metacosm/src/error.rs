@@ -24,6 +24,10 @@ pub enum MetacosmError {
     CompositionError { detail: String },
     /// Embedding property violation
     EmbeddingViolation { embedding: String, property: String, detail: String },
+    /// Assertion failed
+    AssertionFailed { assertion: String, detail: String },
+    /// Proof engine error
+    ProofError { theorem: String, detail: String },
     /// Hyperion pass-through
     HyperionError(hyperion::error::HyperionError),
 }
@@ -71,6 +75,12 @@ impl fmt::Display for MetacosmError {
                     "embedding '{}' violates '{}': {}",
                     embedding, property, detail
                 )
+            }
+            MetacosmError::AssertionFailed { assertion, detail } => {
+                write!(f, "assertion failed: {} — {}", assertion, detail)
+            }
+            MetacosmError::ProofError { theorem, detail } => {
+                write!(f, "proof error in '{}': {}", theorem, detail)
             }
             MetacosmError::HyperionError(e) => write!(f, "{}", e),
         }
