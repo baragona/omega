@@ -2807,3 +2807,65 @@ fn weak_equivalence_no_verify() {
     assert!(output.contains("registered"), "should be registered: {}", output);
     assert!(!output.contains("VERIFIED"), "should not verify: {}", output);
 }
+
+#[test]
+fn example_tactics_demo() {
+    run_file("examples/tactics-demo.hyp");
+}
+
+#[test]
+fn judgment_in_category() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category JudgCat
+          [Object Term]
+          [Morphism implies :domain [Term Term] :codomain Term]
+          [Judgment typeof :inputs [Term Term] :output Term]
+        ]
+        [Substrate JNet
+          @engine interaction-graph
+          @resource-mode optimal-sharing
+          @barrier transparent
+          @equality rewrite-equivalence
+        ]
+        [Universe JWorld :category JudgCat :substrate JNet]
+        [Theory JLogic :in JWorld
+          [op p] [op q]
+          [@derive ax-p :premises [] :conclusion [typeof p p]]
+          [@derive ax-pq :premises [] :conclusion [typeof p [implies p q]]]
+          [@derive mp :premises [[typeof ?A [implies ?A ?B]] [typeof ?A ?A]]
+                      :conclusion [typeof ?A ?B]]
+        ]
+        [Proofs JCheck :in JLogic :no-laws
+          [tactic mp-proof
+            :goal [typeof p q]
+            :steps [[apply mp] [auto 3] [auto 3]]]
+        ]
+    "#;
+    process_all(&mut session, input).unwrap();
+    let output = session.output.join("\n");
+    assert!(output.contains("[TACTIC] mp-proof passed"), "output: {}", output);
+}
+
+#[test]
+fn template_skips_law_verification() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category MonCat
+          [Object Elem]
+          [Morphism op :domain [Elem Elem] :codomain Elem]
+        ]
+        [Substrate MNet
+          @engine interaction-graph
+          @resource-mode optimal-sharing
+          @barrier transparent
+          @equality rewrite-equivalence
+        ]
+        [Universe MWorld :category MonCat :substrate MNet]
+        [Theory Template :params [[T Sort] [binop Op]] :in MWorld
+          [@rule unit-l [binop ?x ?x] ==> ?x]
+        ]
+    "#;
+    // This should not error — templates skip law verification
+    process_all(&mut session, input).unwrap();
+}

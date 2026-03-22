@@ -90,12 +90,35 @@
     ]
 ]
 
-;; --- Transitions with relational transport semantics ---
+;; --- Functors: cross-substrate structure maps ---
+;;
+;; Declared after worlds so Hyperion can match universe pairs.
+;; Functors map between substrates; morphism properties (faithful, full,
+;; structure-preserving) are derived from the object/morphism maps.
+
+[Functor EGraphToRewrite
+    :from EGraphSubstrate :to RewriteSubstrate
+    :map-object [Type Type] :map-object [Term Term]
+    :map-morphism [app app]
+]
+
+[Functor RewriteToCompile
+    :from RewriteSubstrate :to CompileSubstrate
+    :map-object [Type Type] :map-object [Term Term]
+    :map-morphism [app app]
+]
+
+;; --- Transitions as world morphisms ---
+;;
+;; Each transition now carries an optional :functor reference.
+;; When present, the system validates substrate consistency and
+;; derives morphism properties (faithful, full, structure-preserving).
 
 [Transition DiscoverTunnel
     :kind Tunnel
     :from Explorer
     :to Certifier
+    :functor EGraphToRewrite
     :transport [:mode witness :loss [PathStructure]]
     :preserves [Soundness]
     :breaks [PathStructure]
@@ -105,8 +128,9 @@
     :kind CoarseGrain
     :from Certifier
     :to Executor
+    :functor RewriteToCompile
     :transport [:mode lossy :loss [ResourceSensitivity]]
-    :preserves [Soundness Normalization]
+    :preserves [Soundness]
     :breaks [ResourceSensitivity]
 ]
 
@@ -180,6 +204,15 @@
     :properties [conservative definable-fragment strict-extension]
 ]
 
+;; --- Assertions: user-declared formal claims ---
+
+;; Explorer dominates Executor on all axes (complete > none, sound ≥ sound, weak-nf ≥ none)
+[Assert [dominates Explorer Executor]]
+;; Soundness is preserved through all transitions in the pipeline family
+[Assert [preserves TheoremPipeline Soundness]]
+;; DiscoverTunnel has a functor → faithful
+[Assert [faithful DiscoverTunnel]]
+
 ;; --- The pipeline ---
 
 [Pipeline TheoremCosmology
@@ -188,4 +221,59 @@
     [Step verify-result :action Verify :world Certifier]
     [Step compress-for-execution :action CoarseGrain :world Certifier :target Executor]
     [Step measure-outcome :action Measure :world Executor]
+]
+
+;; --- World audit ---
+
+[CheckWorld Explorer]
+[CheckWorld Certifier]
+[CheckWorld Executor]
+
+;; --- Cross-world lemma ---
+
+[Lemma EquationalResult
+    :source Explorer
+    :via DiscoverTunnel
+    :target Certifier
+    :statement commutativity
+]
+
+;; --- Pipeline materialization ---
+
+[Materialize RunCosmology :pipeline TheoremCosmology]
+
+;; --- Epistemic promotion: proven dominance → licensed transition ---
+
+[Promote ExplorerLiftsExecutor
+    :assertion [dominates Explorer Executor]
+    :as transition
+    :kind ConservativeExtension
+]
+
+;; --- Cosmological law: dominance is reflexive (model-checked) ---
+
+[Law DominanceReflexive
+    :forall [W]
+    :then [dominates W W]
+    :method model-check
+]
+
+;; --- Cosmological law: dominance is transitive (model-checked) ---
+
+[Law DominanceTransitive
+    :forall [X Y Z]
+    :where [[dominates X Y] [dominates Y Z]]
+    :then [dominates X Z]
+    :method model-check
+]
+
+;; --- Impossibility: no world with no discovery can dominate a world with complete discovery ---
+
+[Refute NoneCannotDominateComplete
+    :forall [W1 W2]
+    :impossible [
+        [dominates W1 W2]
+        [distance W1 W2 :max 0]
+    ]
+    :method model-check
 ]

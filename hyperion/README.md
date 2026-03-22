@@ -58,7 +58,7 @@ It strips everything away until all you are left with is the pure relationship b
   Preorder, ...)
 ```
 
-A **Category** declares pure mathematical structure: what your sorts are (Objects), what operations exist (Morphisms), and what higher structure is present (Exponentials for lambda, TensorProducts for parallel composition, ModalOperators for necessity, PathType for HoTT, Preorder for reflexive relations).
+A **Category** declares pure mathematical structure: what your sorts are (Objects), what operations exist (Morphisms), what judgment forms are available (Judgments), and what higher structure is present (Exponentials for lambda, TensorProducts for parallel composition, ModalOperators for necessity, PathType for HoTT, Preorder for reflexive relations).
 
 A **Substrate** declares computational physics: what engine executes your terms (interaction graphs, term trees, cellular automata, symmetric monoidal nets, von Neumann machines), how resources are managed (optimal sharing, linear, affine, deep copy), how scoping works (transparent, contextual membranes, cryptographic), and what notion of equality the system uses (rewriting, hashing, unification, homotopy, equality saturation, proof-relevant).
 
@@ -215,6 +215,20 @@ Necessity/possibility modalities with scope isolation:
 ```
 
 Requires a substrate with barrier support (`contextual-membranes` or `cryptographic`). A barriered term is *stuck* until its scope is activated --- modeling necessity, possible worlds, and staged computation.
+
+### Judgment Declarations
+
+Judgments declare derivation-checkable forms at the categorical level, so theories can use `@derive` rules and tactics without manually declaring operators:
+
+```
+[Category Logic
+  [Object Term]
+  [Judgment typeof :inputs [Term Term] :output Term]
+  [Judgment holds :inputs [Term]]
+]
+```
+
+The judgment name is auto-injected as an operator in the generated Apeiron system. Theories in this category can immediately use `[@derive]` rules with `typeof` and `holds`.
 
 ## Categorical Law Verification
 
@@ -1038,6 +1052,7 @@ User theories can also declare `@law` equational laws (bidirectional in e-graph)
 | `prelude-demo.hyp` | Using prelude categories and substrates |
 | `catlab-features.hyp` | Proof-term extraction, assert-exists, proof-relevant mode, kernel cubical reduction |
 | `weak-equivalence.hyp` | WeakEquivalence directive --- roundtrip maps verified via e-graph paths |
+| `tactics-demo.hyp` | Nested parameterized theories, tactic proofs (apply/auto/assumption), assert-refuted, forward-chaining refutation |
 
 ## Architecture
 
@@ -1060,7 +1075,7 @@ hyperion/
       emit.rs        Rust AST -> source files
     main.rs          CLI (check + kompile subcommands)
   prelude.hyp        Standard prelude (categories + substrates)
-  examples/          21 example files
+  examples/          22 example files
   tests/
     integration.rs   107 integration tests
 ```
@@ -1086,7 +1101,7 @@ hyperion kompile <file.hyp> --theory <name> -o <output_dir/>
 
 ## Tests
 
-163 tests (42 unit + 121 integration), covering:
+166 tests (42 unit + 124 integration), covering:
 
 - Category/substrate/universe parsing and validation
 - All compatibility rejection rules (PathType with/without Evaluator, modal, tensor, VN)
@@ -1107,6 +1122,10 @@ hyperion kompile <file.hyp> --theory <name> -o <output_dir/>
 - Proof-relevant equality mode (`@equality proof-relevant`, `assert-distinct-paths`)
 - Kernel cubical reduction (`IntervalSort` + auto-injected coe-concat, coe-inv rules)
 - Weak equivalence verification (`WeakEquivalence` with `:via` maps and roundtrip checking)
+- Tactic proofs (apply, auto, assumption, exact, cut, intro)
+- Nested parameterized theory imports
+- `assert-refuted` negative assertions
+- Forward-chaining refutation strategy
 - All example files
 
 ```bash

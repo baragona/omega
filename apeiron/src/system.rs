@@ -13,6 +13,7 @@ use crate::physics::{self, PhysicsConfig};
 use crate::readback;
 use crate::refute;
 use crate::rewrite;
+use crate::tactic;
 
 /// Binding mode for a system.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,6 +54,8 @@ pub struct OpDecl {
     pub name: String,
     pub args: Vec<String>,
     pub result: String,
+    /// Declared arity (if known). Used for arity enforcement in the builder.
+    pub arity: Option<u8>,
 }
 
 /// A sort declared in @syntax.
@@ -95,7 +98,14 @@ pub struct RewriteRule {
     pub bidirectional: bool,
 }
 
-/// A running session with loaded systems and theories.
+/// A deferred import stored inside a parameterized theory template.
+#[derive(Debug, Clone)]
+pub struct TemplateImport {
+    pub import_name: String,
+    pub args: Vec<Sexp>,
+    pub alias: Option<String>,
+}
+
 /// A parameterized theory template: raw declarations awaiting instantiation.
 #[derive(Debug, Clone)]
 pub struct TheoryTemplate {
@@ -104,6 +114,7 @@ pub struct TheoryTemplate {
     pub ops: Vec<String>,                    // theory-level op declarations
     pub raw_rules: Vec<RewriteRule>,         // explicit @rule declarations
     pub raw_derives: Vec<DerivRule>,         // @derive declarations
+    pub imports: Vec<TemplateImport>,        // deferred imports (replayed on instantiation)
 }
 
 pub struct Session {
@@ -236,10 +247,12 @@ impl Session {
                                 .iter()
                                 .filter_map(|s| s.as_atom().map(|a| a.to_string()))
                                 .collect();
+                            let arg_count = if args.len() > 1 { Some((args.len() - 1) as u8) } else { None };
                             operators.push(OpDecl {
                                 name: op_name.to_string(),
                                 args: args.clone(),
                                 result: args.last().cloned().unwrap_or_default(),
+                                arity: arg_count,
                             });
                         }
                     }
@@ -767,7 +780,7 @@ impl Session {
     /// Collect raw declarations from a parameterized theory body into a template.
     fn collect_template(
         &self,
-        theory_name: &str,
+        _theory_name: &str,
         params: &[(String, String)],
         system_name: &str,
         body: &[Sexp],
@@ -775,6 +788,7 @@ impl Session {
         let mut ops = Vec::new();
         let mut raw_rules = Vec::new();
         let mut raw_derives = Vec::new();
+        let mut imports = Vec::new();
 
         for item in body {
             if let Some(decl) = item.as_list() {
@@ -807,13 +821,30 @@ impl Session {
                         }
                     }
                     "import" => {
-                        return Err(ApeironError::InvalidConfig {
-                            block: "Theory".into(),
-                            detail: format!(
-                                "parameterized theory '{}' cannot contain [import]",
-                                theory_name
-                            ),
-                        });
+                        // Capture import for deferred replay on instantiation
+                        if decl.len() >= 2 {
+                            let import_name = decl[1].as_atom().unwrap_or("?").to_string();
+                            let mut import_args: Vec<Sexp> = Vec::new();
+                            let mut alias: Option<String> = None;
+                            let mut j = 2;
+                            while j < decl.len() {
+                                if decl[j].is_atom(":as") {
+                                    j += 1;
+                                    if j < decl.len() {
+                                        alias = decl[j].as_atom().map(|s| s.to_string());
+                                    }
+                                    j += 1;
+                                } else {
+                                    import_args.push(decl[j].clone());
+                                    j += 1;
+                                }
+                            }
+                            imports.push(TemplateImport {
+                                import_name,
+                                args: import_args,
+                                alias,
+                            });
+                        }
                     }
                     _ => {} // skip other declarations in template
                 }
@@ -826,6 +857,7 @@ impl Session {
             ops,
             raw_rules,
             raw_derives,
+            imports,
         })
     }
 
@@ -1038,6 +1070,35 @@ impl Session {
             });
         }
 
+        // Validate parameter sorts against system sorts (when available)
+        let system_name = &template.system_name;
+        if let Some(sys) = self.systems.get(system_name) {
+            let sort_names: HashSet<String> =
+                sys.sorts.iter().map(|s| s.name.clone()).collect();
+            if !sort_names.is_empty() {
+                for (i, (param_name, param_sort)) in template.params.iter().enumerate() {
+                    if param_sort == "Sort" || param_sort == "Level" || param_sort == "_" {
+                        continue; // meta-sorts, skip validation
+                    }
+                    if !sort_names.contains(param_sort) {
+                        continue; // sort not declared in system, skip
+                    }
+                    // If the argument is a bare atom, check it's a known op/sort
+                    if let Some(arg_name) = args[i].as_atom() {
+                        let is_known = known_ops.contains(arg_name)
+                            || sort_names.contains(arg_name)
+                            || self.extra_known_ops.contains(arg_name);
+                        if !is_known {
+                            self.output.push(format!(
+                                "[WARN] param '{}' (sort {}) bound to unknown symbol '{}'",
+                                param_name, param_sort, arg_name
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
         let s = crate::parser::Span::default();
 
         // Build combined substitution map:
@@ -1152,9 +1213,67 @@ impl Session {
             self.extra_known_ops.insert(aliased);
         }
 
+        // Replay deferred imports from the template (enables nested parameterized theories)
+        let template_imports = template.imports.clone();
+        for imp in &template_imports {
+            // Apply parameter substitution to import args
+            let subst_args: Vec<Sexp> = imp
+                .args
+                .iter()
+                .map(|a| judgment::subst_sexp(a, &subst_map))
+                .collect();
+
+            // Prefix alias with outer alias for namespace nesting
+            let nested_alias = match &imp.alias {
+                Some(a) => {
+                    let substituted = subst_map
+                        .get(a)
+                        .and_then(|s| s.as_atom().map(|x| x.to_string()))
+                        .unwrap_or_else(|| format!("{}.{}", alias, a));
+                    substituted
+                }
+                None => alias.to_string(),
+            };
+
+            // Also substitute the import target name in case it's a parameter
+            let resolved_import_name = subst_map
+                .get(&imp.import_name)
+                .and_then(|s| s.as_atom().map(|x| x.to_string()))
+                .unwrap_or_else(|| imp.import_name.clone());
+
+            if self.templates.contains_key(&resolved_import_name) {
+                self.process_parameterized_import(
+                    &resolved_import_name,
+                    &subst_args,
+                    &nested_alias,
+                    theory_name,
+                    known_ops,
+                    theory_rules,
+                    graph_rules,
+                )?;
+            } else if !subst_args.is_empty() {
+                return Err(ApeironError::InvalidConfig {
+                    block: "Theory".into(),
+                    detail: format!(
+                        "nested import: '{}' is not a parameterized template",
+                        resolved_import_name
+                    ),
+                });
+            } else {
+                self.process_simple_import(
+                    &resolved_import_name,
+                    Some(&nested_alias),
+                    theory_name,
+                    known_ops,
+                    theory_rules,
+                    graph_rules,
+                )?;
+            }
+        }
+
         self.output.push(format!(
-            "[IMPORT] {} instantiated as {} ({} args, {} derives)",
-            template_name, alias, args.len(), renamed_derives.len()
+            "[IMPORT] {} instantiated as {} ({} args, {} derives, {} nested imports)",
+            template_name, alias, args.len(), renamed_derives.len(), template_imports.len()
         ));
 
         Ok(())
@@ -1445,6 +1564,20 @@ impl Session {
                         )?;
                         assertion_count += 1;
                     }
+                    "assert-refuted" => {
+                        self.process_assert_refuted(
+                            &decl[1..],
+                            &theory_name,
+                        )?;
+                        assertion_count += 1;
+                    }
+                    "tactic" => {
+                        self.process_tactic(
+                            &decl[1..],
+                            &theory_name,
+                        )?;
+                        assertion_count += 1;
+                    }
                     "@rule" | "@law" => {
                         return Err(ApeironError::InvalidConfig {
                             block: "Proofs".into(),
@@ -1461,7 +1594,7 @@ impl Session {
                             detail: format!(
                                 "unknown declaration '{}' — Proofs blocks allow: \
                                  assert-eq, assert-neq, eval, extract-proof, assert-exists, \
-                                 assert-distinct-paths, check, auto, lemma, derive, refute, def",
+                                 assert-distinct-paths, assert-refuted, tactic, check, auto, lemma, derive, refute, def",
                                 decl_head
                             ),
                         });
@@ -1813,6 +1946,12 @@ impl Session {
         env.known_ops = known_ops.clone();
         env.known_ops.extend(self.extra_known_ops.iter().cloned());
         env.scope_ids = self.scopes.clone();
+        // Populate declared arities for arity enforcement
+        for op in &config.operators {
+            if let Some(arity) = op.arity {
+                env.op_arities.insert(op.name.clone(), arity);
+            }
+        }
         let root = builder::build_rooted(&mut self.arena, &mut env, &expanded);
 
         // Linear-explicit validation: reject Dup (multi-use) and Erase (unused)
@@ -2881,30 +3020,24 @@ impl Session {
         }
     }
 
-    /// Process a `[refute name :assumptions [...] :goal [...] :depth N]` command.
-    fn process_refute(
-        &mut self,
+    /// Parse refute-style keyword arguments from items.
+    /// Returns (name, assumptions, goal, max_depth, strategy).
+    fn parse_refute_args(
         items: &[Sexp],
-        _graph_rules: &[rewrite::GraphRule],
-        _known_ops: &HashSet<String>,
-        _config: &SystemConfig,
-        theory_name: &str,
-    ) -> Result<()> {
+        block: &str,
+    ) -> Result<(String, Vec<Sexp>, Sexp, usize, refute::SearchStrategy)> {
         if items.is_empty() {
             return Err(ApeironError::InvalidConfig {
-                block: "refute".into(),
-                detail: "need: [refute name :assumptions [...] :goal [...] :depth N]".into(),
+                block: block.into(),
+                detail: format!("need: [{} name :assumptions [...] :goal [...] :depth N]", block),
             });
         }
 
-        let name = items[0]
-            .as_atom()
-            .unwrap_or("?")
-            .to_string();
-
+        let name = items[0].as_atom().unwrap_or("?").to_string();
         let mut assumptions: Vec<Sexp> = Vec::new();
         let mut goal: Option<Sexp> = None;
         let mut max_depth: usize = 5;
+        let mut strategy = refute::SearchStrategy::Backward;
         let mut i = 1;
 
         while i < items.len() {
@@ -2931,46 +3064,138 @@ impl Session {
                         }
                     }
                 }
+                Some(":strategy") => {
+                    i += 1;
+                    if i < items.len() {
+                        match items[i].as_atom() {
+                            Some("forward") => strategy = refute::SearchStrategy::Forward,
+                            Some("backward") => strategy = refute::SearchStrategy::Backward,
+                            _ => {}
+                        }
+                    }
+                }
                 _ => {}
             }
             i += 1;
         }
 
         let goal = goal.ok_or_else(|| ApeironError::InvalidConfig {
-            block: "refute".into(),
+            block: block.into(),
             detail: "missing :goal".into(),
         })?;
 
-        // Get derive rules for this theory
+        Ok((name, assumptions, goal, max_depth, strategy))
+    }
+
+    /// Run refutation search with the given strategy.
+    fn run_refute(
+        &self,
+        derive_rules: &[DerivRule],
+        assumptions: &[Sexp],
+        goal: &Sexp,
+        max_depth: usize,
+        strategy: &refute::SearchStrategy,
+        theory_name: &str,
+    ) -> refute::RefuteResult {
+        let max_budget = 1_000_000;
+        match strategy {
+            refute::SearchStrategy::Backward => {
+                let system_name = self.theory_systems.get(theory_name).cloned().unwrap_or_default();
+                let affine = self
+                    .systems
+                    .get(&system_name)
+                    .map(|s| s.binding == BindingMode::LinearExplicit)
+                    .unwrap_or(false);
+                refute::exhaustive_refute(derive_rules, assumptions, goal, max_depth, max_budget, affine)
+            }
+            refute::SearchStrategy::Forward => {
+                // Build an inet normalizer if the theory has rewrite rules
+                let graph_rules = self.compiled_rules.get(theory_name).cloned().unwrap_or_default();
+                let system_name = self.theory_systems.get(theory_name).cloned().unwrap_or_default();
+                let system = self.systems.get(&system_name).cloned();
+                let has_rewrite_rules = !graph_rules.is_empty();
+
+                if has_rewrite_rules {
+                    // Create a normalizer that uses the interaction net
+                    let known_ops: HashSet<String> = system.as_ref()
+                        .map(|s| s.operators.iter().map(|o| o.name.clone()).collect())
+                        .unwrap_or_default();
+                    let all_ops: HashSet<String> = known_ops.iter()
+                        .chain(self.extra_known_ops.iter())
+                        .cloned()
+                        .collect();
+                    let physics_config = crate::physics::PhysicsConfig {
+                        max_interactions: 10_000,
+                        trace: false,
+                    };
+                    let defs = self.defs.clone();
+                    let scopes = self.scopes.clone();
+
+                    let normalizer = move |fact: &Sexp| -> Sexp {
+                        let expanded = rewrite::expand_defs(fact, &defs);
+                        let mut arena = crate::arena::Arena::new();
+                        let mut env = BuildEnv::new();
+                        env.known_ops = all_ops.clone();
+                        env.scope_ids = scopes.clone();
+                        let root = builder::build_rooted(&mut arena, &mut env, &expanded);
+
+                        // Physics + rewrite loop (up to 10 rounds)
+                        for _ in 0..10 {
+                            crate::physics::run(&mut arena, &physics_config);
+                            if graph_rules.is_empty() || !rewrite::try_rewrite_scan(&mut arena, &graph_rules) {
+                                break;
+                            }
+                        }
+
+                        let result_port = arena.port(root, 1);
+                        if result_port.is_connected() {
+                            let term = crate::readback::readback(&arena, result_port.target);
+                            rewrite::term_to_sexp(&term)
+                        } else {
+                            fact.clone()
+                        }
+                    };
+
+                    refute::exhaustive_refute_forward_with_normalizer(
+                        derive_rules, assumptions, goal, max_depth, max_budget, Some(&normalizer),
+                    )
+                } else {
+                    refute::exhaustive_refute_forward(derive_rules, assumptions, goal, max_depth, max_budget)
+                }
+            }
+        }
+    }
+
+    /// Process a `[refute name :assumptions [...] :goal [...] :depth N :strategy backward|forward]` command.
+    fn process_refute(
+        &mut self,
+        items: &[Sexp],
+        _graph_rules: &[rewrite::GraphRule],
+        _known_ops: &HashSet<String>,
+        _config: &SystemConfig,
+        theory_name: &str,
+    ) -> Result<()> {
+        let (name, assumptions, goal, max_depth, strategy) =
+            Self::parse_refute_args(items, "refute")?;
+
         let derive_rules = self
             .derive_rules_ordered
             .get(theory_name)
             .cloned()
             .unwrap_or_default();
 
-        // Check if theory uses affine/linear binding
-        let system_name = self.theory_systems.get(theory_name).cloned().unwrap_or_default();
-        let affine = self
-            .systems
-            .get(&system_name)
-            .map(|s| s.binding == BindingMode::LinearExplicit)
-            .unwrap_or(false);
+        let strategy_label = match strategy {
+            refute::SearchStrategy::Forward => " (forward)",
+            refute::SearchStrategy::Backward => "",
+        };
 
-        let max_budget = 1_000_000;
-        let result = refute::exhaustive_refute(
-            &derive_rules,
-            &assumptions,
-            &goal,
-            max_depth,
-            max_budget,
-            affine,
-        );
+        let result = self.run_refute(&derive_rules, &assumptions, &goal, max_depth, &strategy, theory_name);
 
         match result {
             refute::RefuteResult::Refuted { depth } => {
                 self.output.push(format!(
-                    "[REFUTE] {}: VERIFIED (impossible at depth {})",
-                    name, depth
+                    "[REFUTE] {}: VERIFIED (impossible at depth {}{})",
+                    name, depth, strategy_label
                 ));
                 Ok(())
             }
@@ -2984,6 +3209,159 @@ impl Session {
                 Err(ApeironError::RefutationInconclusive {
                     name,
                     detail: format!("budget exhausted after {} steps", steps_used),
+                })
+            }
+        }
+    }
+
+    /// Process `[assert-refuted name :assumptions [...] :goal [...] :depth N :strategy backward|forward]`.
+    /// Succeeds if refutation succeeds (goal is NOT derivable). Fails if goal IS derivable.
+    fn process_assert_refuted(
+        &mut self,
+        items: &[Sexp],
+        theory_name: &str,
+    ) -> Result<()> {
+        let (name, assumptions, goal, max_depth, strategy) =
+            Self::parse_refute_args(items, "assert-refuted")?;
+
+        let derive_rules = self
+            .derive_rules_ordered
+            .get(theory_name)
+            .cloned()
+            .unwrap_or_default();
+
+        let result = self.run_refute(&derive_rules, &assumptions, &goal, max_depth, &strategy, theory_name);
+
+        match result {
+            refute::RefuteResult::Refuted { depth } => {
+                self.output.push(format!(
+                    "[ASSERT] {} passed (refuted at depth {})",
+                    name, depth
+                ));
+                Ok(())
+            }
+            refute::RefuteResult::Derivable => {
+                Err(ApeironError::AssertionFailed {
+                    name,
+                    detail: "expected refutation but goal is derivable".into(),
+                })
+            }
+            refute::RefuteResult::Inconclusive { steps_used } => {
+                Err(ApeironError::RefutationInconclusive {
+                    name,
+                    detail: format!("budget exhausted after {} steps", steps_used),
+                })
+            }
+        }
+    }
+
+    /// Process `[tactic name :goal [...] :assumptions [...] :steps [[apply r] [auto 3] ...]]`.
+    fn process_tactic(
+        &mut self,
+        items: &[Sexp],
+        theory_name: &str,
+    ) -> Result<()> {
+        if items.is_empty() {
+            return Err(ApeironError::InvalidConfig {
+                block: "tactic".into(),
+                detail: "need: [tactic name :goal [...] :steps [[step] ...]]".into(),
+            });
+        }
+
+        let name = items[0].as_atom().unwrap_or("?").to_string();
+        let mut goal: Option<Sexp> = None;
+        let mut assumptions: Vec<Sexp> = Vec::new();
+        let mut steps_sexp: Option<&[Sexp]> = None;
+        let mut i = 1;
+
+        while i < items.len() {
+            match items[i].as_atom() {
+                Some(":goal") => {
+                    i += 1;
+                    if i < items.len() {
+                        goal = Some(items[i].clone());
+                    }
+                }
+                Some(":assumptions") => {
+                    i += 1;
+                    if i < items.len() {
+                        if let Some(list) = items[i].as_list() {
+                            assumptions = list.to_vec();
+                        }
+                    }
+                }
+                Some(":steps") => {
+                    i += 1;
+                    if i < items.len() {
+                        if let Some(list) = items[i].as_list() {
+                            steps_sexp = Some(list);
+                        }
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+
+        let goal = goal.ok_or_else(|| ApeironError::InvalidConfig {
+            block: "tactic".into(),
+            detail: "missing :goal".into(),
+        })?;
+
+        let steps_list = steps_sexp.ok_or_else(|| ApeironError::InvalidConfig {
+            block: "tactic".into(),
+            detail: "missing :steps".into(),
+        })?;
+
+        let steps = tactic::parse_tactic_steps(steps_list).map_err(|e| {
+            ApeironError::InvalidConfig {
+                block: "tactic".into(),
+                detail: e,
+            }
+        })?;
+
+        let derive_rules = self
+            .derive_rules_ordered
+            .get(theory_name)
+            .cloned()
+            .unwrap_or_default();
+
+        // Pass rewrite rules if the system uses equality-saturation (for e-graph tactics)
+        let egraph_rules = self.theory_systems.get(theory_name)
+            .and_then(|sys_name| self.systems.get(sys_name))
+            .filter(|sys| sys.check_modes.contains(&CheckMode::EqualitySaturation))
+            .and_then(|_| self.rules.get(theory_name))
+            .cloned();
+        let graph_rules_ref = egraph_rules.as_deref();
+
+        let result = tactic::run_tactics(goal, &steps, &derive_rules, &assumptions, graph_rules_ref);
+
+        match result {
+            tactic::TacticResult::Complete => {
+                self.output.push(format!(
+                    "[TACTIC] {} passed ({} steps)",
+                    name, steps.len()
+                ));
+                Ok(())
+            }
+            tactic::TacticResult::Incomplete { remaining } => {
+                let goals_str: Vec<String> = remaining.iter().map(|g| format!("{}", g.judgment)).collect();
+                Err(ApeironError::DerivationFailed {
+                    name,
+                    detail: format!(
+                        "tactic proof incomplete — {} goals remaining: {}",
+                        remaining.len(),
+                        goals_str.join(", ")
+                    ),
+                })
+            }
+            tactic::TacticResult::Failed { step_index, step, detail } => {
+                Err(ApeironError::DerivationFailed {
+                    name,
+                    detail: format!(
+                        "tactic step {} ({}) failed: {}",
+                        step_index, step, detail
+                    ),
                 })
             }
         }
@@ -3119,6 +3497,21 @@ fn validate_linearity(arena: &Arena, root: crate::node::Ptr) -> Result<()> {
     Ok(())
 }
 
+/// Extract arity from an op declaration: `[op name :arity N]` or count typed args.
+fn extract_op_arity(decl: &[Sexp]) -> Option<u8> {
+    // Check for explicit :arity keyword
+    for (i, item) in decl.iter().enumerate() {
+        if item.is_atom(":arity") {
+            if let Some(val) = decl.get(i + 1).and_then(|s| s.as_atom()) {
+                if let Ok(n) = val.parse::<u8>() {
+                    return Some(n);
+                }
+            }
+        }
+    }
+    None
+}
+
 fn parse_syntax_block(items: &[Sexp], config: &mut SystemConfig) -> Result<()> {
     for item in items {
         if let Some(decl) = item.as_list() {
@@ -3136,10 +3529,13 @@ fn parse_syntax_block(items: &[Sexp], config: &mut SystemConfig) -> Result<()> {
                 "op" | "Op" => {
                     if decl.len() >= 2 {
                         let name = decl[1].as_atom().unwrap_or("?").to_string();
+                        // Support [op name :arity N] or infer from typed args
+                        let arity = extract_op_arity(decl);
                         config.operators.push(OpDecl {
                             name,
                             args: Vec::new(),
                             result: String::new(),
+                            arity,
                         });
                     }
                 }
@@ -3151,6 +3547,7 @@ fn parse_syntax_block(items: &[Sexp], config: &mut SystemConfig) -> Result<()> {
                             name,
                             args: Vec::new(),
                             result: String::new(),
+                            arity: None,
                         });
                     }
                 }

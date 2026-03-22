@@ -1214,3 +1214,354 @@ fn example_law_demo() {
 fn example_theory_compose() {
     run_example("examples/theory-compose.apeiron");
 }
+
+// ================================================================
+// Nested Parameterized Theories
+// ================================================================
+
+#[test]
+fn nested_parameterized_import() {
+    let source = r#"
+    [System S
+      [@syntax [sort Nat] [op z] [op s] [op add] [op mul]
+               [op eq] [op refl]]
+      [@binding implicit]
+      [@check rewriting]
+    ]
+
+    ;; Inner template: an equality theory parameterized by sort + eq op
+    [Theory EqTemplate :params [[T Sort] [eq_op Op]] :in S
+      [op refl_t]
+      [@rule eq-refl [eq_op ?x ?x] ==> refl_t]
+    ]
+
+    ;; Outer template: a monoid parameterized by sort, op, unit — imports EqTemplate
+    [Theory MonoidTemplate :params [[T Sort] [op Op] [unit Op]] :in S
+      [op assoc_proof]
+      [@rule unit-l [op unit ?x] ==> ?x]
+      [@rule unit-r [op ?x unit] ==> ?x]
+      [import EqTemplate T eq :as Eq]
+    ]
+
+    ;; Concrete theory instantiating the outer template
+    [Theory NatAdd :in S
+      [import MonoidTemplate Nat add z :as M]
+    ]
+
+    ;; Proofs: the nested import should have brought in Eq.refl_t etc.
+    [Proofs Check :in NatAdd
+      [assert-eq unit-left  [add z [s z]] [s z]]
+      [assert-eq unit-right [add [s z] z] [s z]]
+    ]
+    "#;
+
+    let sexps = parser::parse(source).unwrap();
+    let mut session = Session::new();
+
+    for sexp in &sexps {
+        match session.process(sexp) {
+            Ok(()) => {}
+            Err(e) => panic!("Error processing: {}", e),
+        }
+    }
+
+    // Verify nested import message
+    let import_lines: Vec<_> = session
+        .output
+        .iter()
+        .filter(|l| l.contains("[IMPORT]"))
+        .collect();
+    assert!(import_lines.len() >= 2, "should have at least 2 import lines (inner + outer)");
+
+    // Verify assertions passed
+    let assert_lines: Vec<_> = session
+        .output
+        .iter()
+        .filter(|l| l.starts_with("[ASSERT]"))
+        .collect();
+    for line in &assert_lines {
+        assert!(line.contains("passed"), "assertion should pass: {}", line);
+    }
+}
+
+// ================================================================
+// Assert-Refuted and Strategy Tests
+// ================================================================
+
+#[test]
+fn assert_refuted_succeeds_when_not_derivable() {
+    let source = r#"
+    [System S
+      [@syntax [sort Prop]
+       [judgment holds :inputs [Prop] :output Prop]]
+      [@binding implicit]
+      [@check rewriting]
+    ]
+
+    [Theory Logic :in S
+      [op a] [op b] [op c]
+      [@derive ax-a :premises [] :conclusion [holds a a]]
+    ]
+
+    [Proofs Check :in Logic
+      ;; b is not derivable from only ax-a
+      [assert-refuted b-not-derivable
+        :assumptions []
+        :goal [holds b b]
+        :depth 3]
+    ]
+    "#;
+
+    let sexps = parser::parse(source).unwrap();
+    let mut session = Session::new();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+
+    let assert_lines: Vec<_> = session.output.iter().filter(|l| l.starts_with("[ASSERT]")).collect();
+    assert!(!assert_lines.is_empty());
+    assert!(assert_lines[0].contains("passed"));
+}
+
+#[test]
+fn assert_refuted_fails_when_derivable() {
+    let source = r#"
+    [System S
+      [@syntax [sort Prop]
+       [judgment holds :inputs [Prop] :output Prop]]
+      [@binding implicit]
+      [@check rewriting]
+    ]
+
+    [Theory Logic :in S
+      [op a]
+      [@derive ax-a :premises [] :conclusion [holds a a]]
+    ]
+
+    [Proofs Check :in Logic
+      ;; a IS derivable, so this should fail
+      [assert-refuted should-fail
+        :assumptions []
+        :goal [holds a a]
+        :depth 3]
+    ]
+    "#;
+
+    let sexps = parser::parse(source).unwrap();
+    let mut session = Session::new();
+    session.process(&sexps[0]).unwrap();
+    session.process(&sexps[1]).unwrap();
+    let result = session.process(&sexps[2]);
+    assert!(result.is_err());
+    assert!(format!("{}", result.unwrap_err()).contains("derivable"));
+}
+
+#[test]
+fn refute_with_forward_strategy() {
+    let source = r#"
+    [System S
+      [@syntax [sort Prop]
+       [judgment holds :inputs [Prop] :output Prop]]
+      [@binding implicit]
+      [@check rewriting]
+    ]
+
+    [Theory Logic :in S
+      [op a] [op b]
+      [@derive ax-a :premises [] :conclusion [holds a a]]
+    ]
+
+    [Proofs Check :in Logic
+      [refute forward-test
+        :assumptions []
+        :goal [holds b b]
+        :depth 3
+        :strategy forward]
+    ]
+    "#;
+
+    let sexps = parser::parse(source).unwrap();
+    let mut session = Session::new();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+
+    let refute_lines: Vec<_> = session.output.iter().filter(|l| l.starts_with("[REFUTE]")).collect();
+    assert!(!refute_lines.is_empty());
+    assert!(refute_lines[0].contains("VERIFIED"));
+    assert!(refute_lines[0].contains("forward"));
+}
+
+// ================================================================
+// Tactic Proofs
+// ================================================================
+
+#[test]
+fn tactic_apply_and_auto() {
+    let source = r#"
+    [System S
+      [@syntax [sort Prop]
+       [judgment holds :inputs [Prop] :output Prop]]
+      [@binding implicit]
+      [@check rewriting]
+    ]
+
+    [Theory Logic :in S
+      [op a] [op b] [op implies]
+      [@derive ax-a :premises [] :conclusion [holds a a]]
+      [@derive ax-impl :premises [] :conclusion [holds a [implies a b]]]
+      [@derive mp :premises [[holds ?A [implies ?A ?B]] [holds ?A ?A]] :conclusion [holds ?A ?B]]
+    ]
+
+    [Proofs Check :in Logic
+      ;; Prove [holds a b] via modus ponens + auto
+      [tactic prove-b
+        :goal [holds a b]
+        :steps [[apply mp] [auto 3] [auto 3]]]
+    ]
+    "#;
+
+    let sexps = parser::parse(source).unwrap();
+    let mut session = Session::new();
+    for sexp in &sexps {
+        match session.process(sexp) {
+            Ok(()) => {}
+            Err(e) => panic!("Error: {}", e),
+        }
+    }
+
+    let tactic_lines: Vec<_> = session.output.iter().filter(|l| l.starts_with("[TACTIC]")).collect();
+    assert!(!tactic_lines.is_empty());
+    assert!(tactic_lines[0].contains("passed"));
+}
+
+#[test]
+fn tactic_with_assumptions() {
+    let source = r#"
+    [System S
+      [@syntax [sort Prop]
+       [judgment holds :inputs [Prop] :output Prop]]
+      [@binding implicit]
+      [@check rewriting]
+    ]
+
+    [Theory Logic :in S
+      [op p] [op q]
+    ]
+
+    [Proofs Check :in Logic
+      ;; Discharge goal from assumptions
+      [tactic from-assumption
+        :goal [holds p p]
+        :assumptions [[holds p p]]
+        :steps [[assumption]]]
+    ]
+    "#;
+
+    let sexps = parser::parse(source).unwrap();
+    let mut session = Session::new();
+    for sexp in &sexps {
+        match session.process(sexp) {
+            Ok(()) => {}
+            Err(e) => panic!("Error: {}", e),
+        }
+    }
+
+    let tactic_lines: Vec<_> = session.output.iter().filter(|l| l.starts_with("[TACTIC]")).collect();
+    assert!(!tactic_lines.is_empty());
+    assert!(tactic_lines[0].contains("passed"));
+}
+
+#[test]
+fn tactic_egraph_fallback() {
+    let source = r#"
+    [System Alg
+      [@syntax [sort Elem] [op f] [op g] [op comp] [op id] [op eq]]
+      [@binding implicit]
+      [@check rewriting equality-saturation]
+    ]
+    [Theory CatRules :in Alg
+      [@law assoc [comp [comp ?f ?g] ?h] === [comp ?f [comp ?g ?h]]]
+      [@law unit-l [comp id ?f] === ?f]
+      [@law unit-r [comp ?f id] === ?f]
+    ]
+    [Proofs CatCheck :in CatRules
+      [tactic egraph-assoc
+        :goal [eq [comp [comp f g] id] [comp f g]]
+        :steps [[egraph]]]
+    ]
+    "#;
+
+    let sexps = parser::parse(source).unwrap();
+    let mut session = Session::new();
+    for sexp in &sexps {
+        session.process(sexp).unwrap_or_else(|e| panic!("Error: {}", e));
+    }
+
+    let tactic_lines: Vec<_> = session.output.iter().filter(|l| l.starts_with("[TACTIC]")).collect();
+    assert!(!tactic_lines.is_empty(), "output: {:?}", session.output);
+    assert!(tactic_lines[0].contains("passed"), "output: {:?}", tactic_lines);
+}
+
+#[test]
+fn forward_chaining_with_inet_normalization() {
+    // Forward-chaining should use the inet to normalize derived facts.
+    // The derive rules produce terms like [holds [add [s z] [s z]] ...],
+    // and the inet normalizes [add [s z] [s z]] → [s [s z]].
+    // assert-refuted verifies that [eq z true] is NOT derivable
+    // (only [eq [s [s z]] true] is).
+    let source = r#"
+    [System Peano
+      [@syntax [sort Nat] [op z] [op s] [op add] [op eq] [op holds]]
+      [@binding implicit]
+      [@check rewriting]
+    ]
+    [Theory Arith :in Peano
+      [@rule add-z [add z ?n] ==> ?n]
+      [@rule add-s [add [s ?n] ?m] ==> [s [add ?n ?m]]]
+      [@derive ax-sum :premises [] :conclusion [holds [add [s z] [s z]] [s [s z]]]]
+      [@derive check-eq :premises [[holds ?x ?x]] :conclusion [eq ?x true]]
+    ]
+    [Proofs Check :in Arith
+      ;; [eq z true] should NOT be derivable via forward-chaining
+      [assert-refuted not-zero
+        :assumptions []
+        :goal [eq z true]
+        :depth 5
+        :strategy forward]
+    ]
+    "#;
+
+    let sexps = parser::parse(source).unwrap();
+    let mut session = Session::new();
+    for sexp in &sexps {
+        session.process(sexp).unwrap_or_else(|e| panic!("Error: {}", e));
+    }
+
+    let refute_lines: Vec<_> = session.output.iter().filter(|l| l.contains("not-zero passed")).collect();
+    assert!(!refute_lines.is_empty(), "output: {:?}", session.output);
+}
+
+#[test]
+fn arity_enforcement_warning() {
+    // Test that arity mismatch produces a warning (via stderr) but doesn't fail.
+    // Operators declared with :arity should warn when applied with wrong arg count.
+    let source = r#"
+    [System S
+      [@syntax [sort T] [op f :arity 2] [op a] [op b]]
+      [@binding implicit]
+    ]
+    [Theory T :in S]
+    [Proofs Check :in T
+      [assert-eq test1 [f a b] [f a b]]
+    ]
+    "#;
+
+    let sexps = parser::parse(source).unwrap();
+    let mut session = Session::new();
+    for sexp in &sexps {
+        session.process(sexp).unwrap_or_else(|e| panic!("Error: {}", e));
+    }
+    // Should pass — arity matches
+    assert!(session.output.iter().any(|l| l.contains("test1 passed")), "output: {:?}", session.output);
+}

@@ -333,14 +333,28 @@ pub fn emit_system_sexp(
 
         // Operators from morphisms (only if no signature)
         for morph in &cat.morphisms {
-            syntax_items.push(Sexp::List(
-                vec![
-                    Sexp::Atom("op".into(), sp),
-                    Sexp::Atom(morph.name.clone(), sp),
-                ],
-                sp,
-            ));
+            let mut op_items = vec![
+                Sexp::Atom("op".into(), sp),
+                Sexp::Atom(morph.name.clone(), sp),
+            ];
+            // Emit :arity for arity enforcement
+            if !morph.domain.is_empty() {
+                op_items.push(Sexp::Atom(":arity".into(), sp));
+                op_items.push(Sexp::Atom(morph.domain.len().to_string(), sp));
+            }
+            syntax_items.push(Sexp::List(op_items, sp));
         }
+    }
+
+    // Judgment forms as operators
+    for j in &cat.judgments {
+        syntax_items.push(Sexp::List(
+            vec![
+                Sexp::Atom("op".into(), sp),
+                Sexp::Atom(j.name.clone(), sp),
+            ],
+            sp,
+        ));
     }
 
     // Operators from structure
@@ -607,6 +621,7 @@ mod tests {
                     codomain: "Term".into(),
                 },
             ],
+            judgments: vec![],
             structure: vec![
                 CategoricalStructure::Exponential {
                     name: "lam".into(),
@@ -679,6 +694,7 @@ mod tests {
                 name: "Prop".into(),
             }],
             morphisms: vec![],
+            judgments: vec![],
             structure: vec![
                 CategoricalStructure::ModalOperator {
                     name: "box".into(),
@@ -760,6 +776,7 @@ mod tests {
             name: "Simple".into(),
             objects: vec![ObjectDecl { name: "T".into() }],
             morphisms: vec![],
+            judgments: vec![],
             structure: vec![],
         };
         let sub = SubstrateDef {

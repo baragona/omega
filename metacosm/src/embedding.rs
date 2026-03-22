@@ -186,7 +186,8 @@ pub fn layer_block_types(layer: &LayerName) -> &'static [&'static str] {
             "Theory", "Proofs", "Category", "Substrate", "Universe",
             "Functor", "NatTrans", "Adjunction", "VerifyFunctor",
             "World", "Transition", "Observable", "Family", "Pipeline",
-            "Measure", "Compose", "Embedding",
+            "Measure", "Compose", "Embedding", "Assert",
+            "CheckWorld", "Lemma", "Materialize", "Promote", "Law", "Refute",
         ],
     }
 }

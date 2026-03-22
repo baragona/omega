@@ -12,5 +12,6 @@ pub mod rewrite;
 pub mod morphism;
 pub mod judgment;
 pub mod refute;
+pub mod tactic;
 pub mod eta;
 pub mod egraph;

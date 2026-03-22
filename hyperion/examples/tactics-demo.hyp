@@ -1,0 +1,118 @@
+;; Hyperion: Tactics, Parameterized Theories, and Refutation Demo
+;;
+;; Demonstrates:
+;; 1. Nested parameterized theory imports
+;; 2. Tactic proofs (apply, auto, assumption)
+;; 3. assert-refuted (negative assertions)
+;; 4. Forward-chaining refutation strategy
+
+;; ════════════════════════════════════════════════════════════
+;; Category & Substrate
+;; ════════════════════════════════════════════════════════════
+
+;; First-order rewriting category (no CCC — avoids currying)
+;; Judgment declares `typeof` at the categorical level — no raw Apeiron needed
+[Category FirstOrder
+  [Object Elem]
+  [Morphism op :domain [Elem Elem] :codomain Elem]
+  [Judgment typeof :inputs [Elem Elem] :output Elem]
+]
+
+[Substrate RewriteNet
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Universe MathWorld :category FirstOrder :substrate RewriteNet]
+
+;; ════════════════════════════════════════════════════════════
+;; 1. Nested Parameterized Theories
+;; ════════════════════════════════════════════════════════════
+
+;; Inner template: decidable equality
+[Theory EqDecide :params [[T Sort] [eq_op Op]] :in MathWorld
+  [op eq_true]
+  [@rule eq-refl [eq_op ?x ?x] ==> eq_true]
+]
+
+;; Outer template: monoid with unit laws + nested equality
+[Theory MonoidTemplate :params [[T Sort] [binop Op] [unit Op]] :in MathWorld
+  [@rule unit-l [binop unit ?x] ==> ?x]
+  [@rule unit-r [binop ?x unit] ==> ?x]
+  [import EqDecide T eq :as Eq]
+]
+
+;; Concrete instantiation: declare ops so Apeiron knows their arity
+[Theory NatArith :in MathWorld
+  [op z] [op s] [op add] [op eq] [op a] [op b]
+  [@rule add-z [add z ?n] ==> ?n]
+  [@rule add-s [add [s ?n] ?m] ==> [s [add ?n ?m]]]
+  ;; Instantiate monoid template for addition
+  [import MonoidTemplate Elem add z :as M]
+]
+
+[Proofs NatArithCheck :in NatArith :no-laws
+  ;; Unit law: add(z, s(z)) = s(z) — via MonoidTemplate
+  [assert-eq unit-left [add z [s z]] [s z]]
+
+  ;; Nested equality (from EqDecide via MonoidTemplate)
+  [assert-eq eq-self [eq a a] M.Eq.eq_true]
+]
+
+;; ════════════════════════════════════════════════════════════
+;; 2. Judgment-Based Logic with Tactics
+;; ════════════════════════════════════════════════════════════
+
+;; We use Apeiron directly for judgment-based logic
+;; (Hyperion passes Theory/Proofs through to Apeiron)
+
+[Theory PropLogic :in MathWorld
+  [op p] [op q] [op r] [op implies] [op typeof]
+
+  ;; Axioms
+  [@derive ax-p   :premises [] :conclusion [typeof p p]]
+  [@derive ax-pq  :premises [] :conclusion [typeof p [implies p q]]]
+  [@derive ax-q   :premises [] :conclusion [typeof q q]]
+
+  ;; Modus ponens
+  [@derive mp :premises [[typeof ?A [implies ?A ?B]] [typeof ?A ?A]]
+              :conclusion [typeof ?A ?B]]
+]
+
+[Proofs TacticDemo :in PropLogic :no-laws
+  ;; ── Tactic: derive [typeof p q] via modus ponens ──
+  ;; apply mp: splits into [typeof p [implies p q]] and [typeof p p]
+  ;; auto: solves each subgoal from axioms
+  [tactic modus-ponens-proof
+    :goal [typeof p q]
+    :steps [[apply mp] [auto 3] [auto 3]]]
+
+  ;; ── Tactic: discharge from assumptions ──
+  [tactic from-assumption
+    :goal [typeof p p]
+    :assumptions [[typeof p p]]
+    :steps [[assumption]]]
+
+  ;; ════════════════════════════════════════════════════════════
+  ;; 3. Assert-Refuted: Negative Reasoning
+  ;; ════════════════════════════════════════════════════════════
+
+  ;; [typeof r r] is NOT derivable — no axiom concludes typeof for r
+  [assert-refuted r-not-provable
+    :assumptions []
+    :goal [typeof r r]
+    :depth 5]
+
+  ;; ════════════════════════════════════════════════════════════
+  ;; 4. Forward-Chaining Strategy
+  ;; ════════════════════════════════════════════════════════════
+
+  ;; Same check using forward search
+  [refute r-forward
+    :assumptions []
+    :goal [typeof r r]
+    :depth 5
+    :strategy forward]
+]

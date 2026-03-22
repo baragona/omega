@@ -842,8 +842,10 @@ impl HyperionSession {
         self.apeiron.process(&rewritten)?;
         self.drain_apeiron_output();
 
-        // Categorical law verification: after theory registration, check category laws
-        if !self.skip_laws && !no_laws {
+        // Categorical law verification: after theory registration, check category laws.
+        // Skip for parameterized templates — they aren't fully instantiated yet.
+        let is_template = items.iter().any(|s| s.is_atom(":params"));
+        if !self.skip_laws && !no_laws && !is_template {
             if let Some(uni_name) = &universe_name {
                 self.check_categorical_laws(theory_name, uni_name)?;
             }

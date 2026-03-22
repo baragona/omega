@@ -19,6 +19,8 @@ pub struct BuildEnv {
     pub known_ops: HashSet<String>,
     /// Named scope IDs for barrier nodes.
     pub scope_ids: HashMap<String, u32>,
+    /// Declared arities for operators. If present, enforced at build time.
+    pub op_arities: HashMap<String, u8>,
 }
 
 /// A dangling port that needs to be wired to a variable's value.
@@ -36,6 +38,7 @@ impl BuildEnv {
             scopes: vec![HashMap::new()],
             known_ops: HashSet::new(),
             scope_ids: HashMap::new(),
+            op_arities: HashMap::new(),
         }
     }
 
@@ -184,7 +187,21 @@ pub fn build_term(arena: &mut Arena, env: &mut BuildEnv, sexp: &Sexp) -> Port {
                             .map_or(false, |n| env.known_ops.contains(n))
                     {
                         let name = items[0].as_atom().unwrap().to_string();
-                        let arity = (items.len() - 1) as u8;
+                        let provided_arity = (items.len() - 1) as u8;
+
+                        // Arity enforcement: if declared arity exists, validate
+                        if let Some(&declared) = env.op_arities.get(&name) {
+                            if provided_arity != declared {
+                                // Log warning but don't fail — partial application
+                                // may be intentional in CCC contexts
+                                eprintln!(
+                                    "[WARN] operator '{}' declared with arity {} but applied to {} args",
+                                    name, declared, provided_arity
+                                );
+                            }
+                        }
+
+                        let arity = provided_arity;
                         let sym = arena.spawn(OpCode::Sym { name, arity });
                         for (i, arg) in items[1..].iter().enumerate() {
                             let arg_port = build_term(arena, env, arg);

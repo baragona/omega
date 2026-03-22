@@ -16,6 +16,16 @@ pub struct MorphismDecl {
     pub codomain: String,
 }
 
+/// A declared judgment form in a category.
+/// Judgments are the canonical way to declare derivation-checkable forms
+/// (e.g., `typeof`, `proves`, `holds`) at the categorical level.
+#[derive(Debug, Clone)]
+pub struct JudgmentDecl {
+    pub name: String,
+    pub inputs: Vec<String>,
+    pub output: Option<String>,
+}
+
 /// Categorical gadgets that constrain what substrates are compatible.
 #[derive(Debug, Clone)]
 pub enum CategoricalStructure {
@@ -65,6 +75,7 @@ pub struct CategoryDef {
     pub name: String,
     pub objects: Vec<ObjectDecl>,
     pub morphisms: Vec<MorphismDecl>,
+    pub judgments: Vec<JudgmentDecl>,
     pub structure: Vec<CategoricalStructure>,
 }
 
@@ -152,6 +163,7 @@ pub fn parse_category(items: &[Sexp]) -> Result<CategoryDef> {
 
     let mut objects = Vec::new();
     let mut morphisms = Vec::new();
+    let mut judgments = Vec::new();
     let mut structure = Vec::new();
 
     for item in &items[2..] {
@@ -179,6 +191,9 @@ pub fn parse_category(items: &[Sexp]) -> Result<CategoryDef> {
             }
             "Morphism" => {
                 morphisms.push(parse_morphism(inner)?);
+            }
+            "Judgment" => {
+                judgments.push(parse_judgment(inner)?);
             }
             "Exponential" => {
                 let exp_name = get_required_atom(inner, 1, "Exponential", "name")?;
@@ -269,8 +284,16 @@ pub fn parse_category(items: &[Sexp]) -> Result<CategoryDef> {
         name,
         objects,
         morphisms,
+        judgments,
         structure,
     })
+}
+
+fn parse_judgment(inner: &[Sexp]) -> Result<JudgmentDecl> {
+    let name = get_required_atom(inner, 1, "Judgment", "name")?;
+    let inputs = get_keyword_list(inner, ":inputs", "Judgment")?;
+    let output = get_keyword_atom(inner, ":output", "Judgment").ok();
+    Ok(JudgmentDecl { name, inputs, output })
 }
 
 fn parse_morphism(inner: &[Sexp]) -> Result<MorphismDecl> {

@@ -1317,6 +1317,7 @@ impl MetacosmSession {
                     PathType { .. } => "PathType".to_string(),
                     JType { .. } => "JType".to_string(),
                     PartialElement { .. } => "PartialElement".to_string(),
+                    IntervalSort { .. } => "IntervalSort".to_string(),
                 }
             }).collect())
             .unwrap_or_default()

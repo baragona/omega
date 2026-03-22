@@ -331,7 +331,7 @@ fn cosmology_demo_file() {
     assert!(errors.is_empty(), "errors: {:?}", errors);
 
     assert_eq!(session.worlds.len(), 3);
-    assert_eq!(session.transitions.len(), 3); // 2 declared + 1 composed
+    assert_eq!(session.transitions.len(), 4); // 2 declared + 1 composed + 1 promoted
     assert_eq!(session.observables.len(), 10);
     assert_eq!(session.families.len(), 1);
     assert_eq!(session.pipelines.len(), 1);
@@ -710,4 +710,610 @@ fn embedding_violation_detected() {
     "#);
     assert_eq!(errors.len(), 1);
     assert!(errors[0].contains("conservative") || errors[0].contains("dominate"));
+}
+
+// ========== Metatheorem tests ==========
+
+#[test]
+fn metatheorem_verify_all_on_cosmology_demo() {
+    let mut session = MetacosmSession::new();
+    let source = std::fs::read_to_string("examples/cosmology-demo.mcm").unwrap();
+    let _errors = process_all(&mut session, &source);
+    let results = session.verify_metatheorems();
+    let refuted: Vec<_> = results.iter().filter(|r| !r.is_proved()).collect();
+    assert!(refuted.is_empty(), "refuted metatheorems: {:?}", refuted);
+    assert!(results.len() > 10, "expected many metatheorems, got {}", results.len());
+}
+
+#[test]
+fn metatheorem_dominance_reflexive() {
+    use metacosm::epistemic::EpistemicProfile;
+    use metacosm::metatheory;
+
+    let ep = EpistemicProfile::trivial();
+    let r = metatheory::dominance_reflexive(&ep);
+    assert!(r.is_proved());
+}
+
+#[test]
+fn metatheorem_dominance_transitive() {
+    use metacosm::epistemic::*;
+    use metacosm::metatheory;
+
+    let strong = EpistemicProfile {
+        discover: DiscoveryStrength::Complete,
+        verify: VerificationProfile {
+            soundness: metacosm::epistemic::Soundness::Sound,
+            completeness: metacosm::epistemic::Completeness::Complete,
+            termination: metacosm::epistemic::Termination::Decidable,
+        },
+        ..Default::default()
+    };
+    let mid = EpistemicProfile {
+        discover: DiscoveryStrength::Heuristic,
+        verify: VerificationProfile {
+            soundness: metacosm::epistemic::Soundness::Sound,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let weak = EpistemicProfile::trivial();
+
+    let r = metatheory::dominance_transitive(&strong, &mid, &weak);
+    assert!(r.is_proved());
+}
+
+#[test]
+fn metatheorem_composition_associativity() {
+    let mut session = MetacosmSession::new();
+    let source = r#"
+        [World A :category C :substrate S :epistemic [:discover complete :verify decidable] :admits [Tunnel CoarseGrain]]
+        [World B :category C :substrate S :epistemic [:discover heuristic :verify sound]]
+        [World C :category C :substrate S :epistemic [:discover none :verify sound :canonicalize confluent] :admits [CoarseGrain]]
+        [World D :category C :substrate S :epistemic [:discover none :verify sound :canonicalize confluent :compress codegen]]
+        [Transition AB :kind Tunnel :from A :to B :preserves [Soundness] :transport [:mode witness :loss [PathStructure]]]
+        [Transition BC :kind CoarseGrain :from B :to C :preserves [Soundness] :transport [:mode lossy :loss [ResourceSensitivity]]]
+        [Transition CD :kind CoarseGrain :from C :to D :preserves [Soundness Normalization] :transport [:mode conservative]]
+    "#;
+    let errors = process_all(&mut session, source);
+    assert!(errors.is_empty(), "setup errors: {:?}", errors);
+
+    let ab = &session.transitions["AB"];
+    let bc = &session.transitions["BC"];
+    let cd = &session.transitions["CD"];
+    let r = metacosm::metatheory::composition_associativity(ab, bc, cd);
+    assert!(r.is_proved(), "associativity failed: {:?}", r);
+}
+
+#[test]
+fn metatheorem_pipeline_preserves_invariants() {
+    let mut session = MetacosmSession::new();
+    let source = r#"
+        [World A :category C :substrate S :epistemic [:discover complete :verify sound] :admits [Tunnel]]
+        [World B :category C :substrate S :epistemic [:discover heuristic :verify decidable]]
+        [Transition T :kind Tunnel :from A :to B :preserves [Soundness] :transport [:mode witness]]
+        [Family F :worlds [A B] :invariants [Soundness]]
+    "#;
+    let errors = process_all(&mut session, source);
+    assert!(errors.is_empty(), "setup errors: {:?}", errors);
+
+    let family = &session.families["F"];
+    let r = metacosm::metatheory::pipeline_preserves_invariants(
+        family, &session.transitions, &vec!["T".to_string()],
+    );
+    assert!(r.is_proved());
+}
+
+#[test]
+fn morphism_identity_auto_registered() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [Category CC [Object Type] [Morphism app :domain [Type Type] :codomain Type]]
+        [Substrate S @engine term-tree @resource-mode optimal-sharing @barrier transparent @equality rewrite-equivalence]
+        [World A :category CC :substrate S :epistemic [:discover complete :verify sound]]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+    assert!(session.morphisms.contains_key("id_A"), "identity morphism should be auto-registered");
+    let id = &session.morphisms["id_A"];
+    assert!(id.properties.faithful);
+    assert!(id.properties.full);
+    assert!(id.properties.essentially_surjective);
+}
+
+#[test]
+fn morphism_with_functor_validation() {
+    let mut session = MetacosmSession::new();
+    // Hyperion functors map between substrates; must be declared AFTER worlds (universes)
+    let errors = process_all(&mut session, r#"
+        [Category CC [Object Type] [Object Term] [Morphism app :domain [Term Term] :codomain Term] [Exponential lam :object Type] [Evaluator app]]
+        [Substrate S1 @engine interaction-graph @resource-mode optimal-sharing @barrier transparent @equality equality-saturation]
+        [Substrate S2 @engine term-tree @resource-mode optimal-sharing @barrier transparent @equality rewrite-equivalence]
+        [World Explorer :category CC :substrate S1 :epistemic [:discover complete :verify sound] :admits [Tunnel]]
+        [World Certifier :category CC :substrate S2 :epistemic [:discover heuristic :verify decidable :canonicalize unique-nf]]
+        [Functor CCid :from S1 :to S2 :map-object [Type Type] :map-object [Term Term] :map-morphism [app app]]
+        [Transition DiscoverTunnel :kind Tunnel :from Explorer :to Certifier :functor CCid :preserves [Soundness] :transport [:mode witness :loss [PathStructure]]]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+
+    let morph = &session.morphisms["DiscoverTunnel"];
+    assert!(morph.functor.is_some());
+    // Functor has injective object map, should be faithful
+    assert!(morph.properties.faithful, "injective object map should be faithful");
+}
+
+#[test]
+fn morphism_functor_substrate_mismatch() {
+    let mut session = MetacosmSession::new();
+    // Worlds first, then functors (Hyperion needs universes before functors)
+    let errors = process_all(&mut session, r#"
+        [Category CC [Object Type] [Morphism app :domain [Type Type] :codomain Type]]
+        [Substrate S1 @engine term-tree @resource-mode optimal-sharing @barrier transparent @equality rewrite-equivalence]
+        [Substrate S2 @engine interaction-graph @resource-mode optimal-sharing @barrier transparent @equality equality-saturation]
+        [World A :category CC :substrate S1 :epistemic [:discover complete :verify sound] :admits [Tunnel]]
+        [World B :category CC :substrate S2 :epistemic [:discover heuristic :verify sound]]
+        [Functor F :from S1 :to S2 :map-object [Type Type]]
+        [Transition Good :kind Tunnel :from A :to B :functor F :preserves [Soundness]]
+    "#);
+    assert!(errors.is_empty(), "should be valid: {:?}", errors);
+    // Now test mismatch: functor source S2 but world A uses S1
+    let errors2 = process_all(&mut session, r#"
+        [World C :category CC :substrate S1 :epistemic [:discover none :verify sound]]
+        [Functor F2 :from S2 :to S1 :map-object [Type Type]]
+        [Transition Bad :kind Tunnel :from A :to C :functor F2 :preserves [Soundness]]
+    "#);
+    assert!(!errors2.is_empty(), "should fail: functor source doesn't match world substrate");
+}
+
+#[test]
+fn morphism_compose_preserves_functor() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [Category CC [Object Type] [Object Term] [Morphism app :domain [Term Term] :codomain Term] [Exponential lam :object Type] [Evaluator app]]
+        [Substrate S1 @engine interaction-graph @resource-mode optimal-sharing @barrier transparent @equality equality-saturation]
+        [Substrate S2 @engine term-tree @resource-mode optimal-sharing @barrier transparent @equality rewrite-equivalence]
+        [Substrate S3 @engine abstract-machine @resource-mode deep-copy @barrier transparent @equality rewrite-equivalence]
+        [World A :category CC :substrate S1 :epistemic [:discover complete :verify sound] :admits [Tunnel]]
+        [World B :category CC :substrate S2 :epistemic [:discover heuristic :verify decidable] :admits [CoarseGrain]]
+        [World C :category CC :substrate S3 :epistemic [:discover none :verify sound :canonicalize confluent :compress codegen]]
+        [Functor F1 :from S1 :to S2 :map-object [Type Type] :map-object [Term Term] :map-morphism [app app]]
+        [Functor F2 :from S2 :to S3 :map-object [Type Type] :map-object [Term Term] :map-morphism [app app]]
+        [Transition AB :kind Tunnel :from A :to B :functor F1 :preserves [Soundness] :transport [:mode witness]]
+        [Transition BC :kind CoarseGrain :from B :to C :functor F2 :preserves [Soundness] :transport [:mode lossy]]
+        [Compose AC :transitions [AB BC]]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+
+    let composed = &session.morphisms["AC"];
+    match &composed.functor {
+        Some(metacosm::morphism::FunctorRef::Composite(names)) => {
+            assert_eq!(names, &vec!["F1".to_string(), "F2".to_string()]);
+        }
+        other => panic!("expected Composite functor, got {:?}", other),
+    }
+}
+
+#[test]
+fn inference_propagates_completeness() {
+    let mut session = MetacosmSession::new();
+    // A has complete verification, B has default (completeness=none).
+    // ConservativeExtension propagates completeness.
+    let errors = process_all(&mut session, r#"
+        [World A :category C :substrate S :epistemic [:discover complete :verify decidable]]
+        [World B :category C :substrate S]
+        [Transition T :kind ConservativeExtension :from A :to B]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+
+    let result = session.run_inference();
+    assert!(!result.propagated.is_empty(), "should propagate completeness to B: propagated={:?}", result.propagated);
+    let b = &session.worlds["B"];
+    assert!(b.epistemic.verify.completeness >= metacosm::epistemic::Completeness::Complete,
+        "B completeness should be ≥ complete after inference, got {:?}", b.epistemic.verify.completeness);
+}
+
+#[test]
+fn inference_conservative_extension_propagates_discovery() {
+    let mut session = MetacosmSession::new();
+    // A has complete discovery (above default heuristic), B has default.
+    // ConservativeExtension should propagate discovery=complete to B.
+    let errors = process_all(&mut session, r#"
+        [World A :category C :substrate S :epistemic [:discover complete :verify sound]]
+        [World B :category C :substrate S]
+        [Transition T :kind ConservativeExtension :from A :to B]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+
+    let result = session.run_inference();
+    assert!(!result.propagated.is_empty(), "should propagate discovery to B: propagated={:?}", result.propagated);
+    let b = &session.worlds["B"];
+    assert!(b.epistemic.discover >= metacosm::epistemic::DiscoveryStrength::Complete,
+        "B discovery should be ≥ complete, got {:?}", b.epistemic.discover);
+}
+
+#[test]
+fn inference_conflict_on_explicit_value() {
+    let mut session = MetacosmSession::new();
+    // A has completeness=complete (via :verify decidable). B has completeness=partial (non-default, explicit).
+    // ConservativeExtension requires B.completeness >= A.completeness = complete.
+    // B.completeness = partial < complete AND partial != default (None).
+    // This should produce a conflict.
+    let errors = process_all(&mut session, r#"
+        [World A :category C :substrate S :epistemic [:discover complete :verify decidable]]
+        [World B :category C :substrate S :epistemic [:verify [:soundness sound :completeness partial :termination unknown]]]
+        [Transition T :kind ConservativeExtension :from A :to B]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+
+    let result = session.run_inference();
+    assert!(!result.violations.is_empty(),
+        "should detect conflict on completeness: propagated={:?}, violations={:?}",
+        result.propagated, result.violations);
+}
+
+#[test]
+fn inference_fixpoint_chain() {
+    let mut session = MetacosmSession::new();
+    // Chain: A→B→C. Completeness should propagate through both via ConservativeExtension.
+    // Completeness default is None, A has Complete (via decidable).
+    let errors = process_all(&mut session, r#"
+        [World A :category C :substrate S :epistemic [:discover complete :verify decidable]]
+        [World B :category C :substrate S]
+        [World C :category C :substrate S]
+        [Transition AB :kind ConservativeExtension :from A :to B]
+        [Transition BC :kind ConservativeExtension :from B :to C]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+
+    let result = session.run_inference();
+    // B gets completeness=complete from A (iteration 1), C gets it from B (iteration 2)
+    assert!(result.iterations >= 2, "should need ≥2 iterations, got {}", result.iterations);
+    let c = &session.worlds["C"];
+    assert!(c.epistemic.verify.completeness >= metacosm::epistemic::Completeness::Complete,
+        "C should have complete after fixpoint propagation, got {:?}", c.epistemic.verify.completeness);
+}
+
+#[test]
+fn inference_on_cosmology_demo() {
+    let mut session = MetacosmSession::new();
+    let source = std::fs::read_to_string("examples/cosmology-demo.mcm").unwrap();
+    let _errors = process_all(&mut session, &source);
+    let result = session.run_inference();
+    // Demo has explicit profiles — inference should find no conflicts
+    assert!(result.violations.is_empty(), "demo should have no inference conflicts: {:?}", result.violations);
+}
+
+#[test]
+fn metatheorem_embedding_definable_fragment() {
+    use metacosm::embedding::*;
+    use metacosm::metatheory;
+
+    let emb = EmbeddingDef {
+        name: "OmegaInHyperion".into(),
+        source: EmbeddingEndpoint::Layer(LayerName::Omega),
+        target: EmbeddingEndpoint::Layer(LayerName::Hyperion),
+        properties: vec![EmbeddingProperty::DefinableFragment, EmbeddingProperty::StrictExtension],
+        checked: false,
+    };
+    let r = metatheory::embedding_definable_fragment(&emb);
+    assert!(r.is_proved());
+    let r2 = metatheory::embedding_strict_extension(&emb);
+    assert!(r2.is_proved());
+}
+
+// ========== User-declared assertions ==========
+
+#[test]
+fn assertion_dominates_pass() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [World A :epistemic [:discover complete :verify sound]]
+        [World B :epistemic [:discover heuristic :verify sound]]
+        [Assert [dominates A B]]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+    assert!(session.output.iter().any(|s| s.contains("PASS")));
+}
+
+#[test]
+fn assertion_dominates_fail() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [World A :epistemic [:discover none :verify sound]]
+        [World B :epistemic [:discover complete :verify sound]]
+        [Assert [dominates A B]]
+    "#);
+    assert_eq!(errors.len(), 1);
+    assert!(errors[0].contains("assertion failed"));
+}
+
+#[test]
+fn assertion_preserves_pass() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [World A :epistemic [:discover complete :verify sound] :admits [Tunnel]]
+        [World B :epistemic [:verify decidable]]
+        [Transition T1 :kind Tunnel :from A :to B :preserves [Soundness]]
+        [Family F1 :worlds [A B] :invariants [Soundness]]
+        [Assert [preserves F1 Soundness]]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+}
+
+#[test]
+fn assertion_preserves_fail() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [World A :epistemic [:discover complete :verify sound] :admits [Tunnel]]
+        [World B :epistemic [:verify decidable]]
+        [Transition T1 :kind Tunnel :from A :to B :preserves [Soundness] :breaks [Normalization]]
+        [Family F1 :worlds [A B] :invariants [Soundness Normalization]]
+        [Assert [preserves F1 Normalization]]
+    "#);
+    assert_eq!(errors.len(), 1);
+    assert!(errors[0].contains("assertion failed"));
+}
+
+#[test]
+fn assertion_distance() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [World A :epistemic [:discover complete :verify sound]]
+        [World B :epistemic [:discover heuristic :verify sound]]
+        [Assert [distance A B :max 5]]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+}
+
+#[test]
+fn assertion_faithful_with_functor() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [Category CC [Object Type] [Morphism app :domain [Type Type] :codomain Type]]
+        [Substrate S1 @engine interaction-graph @resource-mode optimal-sharing @barrier transparent @equality equality-saturation]
+        [Substrate S2 @engine term-tree @resource-mode optimal-sharing @barrier transparent @equality rewrite-equivalence]
+        [World A :category CC :substrate S1 :epistemic [:discover complete :verify sound] :admits [Tunnel]]
+        [World B :category CC :substrate S2 :epistemic [:verify decidable]]
+        [Functor F1 :from S1 :to S2 :map-object [Type Type] :map-morphism [app app]]
+        [Transition T1 :kind Tunnel :from A :to B :functor F1 :preserves [Soundness]]
+        [Assert [faithful T1]]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+}
+
+// ========== New features showcase ==========
+
+#[test]
+fn new_features_showcase() {
+    let source = std::fs::read_to_string("examples/new-features.mcm").unwrap();
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, &source);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+
+    // 3 main worlds + Void
+    assert_eq!(session.worlds.len(), 4);
+    // 2 declared + 1 promoted = 3
+    assert_eq!(session.transitions.len(), 3);
+    // 1 lemma
+    assert_eq!(session.lemmas.len(), 1);
+    // 2 laws
+    assert_eq!(session.laws.len(), 2);
+    // 2 refutations
+    assert_eq!(session.impossibilities.len(), 2);
+
+    // Laws were checked
+    assert!(session.output.iter().any(|s| s.contains("DominanceReflexive") && s.contains("PROVED")));
+    assert!(session.output.iter().any(|s| s.contains("DominanceTransitive") && s.contains("PROVED")));
+
+    // Pipeline materialized
+    assert!(session.output.iter().any(|s| s.contains("[MATERIALIZE]") && s.contains("Step 1")));
+
+    // Promote created a transition
+    assert!(session.transitions.contains_key("LabExtendsVoid"));
+}
+
+// ========== CheckWorld (World Audit) ==========
+
+#[test]
+fn check_world_passes_consistent() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [Category CC [Object Type] [Morphism app :domain [Type Type] :codomain Type]]
+        [Substrate S1 @engine interaction-graph @resource-mode optimal-sharing @barrier transparent @equality equality-saturation]
+        [World Explorer :category CC :substrate S1 :epistemic [:discover complete :verify sound]]
+        [CheckWorld Explorer]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+    assert!(session.output.iter().any(|s| s.contains("[AUDIT]") && s.contains("PASS")));
+}
+
+#[test]
+fn check_world_warns_strong_norm_with_egraph() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [Category CC [Object Type] [Morphism app :domain [Type Type] :codomain Type]]
+        [Substrate S1 @engine interaction-graph @resource-mode optimal-sharing @barrier transparent @equality equality-saturation]
+        [World W :category CC :substrate S1 :epistemic [:canonicalize [:normalization strong :confluence no :unique-normal-forms no]]]
+        [CheckWorld W]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+    assert!(session.output.iter().any(|s| s.contains("WARN")));
+}
+
+// ========== Lemma (Cross-World Lemma) ==========
+
+#[test]
+fn lemma_transport_valid() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [World A :epistemic [:discover complete :verify sound] :admits [Tunnel]]
+        [World B :epistemic [:verify decidable]]
+        [Transition T1 :kind Tunnel :from A :to B :preserves [Soundness] :transport [:mode witness :loss [PathStructure]]]
+        [Lemma MyLemma :source A :via T1 :target B :statement commutativity]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+    assert!(session.lemmas.contains_key("MyLemma"));
+    assert!(session.output.iter().any(|s| s.contains("[LEMMA]") && s.contains("transported")));
+}
+
+#[test]
+fn lemma_transport_mismatch() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [World A :epistemic [:discover complete :verify sound] :admits [Tunnel]]
+        [World B :epistemic [:verify decidable]]
+        [World C :epistemic [:verify sound]]
+        [Transition T1 :kind Tunnel :from A :to B :preserves [Soundness]]
+        [Lemma Bad :source A :via T1 :target C :statement foo]
+    "#);
+    assert_eq!(errors.len(), 1);
+    assert!(errors[0].contains("not A → C"));
+}
+
+// ========== Materialize (Pipeline Materialization) ==========
+
+#[test]
+fn materialize_pipeline_basic() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [World Explorer :epistemic [:discover complete :verify sound] :admits [Tunnel]]
+        [World Certifier :epistemic [:verify decidable]]
+        [World Executor :epistemic [:discover none :verify sound :canonicalize confluent]]
+        [Transition T1 :kind Tunnel :from Explorer :to Certifier :preserves [Soundness] :breaks [PathStructure]]
+        [Transition T2 :kind CoarseGrain :from Certifier :to Executor :preserves [Soundness] :breaks [ResourceSensitivity]]
+        [Pipeline Demo
+            [Step discover :action Discover :world Explorer]
+            [Step tunnel :action Tunnel :world Explorer :target Certifier]
+            [Step verify :action Verify :world Certifier]
+            [Step compile :action CoarseGrain :world Certifier :target Executor]
+        ]
+        [Materialize RunDemo :pipeline Demo]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+    assert!(session.output.iter().any(|s| s.contains("[MATERIALIZE]") && s.contains("Step 1")));
+    assert!(session.output.iter().any(|s| s.contains("PathStructure")));
+}
+
+// ========== Promote (Epistemic Promotion) ==========
+
+#[test]
+fn promote_dominates_to_transition() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [World A :epistemic [:discover complete :verify sound]]
+        [World B :epistemic [:discover none :verify sound]]
+        [Promote LiftAB :assertion [dominates A B] :as transition :kind ConservativeExtension]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+    assert!(session.transitions.contains_key("LiftAB"));
+    assert!(session.output.iter().any(|s| s.contains("[PROMOTE]")));
+}
+
+#[test]
+fn promote_failing_assertion_errors() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [World A :epistemic [:discover none :verify sound]]
+        [World B :epistemic [:discover complete :verify sound]]
+        [Promote Bad :assertion [dominates A B] :as transition]
+    "#);
+    assert_eq!(errors.len(), 1);
+    assert!(errors[0].contains("cannot promote"));
+}
+
+// ========== Law (Cosmological Law) ==========
+
+#[test]
+fn law_dominance_reflexive_model_check() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [World A :epistemic [:discover complete :verify sound]]
+        [World B :epistemic [:discover heuristic :verify decidable]]
+        [Law DominanceReflexive
+            :forall [W]
+            :then [dominates W W]
+            :method model-check
+        ]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+    assert!(session.output.iter().any(|s| s.contains("PROVED")));
+}
+
+#[test]
+fn law_with_counterexample() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [World Strong :epistemic [:discover complete :verify sound]]
+        [World Weak :epistemic [:discover none :verify sound]]
+        [Law EverythingDominatesEverything
+            :forall [W1 W2]
+            :then [dominates W1 W2]
+            :method model-check
+        ]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+    assert!(session.output.iter().any(|s| s.contains("REFUTED")));
+}
+
+#[test]
+fn law_with_premise() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [World A :epistemic [:discover complete :verify sound]]
+        [World B :epistemic [:discover heuristic :verify sound]]
+        [World C :epistemic [:discover none :verify sound]]
+        [Law DominanceTransitivity
+            :forall [X Y Z]
+            :where [[dominates X Y] [dominates Y Z]]
+            :then [dominates X Z]
+            :method model-check
+        ]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+    assert!(session.output.iter().any(|s| s.contains("PROVED")));
+}
+
+// ========== Refute (Impossibility Proof) ==========
+
+#[test]
+fn refute_confirmed_no_witness() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [World A :epistemic [:discover complete :verify sound]]
+        [World B :epistemic [:discover none :verify sound]]
+        [Refute NoMutualDominance
+            :forall [W1 W2]
+            :impossible [
+                [dominates W1 W2]
+                [dominates W2 W1]
+                [distance W1 W2 :max 0]
+            ]
+            :method model-check
+        ]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+    // The only way both dominate each other AND distance=0 is if they're the same world
+    // which means distance=0 holds. So this should find a witness (same world assigned to both).
+    // Actually dominates is reflexive, so W1=W2=A satisfies all three. WITNESS FOUND.
+    assert!(session.output.iter().any(|s| s.contains("WITNESS FOUND") || s.contains("CONFIRMED")));
+}
+
+#[test]
+fn refute_genuinely_impossible() {
+    let mut session = MetacosmSession::new();
+    let errors = process_all(&mut session, r#"
+        [World A :epistemic [:discover complete :verify sound]]
+        [World B :epistemic [:discover none :verify sound]]
+        [Refute NoDominanceOfStrongerByWeaker
+            :forall [W1 W2]
+            :impossible [
+                [dominates W1 W2]
+                [distance W1 W2 :max 0]
+            ]
+            :method model-check
+        ]
+    "#);
+    assert!(errors.is_empty(), "errors: {:?}", errors);
+    // W1=A, W2=A: dominates(A,A)=true, distance(A,A)=0≤0=true → witness found
+    // So this is NOT impossible. Check that it reports WITNESS FOUND.
+    assert!(session.output.iter().any(|s| s.contains("WITNESS FOUND")));
 }

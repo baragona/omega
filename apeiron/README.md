@@ -2,7 +2,7 @@
 
 **Apeiron** is a **logic compiler** built on interaction nets. Instead of hardwiring one logical system, it lets you **choose your physics**: configure the binding strategy and checking strategy, then write axioms and prove theorems within that system.
 
-The kernel is ~6,000 lines of Rust. One dependency (egg for e-graphs). 29 examples. 68 tests.
+The kernel is ~6,000 lines of Rust. One dependency (egg for e-graphs). 29 examples. 75 tests.
 
 ---
 
@@ -137,6 +137,67 @@ Verify that two path terms are genuinely distinct — not collapsed by the e-gra
 
 In proof-relevant mode, if the two terms remain in different e-classes after saturation, they are counted as distinct (non-collapse = success).
 
+### `assert-refuted`: Negative Assertions
+
+Verify that a goal is NOT derivable from the given assumptions and derive rules:
+
+```lisp
+[Proofs Check :in MyTheory
+  [assert-refuted impossible-goal
+    :assumptions [[holds a a]]
+    :goal [holds b b]
+    :depth 5]
+]
+```
+
+Succeeds if exhaustive backward-chaining search fails to find a proof. Fails if the goal turns out to be derivable. Supports `:strategy forward` for forward-chaining search.
+
+### `tactic`: Goal-Stack Proof Construction
+
+Build proofs step-by-step using backward reasoning tactics:
+
+```lisp
+[Proofs Check :in MyTheory
+  [tactic modus-ponens-proof
+    :goal [typeof p q]
+    :assumptions [[typeof p p]]
+    :steps [
+      [apply mp]          ;; match rule conclusion against goal, push premises
+      [auto 3]            ;; backward-chain search on first subgoal
+      [assumption]         ;; discharge from assumptions
+    ]]
+]
+```
+
+Available tactic steps:
+- **`[apply rule-name]`** — Match a derive rule's conclusion against the top goal; push premises as subgoals
+- **`[auto N]`** — Automatic backward-chaining search up to depth N
+- **`[assumption]`** — Discharge the top goal if it matches an assumption
+- **`[exact term]`** — Discharge the top goal if the term matches exactly
+- **`[cut lemma-name]`** — Add a proved lemma's conclusion to assumptions
+- **`[intro]`** — Move the first argument of a judgment goal into assumptions
+- **`[egraph]`** — Close the top goal via e-graph equality saturation (requires `equality-saturation` check mode). The goal must be `[head lhs rhs]` where `lhs ≡ rhs` is provable by the e-graph. When `equality-saturation` is active, `[auto N]` also falls back to the e-graph if backward-chaining fails.
+
+### Nested Parameterized Theories
+
+Parameterized theories can now import other parameterized theories. Parameters are substituted through nested imports:
+
+```lisp
+[Theory EqDecide :params [[T Sort] [eq_op Op]] :in System
+  [@rule eq-refl [eq_op ?x ?x] ==> true]
+]
+
+[Theory MonoidTemplate :params [[T Sort] [binop Op] [unit Op]] :in System
+  [@rule unit-l [binop unit ?x] ==> ?x]
+  [import EqDecide T eq :as Eq]    ;; T is substituted when MonoidTemplate is instantiated
+]
+
+[Theory NatMonoid :in System
+  [import MonoidTemplate Nat add z :as M]
+  ;; M.Eq.eq-refl is now available (nested instantiation)
+]
+```
+
 ---
 
 ## The Interaction Net Kernel
@@ -214,7 +275,7 @@ The most innovative port. Omega's STLC uses explicit judgments and derivation tr
 # Run an example
 cargo run -- examples/omega-stlc.ap
 
-# Run all tests (68 tests, ~1s)
+# Run all tests (75 tests, ~1s)
 cargo test
 
 # Try your own
