@@ -2869,3 +2869,62 @@ fn template_skips_law_verification() {
     // This should not error — templates skip law verification
     process_all(&mut session, input).unwrap();
 }
+
+#[test]
+fn weak_equivalence_self() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category C
+          [Object A]
+          [Morphism id :domain [] :codomain A]
+          [Morphism compose :domain [A A] :codomain A]
+        ]
+        [Substrate S
+          @engine interaction-graph
+          @resource-mode optimal-sharing
+          @barrier transparent
+          @equality rewrite-equivalence
+        ]
+        [Universe U :category C :substrate S]
+        [Theory T1 :in U
+          [const a A]
+          [@rule compose-id [compose [id] ?x] ==> ?x]
+          [@rule id-compose [compose ?x [id]] ==> ?x]
+        ]
+        [WeakEquivalence SelfEquiv
+          :source T1
+          :target T1
+          :on-types [[A A]]
+          :via [[id id]]
+          :verify true
+        ]
+    "#;
+    process_all(&mut session, input).unwrap();
+    assert!(session.output.iter().any(|l| l.contains("SelfEquiv VERIFIED")),
+        "output: {:?}", session.output);
+}
+
+#[test]
+fn weak_equivalence_missing_theory() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category C [Object A]]
+        [Substrate S
+          @engine interaction-graph
+          @resource-mode optimal-sharing
+          @barrier transparent
+          @equality rewrite-equivalence
+        ]
+        [Universe U :category C :substrate S]
+        [WeakEquivalence Bad
+          :source Nonexistent
+          :target Nonexistent
+          :on-types [[A A]]
+          :verify true
+        ]
+    "#;
+    let result = process_all(&mut session, input);
+    assert!(result.is_err());
+    let err = format!("{}", result.unwrap_err());
+    assert!(err.contains("not registered"), "error: {}", err);
+}

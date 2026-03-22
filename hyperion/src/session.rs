@@ -1580,6 +1580,20 @@ impl HyperionSession {
             });
         }
 
+        // Validate that source and target theories are fully registered in Apeiron
+        if !self.apeiron.compiled_rules.contains_key(&source_theory) {
+            return Err(HyperionError::ParseError {
+                block: "WeakEquivalence".into(),
+                detail: format!("source theory '{}' is not registered — check for errors in its Theory or Universe block", source_theory),
+            });
+        }
+        if !self.apeiron.compiled_rules.contains_key(&target_theory) {
+            return Err(HyperionError::ParseError {
+                block: "WeakEquivalence".into(),
+                detail: format!("target theory '{}' is not registered — check for errors in its Theory or Universe block", target_theory),
+            });
+        }
+
         let msg = format!(
             "[WEAK-EQUIV] {} registered (source={}, target={}, {} type pairs)",
             name, source_theory, target_theory, type_pairs.len()
