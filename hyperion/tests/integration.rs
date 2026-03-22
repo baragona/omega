@@ -2756,3 +2756,54 @@ fn surjection_demo_example() {
 fn adjoint_meta_ascent_example() {
     run_file("examples/adjoint-meta-ascent.hyp");
 }
+
+#[test]
+fn weak_equivalence_example() {
+    run_file("examples/weak-equivalence.hyp");
+}
+
+#[test]
+fn weak_equivalence_verification() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category C
+          [Object T]
+          [Morphism compose :domain [T T] :codomain T]
+          [Morphism id :domain [] :codomain T]
+          [Morphism A :domain [] :codomain T]
+          [Morphism B :domain [] :codomain T]
+          [Morphism f :domain [] :codomain T]
+          [Morphism g :domain [] :codomain T]
+        ]
+        [Substrate S @engine interaction-graph @resource-mode optimal-sharing @barrier transparent @equality equality-saturation]
+        [Universe U :category C :substrate S]
+        [Theory Th :in U
+          [@rule ul [compose id ?x] ==> ?x]
+          [@rule ur [compose ?x id] ==> ?x]
+          [@law fg [compose g f] === id]
+          [@law gf [compose f g] === id]
+          [@law fm [compose f A] === B]
+          [@law gm [compose g B] === A]
+        ]
+        [WeakEquivalence E :source Th :target Th :on-types [[A B]] :via [[f g]] :verify true]
+    "#;
+    process_all(&mut session, input).expect("weak equivalence should verify");
+    let output = session.output.join("\n");
+    assert!(output.contains("VERIFIED"), "should contain VERIFIED: {}", output);
+}
+
+#[test]
+fn weak_equivalence_no_verify() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category C [Object T] [Morphism compose :domain [T T] :codomain T] [Morphism id :domain [] :codomain T]]
+        [Substrate S @engine interaction-graph @resource-mode optimal-sharing @barrier transparent @equality equality-saturation]
+        [Universe U :category C :substrate S]
+        [Theory Th :in U [@rule ul [compose id ?x] ==> ?x]]
+        [WeakEquivalence E :source Th :target Th :on-types [[A B]] :via [[f g]] :verify false]
+    "#;
+    process_all(&mut session, input).expect("should register without verifying");
+    let output = session.output.join("\n");
+    assert!(output.contains("registered"), "should be registered: {}", output);
+    assert!(!output.contains("VERIFIED"), "should not verify: {}", output);
+}

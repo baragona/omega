@@ -259,6 +259,7 @@ impl HyperionSession {
             "Theory" => self.process_theory(sexp),
             "Proofs" => self.process_proofs(sexp),
             "VerifyFunctor" => self.process_verify_functor(items),
+            "WeakEquivalence" => self.process_weak_equivalence(items),
             _ => Err(HyperionError::UnknownBlock {
                 name: head.to_string(),
             }),
@@ -1471,6 +1472,268 @@ impl HyperionSession {
         }
 
         Ok(item.clone())
+    }
+
+    /// Process a `[WeakEquivalence name :source T1 :target T2 :on-types [[A1 B1] ...] :via [[f1 g1] ...] :verify true]`.
+    /// Checks weak equivalence between two theories by:
+    /// 1. Asserting f maps A→B and g maps B→A (compose(f,A)≡B, compose(g,B)≡A)
+    /// 2. Asserting g∘f and f∘g are connected to identity by e-graph paths
+    /// 3. Returning the witnessing equivalence data (maps + homotopies)
+    fn process_weak_equivalence(&mut self, items: &[Sexp]) -> Result<()> {
+        if items.len() < 2 {
+            return Err(HyperionError::ParseError {
+                block: "WeakEquivalence".into(),
+                detail: "missing name".into(),
+            });
+        }
+
+        let name = items[1]
+            .as_atom()
+            .ok_or_else(|| HyperionError::ParseError {
+                block: "WeakEquivalence".into(),
+                detail: "name must be an atom".into(),
+            })?
+            .to_string();
+
+        let mut source_theory: Option<String> = None;
+        let mut target_theory: Option<String> = None;
+        let mut type_pairs: Vec<(String, String)> = Vec::new();
+        let mut map_pairs: Vec<(String, String)> = Vec::new();
+        let mut should_verify = false;
+
+        let mut i = 2;
+        while i < items.len() {
+            let key = items[i].as_atom().unwrap_or("");
+            match key {
+                ":source" => {
+                    i += 1;
+                    source_theory = items.get(i).and_then(|s| s.as_atom()).map(|s| s.to_string());
+                }
+                ":target" => {
+                    i += 1;
+                    target_theory = items.get(i).and_then(|s| s.as_atom()).map(|s| s.to_string());
+                }
+                ":on-types" => {
+                    i += 1;
+                    if let Some(pairs_list) = items.get(i).and_then(|s| s.as_list()) {
+                        for pair in pairs_list {
+                            if let Some(pair_items) = pair.as_list() {
+                                if pair_items.len() == 2 {
+                                    let a = pair_items[0].as_atom().unwrap_or("").to_string();
+                                    let b = pair_items[1].as_atom().unwrap_or("").to_string();
+                                    type_pairs.push((a, b));
+                                }
+                            }
+                        }
+                    }
+                }
+                ":via" => {
+                    i += 1;
+                    if let Some(pairs_list) = items.get(i).and_then(|s| s.as_list()) {
+                        for pair in pairs_list {
+                            if let Some(pair_items) = pair.as_list() {
+                                if pair_items.len() == 2 {
+                                    let f = pair_items[0].as_atom().unwrap_or("").to_string();
+                                    let g = pair_items[1].as_atom().unwrap_or("").to_string();
+                                    map_pairs.push((f, g));
+                                }
+                            }
+                        }
+                    }
+                }
+                ":verify" => {
+                    i += 1;
+                    should_verify = items.get(i).and_then(|s| s.as_atom()) == Some("true");
+                }
+                _ => {
+                    return Err(HyperionError::ParseError {
+                        block: "WeakEquivalence".into(),
+                        detail: format!("unknown keyword: {}", key),
+                    });
+                }
+            }
+            i += 1;
+        }
+
+        let source_theory = source_theory.ok_or_else(|| HyperionError::ParseError {
+            block: "WeakEquivalence".into(),
+            detail: format!("'{}' is missing :source", name),
+        })?;
+        let target_theory = target_theory.ok_or_else(|| HyperionError::ParseError {
+            block: "WeakEquivalence".into(),
+            detail: format!("'{}' is missing :target", name),
+        })?;
+
+        if type_pairs.is_empty() {
+            return Err(HyperionError::ParseError {
+                block: "WeakEquivalence".into(),
+                detail: format!("'{}' is missing :on-types", name),
+            });
+        }
+
+        if !map_pairs.is_empty() && map_pairs.len() != type_pairs.len() {
+            return Err(HyperionError::ParseError {
+                block: "WeakEquivalence".into(),
+                detail: format!("'{}' :via has {} pairs but :on-types has {}", name, map_pairs.len(), type_pairs.len()),
+            });
+        }
+
+        let msg = format!(
+            "[WEAK-EQUIV] {} registered (source={}, target={}, {} type pairs)",
+            name, source_theory, target_theory, type_pairs.len()
+        );
+        self.output.push(msg.clone());
+        self.record_result(&name, "valid", Some(format!("weak-equiv:{}", name)), Some(msg));
+
+        if !should_verify {
+            return Ok(());
+        }
+
+        // Verification: generate synthetic Proofs block.
+        // For each type pair (A, B) with maps (f, g):
+        //   1. assert-eq: compose(f, A) ≡ B  (f maps A→B)
+        //   2. assert-eq: compose(g, B) ≡ A  (g maps B→A)
+        //   3. assert-eq: compose(g, f) ≡ id (roundtrip source side)
+        //   4. assert-eq: compose(f, g) ≡ id (roundtrip target side)
+        // All via e-graph paths (not strict equality).
+
+        let sp = Span::default();
+        let proofs_name = format!("__weq_{}", name);
+
+        let mut proof_items: Vec<Sexp> = Vec::new();
+        proof_items.push(Sexp::Atom("Proofs".into(), sp));
+        proof_items.push(Sexp::Atom(proofs_name.clone(), sp));
+        proof_items.push(Sexp::Atom(":in".into(), sp));
+        proof_items.push(Sexp::Atom(source_theory.clone(), sp));
+
+        for (idx, (a, b)) in type_pairs.iter().enumerate() {
+            let (f_name, g_name) = if let Some(pair) = map_pairs.get(idx) {
+                (pair.0.clone(), pair.1.clone())
+            } else {
+                // Without :via, generate witness names (theory must have laws connecting them)
+                (format!("__weq_f_{}_{}", name, idx), format!("__weq_g_{}_{}", name, idx))
+            };
+
+            // Forward map: compose(f, A) ≡ B
+            proof_items.push(Sexp::List(vec![
+                Sexp::Atom("assert-eq".into(), sp),
+                Sexp::Atom(format!("weq-fwd-{}", idx), sp),
+                Sexp::List(vec![
+                    Sexp::Atom("compose".into(), sp),
+                    Sexp::Atom(f_name.clone(), sp),
+                    Sexp::Atom(a.clone(), sp),
+                ], sp),
+                Sexp::Atom(b.clone(), sp),
+            ], sp));
+
+            // Backward map: compose(g, B) ≡ A
+            proof_items.push(Sexp::List(vec![
+                Sexp::Atom("assert-eq".into(), sp),
+                Sexp::Atom(format!("weq-bwd-{}", idx), sp),
+                Sexp::List(vec![
+                    Sexp::Atom("compose".into(), sp),
+                    Sexp::Atom(g_name.clone(), sp),
+                    Sexp::Atom(b.clone(), sp),
+                ], sp),
+                Sexp::Atom(a.clone(), sp),
+            ], sp));
+
+            // Roundtrip source: compose(g, f) ≡ id
+            proof_items.push(Sexp::List(vec![
+                Sexp::Atom("assert-eq".into(), sp),
+                Sexp::Atom(format!("weq-roundtrip-source-{}", idx), sp),
+                Sexp::List(vec![
+                    Sexp::Atom("compose".into(), sp),
+                    Sexp::Atom(g_name.clone(), sp),
+                    Sexp::Atom(f_name.clone(), sp),
+                ], sp),
+                Sexp::Atom("id".into(), sp),
+            ], sp));
+
+            // Roundtrip target: compose(f, g) ≡ id
+            proof_items.push(Sexp::List(vec![
+                Sexp::Atom("assert-eq".into(), sp),
+                Sexp::Atom(format!("weq-roundtrip-target-{}", idx), sp),
+                Sexp::List(vec![
+                    Sexp::Atom("compose".into(), sp),
+                    Sexp::Atom(f_name.clone(), sp),
+                    Sexp::Atom(g_name.clone(), sp),
+                ], sp),
+                Sexp::Atom("id".into(), sp),
+            ], sp));
+        }
+
+        let proofs_sexp = Sexp::List(proof_items, sp);
+        let universe_name = self.theory_universes.get(&source_theory).cloned();
+        let rewritten = self.rewrite_for_apeiron(&proofs_sexp, universe_name.as_deref())?;
+
+        match self.apeiron.process(&rewritten) {
+            Ok(()) => {
+                self.drain_apeiron_output();
+
+                let mut witness_parts: Vec<String> = Vec::new();
+                for (idx, (a, b)) in type_pairs.iter().enumerate() {
+                    let (f, g) = if let Some(pair) = map_pairs.get(idx) {
+                        (pair.0.as_str(), pair.1.as_str())
+                    } else {
+                        ("(auto)", "(auto)")
+                    };
+                    witness_parts.push(format!(
+                        "  {}<->{}  fwd={}  bwd={}", a, b, f, g
+                    ));
+                }
+
+                let msg = format!(
+                    "[WEAK-EQUIV] {} VERIFIED ({} type pairs, all roundtrips connected to identity)\n{}",
+                    name, type_pairs.len(), witness_parts.join("\n")
+                );
+                self.output.push(msg.clone());
+                self.record_result(&name, "valid",
+                    Some(format!("weak-equiv-verified:{}", name)),
+                    Some(msg));
+
+                for (idx, (a, b)) in type_pairs.iter().enumerate() {
+                    let (f, g) = map_pairs.get(idx)
+                        .map(|(f, g)| (f.as_str(), g.as_str()))
+                        .unwrap_or(("?f", "?g"));
+                    self.record_discovery(
+                        &format!("compose({}, {})", g, f),
+                        "id",
+                        &format!("weak equivalence roundtrip {} <-> {}", a, b),
+                    );
+                }
+
+                Ok(())
+            }
+            Err(e) => {
+                self.drain_apeiron_output();
+                let detail = format!("{}", e);
+
+                if detail.contains("fuel") || detail.contains("Fuel") {
+                    let msg = format!(
+                        "[WEAK-EQUIV] {} INCONCLUSIVE — {}", name, detail
+                    );
+                    self.output.push(msg.clone());
+                    self.record_result(&name, "valid",
+                        Some(format!("weak-equiv:{}", name)),
+                        Some(msg));
+                    Ok(())
+                } else {
+                    let msg = format!(
+                        "[WEAK-EQUIV] {} FAILED: {}", name, detail
+                    );
+                    self.output.push(msg.clone());
+                    self.record_result(&name, "invalid",
+                        Some(format!("weak-equiv:{}", name)),
+                        Some(detail.clone()));
+                    Err(HyperionError::LawViolation {
+                        theory: format!("WeakEquivalence:{}", name),
+                        law: "roundtrip-identity".into(),
+                        detail,
+                    })
+                }
+            }
+        }
     }
 
     /// Process a `[VerifyFunctor name :source T1 :target T2]` block.

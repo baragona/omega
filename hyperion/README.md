@@ -450,6 +450,40 @@ These are deterministic reductions that fire at the kernel level. Without them, 
 ]
 ```
 
+## Weak Equivalence Checking
+
+The `WeakEquivalence` directive verifies that two types (or theories) are weakly equivalent --- connected by maps whose composites are connected to identity by e-graph paths (not strict equality).
+
+```
+[WeakEquivalence AB-equiv
+  :source EquivTheory
+  :target EquivTheory
+  :on-types [[A B]]
+  :via [[f g]]
+  :verify true]
+```
+
+When `:verify true`, Hyperion generates 4 proof obligations per type pair:
+
+| Check | Assertion |
+|:------|:----------|
+| Forward map | `compose(f, A) ≡ B` |
+| Backward map | `compose(g, B) ≡ A` |
+| Source roundtrip | `compose(g, f) ≡ id` |
+| Target roundtrip | `compose(f, g) ≡ id` |
+
+All equalities are checked via e-graph paths --- the composites don't need to reduce to `id` by rewriting, they just need to be connected in the e-graph. This is weaker than strict isomorphism and matches the homotopy-theoretic notion of equivalence.
+
+The `:via` keyword is optional per type pair. Without it, Hyperion generates internal witness names (the theory must already establish the equivalence through its laws). Use `:verify false` to register the equivalence without checking.
+
+Output includes the witnessing equivalence data:
+```
+[WEAK-EQUIV] AB-equiv VERIFIED (1 type pairs, all roundtrips connected to identity)
+  A<->B  fwd=f  bwd=g
+```
+
+See `weak-equivalence.hyp` for a complete example.
+
 ## Equational Laws (`@law`) and E-Graph Simplification
 
 Hyperion theories support two kinds of declarations for equational reasoning:
@@ -1003,6 +1037,7 @@ User theories can also declare `@law` equational laws (bidirectional in e-graph)
 | `verify-functor-resource.hyp` | Resource-aware VerifyFunctor (linear-to-linear transport) |
 | `prelude-demo.hyp` | Using prelude categories and substrates |
 | `catlab-features.hyp` | Proof-term extraction, assert-exists, proof-relevant mode, kernel cubical reduction |
+| `weak-equivalence.hyp` | WeakEquivalence directive --- roundtrip maps verified via e-graph paths |
 
 ## Architecture
 
@@ -1051,7 +1086,7 @@ hyperion kompile <file.hyp> --theory <name> -o <output_dir/>
 
 ## Tests
 
-160 tests (42 unit + 118 integration), covering:
+163 tests (42 unit + 121 integration), covering:
 
 - Category/substrate/universe parsing and validation
 - All compatibility rejection rules (PathType with/without Evaluator, modal, tensor, VN)
@@ -1071,11 +1106,53 @@ hyperion kompile <file.hyp> --theory <name> -o <output_dir/>
 - Existence queries (`assert-exists` with `:such-that` constraints)
 - Proof-relevant equality mode (`@equality proof-relevant`, `assert-distinct-paths`)
 - Kernel cubical reduction (`IntervalSort` + auto-injected coe-concat, coe-inv rules)
+- Weak equivalence verification (`WeakEquivalence` with `:via` maps and roundtrip checking)
 - All example files
 
 ```bash
 cargo test
 ```
+
+## Performance
+
+### E-graph saturation with bidirectional laws (`===`)
+
+`@law` rules are bidirectional --- the e-graph explores both directions. Associativity combined with unit laws can cause exponential e-class growth, potentially hanging the checker.
+
+**Workaround**: Use directional `@rule` (`==>`) for computational rules (unit reduction, simplifications). Reserve `@law` (`===`) only for equations you genuinely need bidirectional exploration. Mix both in the same theory:
+
+```
+[Theory T :in U
+  [@rule unit-l [compose id ?x] ==> ?x]        ;; directional: fast
+  [@law  equiv  [compose g f]   === id]         ;; bidirectional: needed
+]
+```
+
+**Rule of thumb**: 3 bidirectional laws is usually fine. 7+ with associativity will likely hang.
+
+### Categorical law auto-verification
+
+Every `[Theory]` block triggers automatic law checking, which generates synthetic proofs through Apeiron. For PathType categories this injects 4--6 extra laws.
+
+**Workaround**: Use `--skip-laws` globally or `:no-laws` per-theory for theories you've already validated. Fuel exhaustion is treated as INCONCLUSIVE (not failure).
+
+### Proof-term extraction overhead
+
+`extract-proof` enables egg's explanation tracking, which adds overhead to every e-graph merge. The explanation data structures grow with saturation.
+
+**Workaround**: Use `assert-eq` when you only need pass/fail. Use `extract-proof` selectively.
+
+### Interaction net reduction fuel
+
+Apeiron's normalizer has a default fuel limit of 10k steps. Deep rewrite chains can exhaust fuel.
+
+**Workaround**: Keep terms small. Use e-graph equality (`@law`) instead of normalization for equalities that require many rewrite steps.
+
+### WeakEquivalence / VerifyFunctor synthetic proofs
+
+These directives generate Proofs blocks that go through the full Apeiron pipeline. Large type mappings or many rules multiply the proof obligations.
+
+**Workaround**: Use `:verify false` during development, enable `:verify true` for CI/final validation.
 
 ## Design Philosophy
 

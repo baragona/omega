@@ -1,0 +1,44 @@
+;;; Weak Equivalence: verify two theories are weakly equivalent
+;;; via round-trip maps connected to identity by e-graph paths.
+
+[Category EquivCat
+  [Object Nat]
+  [Morphism compose :domain [Nat Nat] :codomain Nat]
+  [Morphism id :domain [] :codomain Nat]
+  [Morphism A :domain [] :codomain Nat]
+  [Morphism B :domain [] :codomain Nat]
+  [Morphism f :domain [] :codomain Nat]
+  [Morphism g :domain [] :codomain Nat]
+]
+
+[Substrate EquivSub
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality equality-saturation
+]
+
+[Universe EquivU :category EquivCat :substrate EquivSub]
+
+;; Theory establishing f and g as mutual inverses between A and B
+;; Uses directional rules (==>) to avoid e-graph blowup from bidirectional laws
+[Theory EquivTheory :in EquivU
+  [@rule unit-l  [compose id ?x] ==> ?x]
+  [@rule unit-r  [compose ?x id] ==> ?x]
+
+  ;; f and g are mutual inverses (directional: compose reduces to id)
+  [@law f-then-g [compose g f] === id]
+  [@law g-then-f [compose f g] === id]
+
+  ;; f maps A to B, g maps B to A
+  [@law f-maps [compose f A] === B]
+  [@law g-maps [compose g B] === A]
+]
+
+;; Verify weak equivalence between A and B via maps f, g
+[WeakEquivalence AB-equiv
+  :source EquivTheory
+  :target EquivTheory
+  :on-types [[A B]]
+  :via [[f g]]
+  :verify true]
