@@ -50,6 +50,13 @@ pub enum CategoricalStructure {
         hcomp: String,
         coe: String,
     },
+    /// Cubical interval sort with endpoints and kernel reduction rules.
+    /// Enables kernel-level coe/hcomp computation along composite/inverse paths.
+    IntervalSort {
+        interval: String,
+        i0: String,
+        i1: String,
+    },
 }
 
 /// A category definition: pure mathematical structure.
@@ -234,6 +241,20 @@ pub fn parse_category(items: &[Sexp]) -> Result<CategoryDef> {
                 let hcomp = get_keyword_atom(inner, ":hcomp", "PartialElement")?;
                 let coe = get_keyword_atom(inner, ":coe", "PartialElement")?;
                 structure.push(CategoricalStructure::PartialElement { hcomp, coe });
+            }
+            "IntervalSort" => {
+                let interval = get_keyword_atom(inner, ":interval", "IntervalSort")
+                    .unwrap_or_else(|_| get_required_atom(inner, 1, "IntervalSort", "name").unwrap_or_default());
+                let endpoints = get_keyword_list(inner, ":endpoints", "IntervalSort").unwrap_or_default();
+                let default_i0 = "i0".to_string();
+                let default_i1 = "i1".to_string();
+                let i0 = endpoints.first().unwrap_or(&default_i0).to_string();
+                let i1 = endpoints.get(1).unwrap_or(&default_i1).to_string();
+                structure.push(CategoricalStructure::IntervalSort {
+                    interval,
+                    i0,
+                    i1,
+                });
             }
             _ => {
                 return Err(HyperionError::ParseError {

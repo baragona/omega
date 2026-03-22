@@ -52,6 +52,9 @@ pub enum EqualityMode {
     ExtensionalEquivalence,
     /// Full (higher-order) unification, not just Miller pattern fragment.
     FullUnification,
+    /// Proof-relevant: merging creates labeled edges, not identity collapse.
+    /// Preserves path spaces for HoTT.
+    ProofRelevant,
 }
 
 /// A substrate definition: the physical laws of computation.
@@ -225,10 +228,11 @@ fn parse_equality_mode(val: &str, substrate: &str) -> Result<EqualityMode> {
         "equality-saturation" | "e-graph" | "egraph" => Ok(EqualityMode::EqualitySaturation),
         "extensional-equivalence" | "extensional" => Ok(EqualityMode::ExtensionalEquivalence),
         "full-unification" => Ok(EqualityMode::FullUnification),
+        "proof-relevant" => Ok(EqualityMode::ProofRelevant),
         _ => Err(HyperionError::ParseError {
             block: "Substrate".into(),
             detail: format!(
-                "Substrate '{}': unknown equality '{}'. Expected one of: topological-hash, rewrite-equivalence, alpha-equivalence, observational, unification, topological-homotopy, equality-saturation, extensional-equivalence, full-unification",
+                "Substrate '{}': unknown equality '{}'. Expected one of: topological-hash, rewrite-equivalence, alpha-equivalence, observational, unification, topological-homotopy, equality-saturation, extensional-equivalence, full-unification, proof-relevant",
                 substrate, val
             ),
         }),

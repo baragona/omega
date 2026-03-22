@@ -1,0 +1,140 @@
+;;; CatLab Feature Test: Proof-Term Extraction, assert-exists,
+;;; Proof-Relevant Mode, and Kernel Cubical Reduction.
+
+;; ─────────────────────────────────────────────────────
+;; Feature 1: Proof-Term Extraction
+;; ─────────────────────────────────────────────────────
+
+[Category MonoidCat
+  [Object Nat]
+  [Morphism compose :domain [Nat Nat] :codomain Nat]
+  [Morphism id :domain [] :codomain Nat]
+  [Morphism a :domain [] :codomain Nat]
+  [Morphism b :domain [] :codomain Nat]
+  [Morphism c :domain [] :codomain Nat]
+]
+
+[Substrate EGraphSub
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality equality-saturation
+]
+
+[Universe MonoidU :category MonoidCat :substrate EGraphSub]
+
+[Theory Monoid :in MonoidU
+  ;; Monoid laws (bidirectional for e-graph)
+  [@law assoc   [compose [compose ?x ?y] ?z] === [compose ?x [compose ?y ?z]]]
+  [@law unit-l  [compose id ?x]              === ?x]
+  [@law unit-r  [compose ?x id]              === ?x]
+]
+
+[Proofs MonoidProofs :in Monoid
+  ;; Standard assertion (now includes proof term in output)
+  [assert-eq assoc-check
+    [compose [compose a b] c]
+    [compose a [compose b c]]]
+
+  ;; Feature 1: Explicit proof extraction
+  [extract-proof assoc-proof
+    [compose [compose a b] c]
+    [compose a [compose b c]]]
+
+  ;; Extract proof for a multi-step equivalence
+  [extract-proof unit-chain
+    [compose id [compose a id]]
+    a]
+]
+
+;; ─────────────────────────────────────────────────────
+;; Feature 2: assert-exists (Kan condition checking)
+;; ─────────────────────────────────────────────────────
+
+[Theory Composition :in MonoidU
+  [@rule src-compose [compose id ?x] ==> ?x]
+
+  [@law assoc [compose [compose ?x ?y] ?z] === [compose ?x [compose ?y ?z]]]
+]
+
+[Proofs CompositionProofs :in Composition
+  ;; Check that compose(id, a) = a (existence of simplification)
+  [assert-exists id-compose-exists
+    :such-that
+    [= [compose id a] a]]
+]
+
+;; ─────────────────────────────────────────────────────
+;; Feature 3: Proof-Relevant E-Class Mode
+;; ─────────────────────────────────────────────────────
+
+[Substrate ProofRelSub
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality proof-relevant
+]
+
+[Universe ProofRelU :category MonoidCat :substrate ProofRelSub]
+
+[Theory PathSpace :in ProofRelU
+  ;; Two distinct laws connecting the same terms
+  [@law path1 [compose id ?x] === ?x]
+  [@law path2 [compose ?x id] === ?x]
+]
+
+[Proofs PathSpaceProofs :in PathSpace
+  ;; Verify that id-compose and compose-id both simplify
+  [assert-eq left-unit [compose id a] a]
+  [assert-eq right-unit [compose a id] a]
+]
+
+;; ─────────────────────────────────────────────────────
+;; Feature 4: Kernel Cubical Reduction
+;; ─────────────────────────────────────────────────────
+
+[Category CubicalCat
+  [Object Type]
+  [Morphism coe    :domain [Type Type Type] :codomain Type]
+  [Morphism hcomp  :domain [Type Type]      :codomain Type]
+  [Morphism refl   :domain [Type]           :codomain Type]
+  [Morphism concat :domain [Type Type]      :codomain Type]
+  [Morphism inv    :domain [Type]           :codomain Type]
+  [Morphism ap     :domain [Type Type]      :codomain Type]
+  [Morphism A      :domain []               :codomain Type]
+  [Morphism x      :domain []               :codomain Type]
+  [Morphism p      :domain []               :codomain Type]
+  [Morphism q      :domain []               :codomain Type]
+  [PathType :refl refl :concat concat :inv inv :ap ap]
+  [PartialElement :hcomp hcomp :coe coe]
+  [IntervalSort :interval I :endpoints [i0 i1]]
+]
+
+[Substrate CubicalSub
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality equality-saturation
+]
+
+[Universe CubicalU :category CubicalCat :substrate CubicalSub]
+
+[Theory CubicalTT :in CubicalU]
+
+[Proofs CubicalProofs :in CubicalTT
+  ;; coe(refl(A), i0, x) reduces to x
+  [assert-eq coe-refl [coe [refl A] i0 x] x]
+
+  ;; coe(concat(p, q), i0, x) reduces to coe(q, i0, coe(p, i0, x))
+  [assert-eq coe-concat
+    [coe [concat p q] i0 x]
+    [coe q i0 [coe p i0 x]]]
+
+  ;; coe(inv(p), i0, x) reduces to coe(p, i0, x)
+  [assert-eq coe-inv
+    [coe [inv p] i0 x]
+    [coe p i0 x]]
+
+  ;; hcomp(refl(A), x) reduces to x
+  [assert-eq hcomp-refl [hcomp [refl A] x] x]
+]

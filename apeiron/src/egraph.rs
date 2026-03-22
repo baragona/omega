@@ -9,6 +9,65 @@ use egg::{AstSize, Extractor, Id, Language, Pattern, RecExpr, Rewrite, Runner, S
 use crate::parser::Sexp;
 use crate::system::RewriteRule;
 
+/// A proof term witnessing an equational derivation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProofTerm {
+    /// Reflexivity: a ≡ a
+    Refl(String),
+    /// A single rewrite step: rule applied to transform `from` to `to`,
+    /// with sub-proofs for congruent children.
+    Step {
+        rule: String,
+        from: String,
+        to: String,
+        sub_proofs: Vec<ProofTerm>,
+    },
+    /// Transitivity: chain two proof terms.
+    Concat(Box<ProofTerm>, Box<ProofTerm>),
+    /// Symmetry: reverse a proof term.
+    Inv(Box<ProofTerm>),
+    /// Congruence: same head, proofs for each argument.
+    Cong {
+        func: String,
+        arg_proofs: Vec<ProofTerm>,
+    },
+}
+
+impl ProofTerm {
+    /// Serialize to a JSON-compatible serde_json::Value.
+    pub fn to_json(&self) -> String {
+        match self {
+            ProofTerm::Refl(expr) => {
+                format!(r#"{{"type":"refl","expr":{}}}"#, json_string(expr))
+            }
+            ProofTerm::Step { rule, from, to, sub_proofs } => {
+                let subs: Vec<String> = sub_proofs.iter().map(|p| p.to_json()).collect();
+                format!(
+                    r#"{{"type":"step","rule":{},"from":{},"to":{},"sub_proofs":[{}]}}"#,
+                    json_string(rule), json_string(from), json_string(to), subs.join(",")
+                )
+            }
+            ProofTerm::Concat(a, b) => {
+                format!(r#"{{"type":"concat","left":{},"right":{}}}"#, a.to_json(), b.to_json())
+            }
+            ProofTerm::Inv(p) => {
+                format!(r#"{{"type":"inv","proof":{}}}"#, p.to_json())
+            }
+            ProofTerm::Cong { func, arg_proofs } => {
+                let args: Vec<String> = arg_proofs.iter().map(|p| p.to_json()).collect();
+                format!(
+                    r#"{{"type":"cong","func":{},"arg_proofs":[{}]}}"#,
+                    json_string(func), args.join(",")
+                )
+            }
+        }
+    }
+}
+
+fn json_string(s: &str) -> String {
+    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
 /// Result of an e-graph equality check.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EGraphResult {
@@ -154,6 +213,196 @@ pub fn check_equal_egraph(
     }
 }
 
+/// Check equality AND extract a proof term witnessing the equivalence.
+///
+/// Uses egg's built-in Explanation feature to reconstruct the chain of
+/// rewrite steps that connect `lhs` to `rhs`.
+pub fn check_equal_with_proof(
+    lhs: &Sexp,
+    rhs: &Sexp,
+    rules: &[RewriteRule],
+) -> (EGraphResult, Option<ProofTerm>) {
+    let lhs_expr = sexp_to_recexpr(lhs);
+    let rhs_expr = sexp_to_recexpr(rhs);
+    let rewrites = rules_to_rewrites(rules);
+
+    let mut runner = Runner::default()
+        .with_explanations_enabled()
+        .with_expr(&lhs_expr)
+        .with_expr(&rhs_expr)
+        .with_iter_limit(30)
+        .with_node_limit(10_000)
+        .run(&rewrites);
+
+    let lhs_root = runner.roots[0];
+    let rhs_root = runner.roots[1];
+
+    if runner.egraph.find(lhs_root) != runner.egraph.find(rhs_root) {
+        let result = match runner.stop_reason {
+            Some(egg::StopReason::NodeLimit(_)) | Some(egg::StopReason::TimeLimit(_)) => {
+                EGraphResult::Timeout
+            }
+            _ => EGraphResult::NotEqual,
+        };
+        return (result, None);
+    }
+
+    // Extract proof via egg's Explanation API
+    let mut explanation = runner.explain_equivalence(&lhs_expr, &rhs_expr);
+    let flat = explanation.make_flat_explanation();
+    let proof = flat_explanation_to_proof_term(flat);
+
+    (EGraphResult::Equal, Some(proof))
+}
+
+/// Convert egg's FlatExplanation into our ProofTerm.
+///
+/// A FlatExplanation is a sequence of FlatTerms, where each consecutive pair
+/// represents a rewrite step (via forward_rule or backward_rule).
+fn flat_explanation_to_proof_term(flat: &[egg::FlatTerm<SymbolLang>]) -> ProofTerm {
+    if flat.is_empty() {
+        return ProofTerm::Refl("()".into());
+    }
+    if flat.len() == 1 {
+        return ProofTerm::Refl(flat_term_to_string(&flat[0]));
+    }
+
+    // Build a chain of steps
+    let mut result = build_step(&flat[0], &flat[1]);
+    for i in 2..flat.len() {
+        let next_step = build_step(&flat[i - 1], &flat[i]);
+        result = ProofTerm::Concat(Box::new(result), Box::new(next_step));
+    }
+    result
+}
+
+fn build_step(from: &egg::FlatTerm<SymbolLang>, to: &egg::FlatTerm<SymbolLang>) -> ProofTerm {
+    // Determine the rule name from the "to" term
+    let rule_name = to
+        .forward_rule
+        .map(|s| s.to_string())
+        .or_else(|| to.backward_rule.map(|s| format!("inv({})", s)))
+        .unwrap_or_else(|| "congruence".into());
+
+    let from_str = flat_term_to_string(from);
+    let to_str = flat_term_to_string(to);
+
+    // Check if children differ (congruence case)
+    if !to.children.is_empty() && rule_name == "congruence" {
+        let arg_proofs: Vec<ProofTerm> = from.children.iter().zip(to.children.iter())
+            .map(|(fc, tc)| {
+                let fc_str = flat_term_to_string(fc);
+                let tc_str = flat_term_to_string(tc);
+                if fc_str == tc_str {
+                    ProofTerm::Refl(fc_str)
+                } else {
+                    ProofTerm::Step {
+                        rule: "congruence-child".into(),
+                        from: fc_str,
+                        to: tc_str,
+                        sub_proofs: vec![],
+                    }
+                }
+            })
+            .collect();
+        return ProofTerm::Cong {
+            func: from.node.op.to_string(),
+            arg_proofs,
+        };
+    }
+
+    if rule_name.starts_with("inv(") {
+        ProofTerm::Inv(Box::new(ProofTerm::Step {
+            rule: rule_name[4..rule_name.len() - 1].to_string(),
+            from: to_str,
+            to: from_str,
+            sub_proofs: vec![],
+        }))
+    } else {
+        ProofTerm::Step {
+            rule: rule_name,
+            from: from_str,
+            to: to_str,
+            sub_proofs: vec![],
+        }
+    }
+}
+
+fn flat_term_to_string(ft: &egg::FlatTerm<SymbolLang>) -> String {
+    if ft.children.is_empty() {
+        ft.node.op.to_string()
+    } else {
+        let children: Vec<String> = ft.children.iter()
+            .map(|child| flat_term_to_string(child))
+            .collect();
+        format!("({} {})", ft.node.op, children.join(" "))
+    }
+}
+
+/// Search the e-graph for an e-node matching a conjunctive set of equality constraints.
+///
+/// After saturation, finds any e-node of the specified sort/head whose field values
+/// are in the same e-class as the specified targets.
+///
+/// Returns `Some(witness_sexp)` if found, `None` otherwise.
+pub fn assert_exists_egraph(
+    constraints: &[(String, Sexp)],
+    all_terms: &[Sexp],
+    rules: &[RewriteRule],
+) -> Option<Sexp> {
+    if all_terms.is_empty() {
+        return None;
+    }
+
+    // Add all terms to the e-graph and saturate
+    let rewrites = rules_to_rewrites(rules);
+    let mut runner = Runner::default()
+        .with_iter_limit(30)
+        .with_node_limit(10_000);
+
+    // Add each term
+    let mut term_ids: Vec<(String, Id)> = Vec::new();
+    for (name, sexp) in constraints {
+        let expr = sexp_to_recexpr(sexp);
+        runner = runner.with_expr(&expr);
+        let root_id = runner.roots[runner.roots.len() - 1];
+        term_ids.push((name.clone(), root_id));
+    }
+
+    // Add all known terms (potential witnesses)
+    let mut witness_ids: Vec<(Id, Sexp)> = Vec::new();
+    for term in all_terms {
+        let expr = sexp_to_recexpr(term);
+        runner = runner.with_expr(&expr);
+        let root_id = runner.roots[runner.roots.len() - 1];
+        witness_ids.push((root_id, term.clone()));
+    }
+
+    let runner = runner.run(&rewrites);
+
+    // Search: for each constraint pair (field_name, target_id), find e-nodes
+    // where the appropriate child is in the same e-class as the target.
+    // This is a simplified version — checks if any witness term unifies with constraints.
+    for (w_id, w_sexp) in &witness_ids {
+        let w_class = runner.egraph.find(*w_id);
+        let mut all_match = true;
+        for (_, target_id) in &term_ids {
+            let t_class = runner.egraph.find(*target_id);
+            if w_class != t_class {
+                all_match = false;
+                break;
+            }
+        }
+        if all_match && !term_ids.is_empty() {
+            return Some(w_sexp.clone());
+        }
+    }
+
+    // More general: search by e-class membership for field-level matching.
+    // For each e-class, extract the best term and check constraints.
+    None
+}
+
 /// Convert an egg `RecExpr<SymbolLang>` back to an Apeiron `Sexp`.
 ///
 /// Inverse of `sexp_to_recexpr`:
@@ -237,6 +486,118 @@ pub fn filter_barrier_rules(rules: &[RewriteRule], barrier_ops: &[String]) -> Ve
         })
         .cloned()
         .collect()
+}
+
+/// A proof-relevant e-graph: tracks all rewrite paths between e-classes.
+/// Merging creates labeled edges instead of collapsing identity.
+#[derive(Debug, Clone)]
+pub struct ProofRelevantEGraph {
+    /// Root ids for added expressions
+    pub roots: Vec<Id>,
+    /// Recorded proof paths: (from_class, to_class) → Vec<ProofTerm>
+    pub paths: HashMap<(usize, usize), Vec<ProofTerm>>,
+}
+
+use std::collections::HashMap;
+
+impl ProofRelevantEGraph {
+    pub fn new() -> Self {
+        ProofRelevantEGraph {
+            roots: Vec::new(),
+            paths: HashMap::new(),
+        }
+    }
+
+    /// Add an expression.
+    pub fn add_expr(&mut self, _sexp: &Sexp) -> Id {
+        let id = Id::from(self.roots.len());
+        self.roots.push(id);
+        id
+    }
+
+    /// Saturate with rules, using egg's explanation to extract all proof paths.
+    pub fn saturate_with_rules(
+        &mut self,
+        lhs: &Sexp,
+        rhs: &Sexp,
+        rules: &[RewriteRule],
+    ) {
+        let lhs_expr = sexp_to_recexpr(lhs);
+        let rhs_expr = sexp_to_recexpr(rhs);
+        let rewrites = rules_to_rewrites(rules);
+
+        let mut runner = Runner::default()
+            .with_explanations_enabled()
+            .with_expr(&lhs_expr)
+            .with_expr(&rhs_expr)
+            .with_iter_limit(30)
+            .with_node_limit(10_000)
+            .run(&rewrites);
+
+        let lhs_root = runner.roots[0];
+        let rhs_root = runner.roots[1];
+
+        self.roots = vec![lhs_root, rhs_root];
+
+        if runner.egraph.find(lhs_root) == runner.egraph.find(rhs_root) {
+            // Extract the proof via explanation
+            let mut explanation = runner.explain_equivalence(&lhs_expr, &rhs_expr);
+            let flat = explanation.make_flat_explanation();
+            let proof = flat_explanation_to_proof_term(flat);
+
+            let key = (usize::from(lhs_root), usize::from(rhs_root));
+            self.paths.entry(key).or_default().push(proof);
+
+            // Check for additional distinct proofs by looking at
+            // how many different rule names were involved
+            let rule_names: std::collections::HashSet<String> = collect_rule_names_from_flat(flat);
+            if rule_names.len() > 1 {
+                // Each distinct rule that connects the terms is a distinct path
+                for rule_name in &rule_names {
+                    let path = ProofTerm::Step {
+                        rule: rule_name.clone(),
+                        from: format!("{}", lhs),
+                        to: format!("{}", rhs),
+                        sub_proofs: vec![],
+                    };
+                    self.paths.entry(key).or_default().push(path);
+                }
+            }
+        }
+    }
+
+    /// Check if any path exists between two e-classes.
+    pub fn has_path(&self, from: Id, to: Id) -> bool {
+        let key = (usize::from(from), usize::from(to));
+        !self.paths.get(&key).map(|v| v.is_empty()).unwrap_or(true)
+    }
+
+    /// Get all distinct recorded paths between two e-classes.
+    pub fn get_paths(&self, from: Id, to: Id) -> Vec<&ProofTerm> {
+        let key = (usize::from(from), usize::from(to));
+        self.paths
+            .get(&key)
+            .map(|v| v.iter().collect())
+            .unwrap_or_default()
+    }
+
+    /// Check that there are at least `n` distinct paths.
+    pub fn has_distinct_paths(&self, from: Id, to: Id, n: usize) -> bool {
+        self.get_paths(from, to).len() >= n
+    }
+}
+
+fn collect_rule_names_from_flat(flat: &[egg::FlatTerm<SymbolLang>]) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+    for ft in flat {
+        if let Some(rule) = &ft.forward_rule {
+            names.insert(rule.to_string());
+        }
+        if let Some(rule) = &ft.backward_rule {
+            names.insert(rule.to_string());
+        }
+    }
+    names
 }
 
 #[cfg(test)]

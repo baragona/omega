@@ -225,6 +225,9 @@ fn check_modes(sub: &SubstrateDef) -> Vec<&'static str> {
         }
         EqualityMode::ExtensionalEquivalence => vec!["rewriting", "beta-reduction", "extensional"],
         EqualityMode::FullUnification => vec!["unification"],
+        EqualityMode::ProofRelevant => {
+            vec!["rewriting", "beta-reduction", "equality-saturation"]
+        }
     };
 
     // Engine-driven check modes (appended to equality-driven modes)
@@ -469,6 +472,27 @@ pub fn emit_system_sexp(
                                 .map(|a| a == op_name)
                                 .unwrap_or(false)
                         });
+                    if !already {
+                        syntax_items.push(Sexp::List(
+                            vec![
+                                Sexp::Atom("op".into(), sp),
+                                Sexp::Atom(op_name.clone(), sp),
+                            ],
+                            sp,
+                        ));
+                    }
+                }
+            }
+            CategoricalStructure::IntervalSort { interval, i0, i1 } => {
+                // Inject interval sort endpoints as ops
+                for op_name in [interval, i0, i1] {
+                    let already = syntax_items.iter().any(|s| {
+                        s.as_list()
+                            .and_then(|l| l.get(1))
+                            .and_then(|s| s.as_atom())
+                            .map(|a| a == op_name)
+                            .unwrap_or(false)
+                    });
                     if !already {
                         syntax_items.push(Sexp::List(
                             vec![

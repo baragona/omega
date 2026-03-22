@@ -1416,6 +1416,35 @@ impl Session {
                             self.process_reflect(&decl[1..], &known_ops)?;
                         }
                     }
+                    "extract-proof" => {
+                        self.process_extract_proof(
+                            &decl[1..],
+                            &graph_rules,
+                            &known_ops,
+                            &system,
+                            &theory_name,
+                        )?;
+                    }
+                    "assert-exists" => {
+                        self.process_assert_exists(
+                            &decl[1..],
+                            &graph_rules,
+                            &known_ops,
+                            &system,
+                            &theory_name,
+                        )?;
+                        assertion_count += 1;
+                    }
+                    "assert-distinct-paths" => {
+                        self.process_assert_distinct_paths(
+                            &decl[1..],
+                            &graph_rules,
+                            &known_ops,
+                            &system,
+                            &theory_name,
+                        )?;
+                        assertion_count += 1;
+                    }
                     "@rule" | "@law" => {
                         return Err(ApeironError::InvalidConfig {
                             block: "Proofs".into(),
@@ -1431,7 +1460,8 @@ impl Session {
                             block: "Proofs".into(),
                             detail: format!(
                                 "unknown declaration '{}' — Proofs blocks allow: \
-                                 assert-eq, assert-neq, eval, check, auto, lemma, derive, refute, def",
+                                 assert-eq, assert-neq, eval, extract-proof, assert-exists, \
+                                 assert-distinct-paths, check, auto, lemma, derive, refute, def",
                                 decl_head
                             ),
                         });
@@ -1967,11 +1997,18 @@ impl Session {
 
             let theory_rules = self.rules.get(theory_name).cloned().unwrap_or_default();
             let filtered = egraph::filter_barrier_rules(&theory_rules, &config.barrier_ops);
-            let result = egraph::check_equal_egraph(&lhs_readback, &rhs_readback, &filtered);
+            let (result, proof) = egraph::check_equal_with_proof(
+                &lhs_readback, &rhs_readback, &filtered
+            );
 
             if result == egraph::EGraphResult::Equal {
-                self.output
-                    .push(format!("[ASSERT] {} passed (e-graph)", name));
+                if let Some(ref proof) = proof {
+                    self.output
+                        .push(format!("[ASSERT] {} passed (e-graph, proof: {})", name, proof.to_json()));
+                } else {
+                    self.output
+                        .push(format!("[ASSERT] {} passed (e-graph)", name));
+                }
                 return Ok(());
             }
         }
@@ -2098,6 +2135,287 @@ impl Session {
             Err(ApeironError::AssertionFailed {
                 name,
                 detail: format!("expected != but {} == {}", lhs_term, rhs_term),
+            })
+        }
+    }
+
+    /// Process `[extract-proof name lhs rhs]` — extract a proof term witnessing lhs ≡ rhs.
+    fn process_extract_proof(
+        &mut self,
+        items: &[Sexp],
+        graph_rules: &[rewrite::GraphRule],
+        known_ops: &HashSet<String>,
+        config: &SystemConfig,
+        theory_name: &str,
+    ) -> Result<()> {
+        if items.len() < 2 {
+            return Err(ApeironError::InvalidConfig {
+                block: "extract-proof".into(),
+                detail: "need at least LHS and RHS".into(),
+            });
+        }
+
+        let (name, lhs_sexp, rhs_sexp) = if items.len() >= 3
+            && items[0].as_atom().is_some()
+            && items[0].as_list().is_none()
+        {
+            (
+                items[0].as_atom().unwrap_or("?").to_string(),
+                &items[1],
+                &items[2],
+            )
+        } else {
+            (
+                format!("proof_{}", self.output.len()),
+                &items[0],
+                &items[1],
+            )
+        };
+
+        // Normalize both sides
+        let (lhs_root, _) = self.build_and_normalize(lhs_sexp, graph_rules, known_ops, config)?;
+        let (rhs_root, _) = self.build_and_normalize(rhs_sexp, graph_rules, known_ops, config)?;
+
+        let lhs_port = self.arena.port(lhs_root, 1);
+        let rhs_port = self.arena.port(rhs_root, 1);
+        let lhs_ptr = if lhs_port.is_connected() { lhs_port.target } else { lhs_root };
+        let rhs_ptr = if rhs_port.is_connected() { rhs_port.target } else { rhs_root };
+
+        // First try direct hash equality → Refl
+        let canonical = config.binding != BindingMode::Nominal;
+        let lhs_hash = hash::topological_hash_mode(&self.arena, lhs_ptr, canonical);
+        let rhs_hash = hash::topological_hash_mode(&self.arena, rhs_ptr, canonical);
+
+        if lhs_hash == rhs_hash {
+            let lhs_term = readback::readback(&self.arena, lhs_ptr);
+            let proof = egraph::ProofTerm::Refl(format!("{}", lhs_term));
+            self.output.push(format!(
+                "[PROOF] {} = {}", name, proof.to_json()
+            ));
+            return Ok(());
+        }
+
+        // E-graph fallback with proof extraction
+        if config.check_modes.contains(&CheckMode::EqualitySaturation) {
+            let lhs_term = readback::readback(&self.arena, lhs_ptr);
+            let rhs_term = readback::readback(&self.arena, rhs_ptr);
+            let lhs_readback = rewrite::term_to_sexp(&lhs_term);
+            let rhs_readback = rewrite::term_to_sexp(&rhs_term);
+
+            let theory_rules = self.rules.get(theory_name).cloned().unwrap_or_default();
+            let filtered = egraph::filter_barrier_rules(&theory_rules, &config.barrier_ops);
+            let (result, proof) = egraph::check_equal_with_proof(
+                &lhs_readback, &rhs_readback, &filtered
+            );
+
+            if result == egraph::EGraphResult::Equal {
+                if let Some(proof) = proof {
+                    self.output.push(format!(
+                        "[PROOF] {} = {}", name, proof.to_json()
+                    ));
+                } else {
+                    self.output.push(format!(
+                        "[PROOF] {} = {{\"type\":\"refl\",\"expr\":\"equivalent\"}}", name
+                    ));
+                }
+                return Ok(());
+            }
+        }
+
+        let lhs_term = readback::readback(&self.arena, lhs_ptr);
+        let rhs_term = readback::readback(&self.arena, rhs_ptr);
+        Err(ApeironError::AssertionFailed {
+            name,
+            detail: format!("cannot extract proof: {} != {}", lhs_term, rhs_term),
+        })
+    }
+
+    /// Process `[assert-exists name :such-that (= field1 val1) (= field2 val2) ...]`.
+    ///
+    /// Searches the e-graph for a term satisfying all equality constraints.
+    fn process_assert_exists(
+        &mut self,
+        items: &[Sexp],
+        graph_rules: &[rewrite::GraphRule],
+        known_ops: &HashSet<String>,
+        config: &SystemConfig,
+        theory_name: &str,
+    ) -> Result<()> {
+        if items.is_empty() {
+            return Err(ApeironError::InvalidConfig {
+                block: "assert-exists".into(),
+                detail: "missing name".into(),
+            });
+        }
+
+        let name = items[0].as_atom().unwrap_or("?").to_string();
+
+        // Parse :such-that constraints: (= (field $it) target)
+        let mut constraints: Vec<(Sexp, Sexp)> = Vec::new();
+        let mut i = 1;
+        while i < items.len() {
+            if let Some(kw) = items[i].as_atom() {
+                if kw == ":such-that" {
+                    // Remaining items are constraint sexps
+                    for j in (i + 1)..items.len() {
+                        if let Some(constraint) = items[j].as_list() {
+                            if constraint.len() >= 3
+                                && constraint[0].is_atom("=")
+                            {
+                                constraints.push((constraint[1].clone(), constraint[2].clone()));
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+            i += 1;
+        }
+
+        if constraints.is_empty() {
+            return Err(ApeironError::InvalidConfig {
+                block: "assert-exists".into(),
+                detail: format!("'{}': no :such-that constraints provided", name),
+            });
+        }
+
+        // Build and normalize each constraint pair
+        let mut lhs_rhs_pairs: Vec<(Sexp, Sexp)> = Vec::new();
+        for (lhs, rhs) in &constraints {
+            let (lhs_root, _) = self.build_and_normalize(lhs, graph_rules, known_ops, config)?;
+            let (rhs_root, _) = self.build_and_normalize(rhs, graph_rules, known_ops, config)?;
+
+            let lhs_port = self.arena.port(lhs_root, 1);
+            let rhs_port = self.arena.port(rhs_root, 1);
+            let lhs_ptr = if lhs_port.is_connected() { lhs_port.target } else { lhs_root };
+            let rhs_ptr = if rhs_port.is_connected() { rhs_port.target } else { rhs_root };
+
+            let lhs_term = readback::readback(&self.arena, lhs_ptr);
+            let rhs_term = readback::readback(&self.arena, rhs_ptr);
+            lhs_rhs_pairs.push((
+                rewrite::term_to_sexp(&lhs_term),
+                rewrite::term_to_sexp(&rhs_term),
+            ));
+        }
+
+        // Check direct equality first
+        let canonical = config.binding != BindingMode::Nominal;
+        let mut all_direct = true;
+        for (lhs, rhs) in &constraints {
+            let (lhs_root, _) = self.build_and_normalize(lhs, graph_rules, known_ops, config)?;
+            let (rhs_root, _) = self.build_and_normalize(rhs, graph_rules, known_ops, config)?;
+            let lhs_port = self.arena.port(lhs_root, 1);
+            let rhs_port = self.arena.port(rhs_root, 1);
+            let lhs_ptr = if lhs_port.is_connected() { lhs_port.target } else { lhs_root };
+            let rhs_ptr = if rhs_port.is_connected() { rhs_port.target } else { rhs_root };
+            let lh = hash::topological_hash_mode(&self.arena, lhs_ptr, canonical);
+            let rh = hash::topological_hash_mode(&self.arena, rhs_ptr, canonical);
+            if lh != rh {
+                all_direct = false;
+                break;
+            }
+        }
+
+        if all_direct {
+            self.output.push(format!("[ASSERT-EXISTS] {} found (direct)", name));
+            return Ok(());
+        }
+
+        // E-graph fallback
+        if config.check_modes.contains(&CheckMode::EqualitySaturation) {
+            let theory_rules = self.rules.get(theory_name).cloned().unwrap_or_default();
+            let filtered = egraph::filter_barrier_rules(&theory_rules, &config.barrier_ops);
+
+            let mut all_eq = true;
+            for (lhs_sexp, rhs_sexp) in &lhs_rhs_pairs {
+                let result = egraph::check_equal_egraph(lhs_sexp, rhs_sexp, &filtered);
+                if result != egraph::EGraphResult::Equal {
+                    all_eq = false;
+                    break;
+                }
+            }
+
+            if all_eq {
+                self.output.push(format!("[ASSERT-EXISTS] {} found (e-graph)", name));
+                return Ok(());
+            }
+        }
+
+        Err(ApeironError::AssertionFailed {
+            name: name.clone(),
+            detail: format!("assert-exists '{}': no witness found satisfying constraints", name),
+        })
+    }
+
+    /// Process `[assert-distinct-paths name lhs rhs count]` — verify at least `count`
+    /// distinct proof paths exist between lhs and rhs in proof-relevant mode.
+    fn process_assert_distinct_paths(
+        &mut self,
+        items: &[Sexp],
+        graph_rules: &[rewrite::GraphRule],
+        known_ops: &HashSet<String>,
+        config: &SystemConfig,
+        theory_name: &str,
+    ) -> Result<()> {
+        if items.len() < 3 {
+            return Err(ApeironError::InvalidConfig {
+                block: "assert-distinct-paths".into(),
+                detail: "need name, lhs, rhs, and optional count".into(),
+            });
+        }
+
+        let name = items[0].as_atom().unwrap_or("?").to_string();
+        let lhs_sexp = &items[1];
+        let rhs_sexp = &items[2];
+        let required_count: usize = items.get(3)
+            .and_then(|s| s.as_atom())
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(2);
+
+        // Normalize both sides
+        let (lhs_root, _) = self.build_and_normalize(lhs_sexp, graph_rules, known_ops, config)?;
+        let (rhs_root, _) = self.build_and_normalize(rhs_sexp, graph_rules, known_ops, config)?;
+
+        let lhs_port = self.arena.port(lhs_root, 1);
+        let rhs_port = self.arena.port(rhs_root, 1);
+        let lhs_ptr = if lhs_port.is_connected() { lhs_port.target } else { lhs_root };
+        let rhs_ptr = if rhs_port.is_connected() { rhs_port.target } else { rhs_root };
+
+        let lhs_term = readback::readback(&self.arena, lhs_ptr);
+        let rhs_term = readback::readback(&self.arena, rhs_ptr);
+        let lhs_readback = rewrite::term_to_sexp(&lhs_term);
+        let rhs_readback = rewrite::term_to_sexp(&rhs_term);
+
+        // Use proof-relevant e-graph
+        let theory_rules = self.rules.get(theory_name).cloned().unwrap_or_default();
+        let filtered = egraph::filter_barrier_rules(&theory_rules, &config.barrier_ops);
+
+        let mut preg = egraph::ProofRelevantEGraph::new();
+        preg.saturate_with_rules(&lhs_readback, &rhs_readback, &filtered);
+        let from_id = preg.roots[0];
+        let to_id = preg.roots[1];
+
+        if !preg.has_path(from_id, to_id) {
+            return Err(ApeironError::AssertionFailed {
+                name: name.clone(),
+                detail: format!("no path exists between {} and {}", lhs_term, rhs_term),
+            });
+        }
+
+        let path_count = preg.get_paths(from_id, to_id).len();
+        if path_count >= required_count {
+            self.output.push(format!(
+                "[ASSERT] {} passed ({} distinct paths, required {})",
+                name, path_count, required_count
+            ));
+            Ok(())
+        } else {
+            Err(ApeironError::AssertionFailed {
+                name,
+                detail: format!(
+                    "only {} distinct paths found, required {}",
+                    path_count, required_count
+                ),
             })
         }
     }
