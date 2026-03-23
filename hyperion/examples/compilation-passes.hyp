@@ -1,0 +1,254 @@
+;; Hyperion Example: Compilation Passes
+;;
+;; Demonstrates all 6 compilation passes that bridge category+substrate gaps.
+;; Every universe here would have been rejected before compilation passes were
+;; introduced. Now each compiles successfully with the appropriate theoretical
+;; bridge inserted.
+;;
+;; Run: hyperion check examples/compilation-passes.hyp -v
+
+;; =================================================================
+;; Shared Categories
+;; =================================================================
+
+[Category CCC
+  [Object Type]
+  [Object Term]
+  [Morphism arrow :domain [Type Type] :codomain Type]
+  [Morphism app :domain [Term Term] :codomain Term]
+  [Exponential lam :object Term]
+  [Evaluator app]
+]
+
+[Category ModalLogic
+  [Object Prop]
+  [ModalOperator box]
+  [Context World]
+]
+
+[Category MonoidalCat
+  [Object Obj]
+  [Morphism tensor :domain [Obj Obj] :codomain Obj]
+  [TensorProduct tensor]
+  [Unit unit]
+]
+
+[Category HoTTCat
+  [Object Space]
+  [PathType :refl refl :concat concat :inv inv :ap ap]
+]
+
+;; =================================================================
+;; Pass 1: BangModality (Girard's !)
+;; strictly-linear resource mode + Exponential
+;;
+;; Theory: A → B becomes !A ⊸ B. Closures require explicit !-promotion
+;; to allow duplication. This is the standard solution from Girard's
+;; Linear Logic (1987).
+;; =================================================================
+
+[Substrate LinearNet
+  @engine interaction-graph
+  @resource-mode strictly-linear
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Universe BangWorld :category CCC :substrate LinearNet]
+
+;; :no-laws because CCC law witnesses use non-linear patterns (constant
+;; functions erase variables), which the linear substrate correctly rejects.
+;; Under the bang modality, law witnesses would need !-annotated terms.
+[Theory BangDemo :in BangWorld :no-laws
+  [const nat Type]
+  [const z Term]
+  [const s Term]
+]
+
+[Proofs BangCheck :in BangDemo
+  ;; Beta reduction still works — the bang modality pass ensures
+  ;; closures are properly tracked under linear discipline
+  [assert-eq id-z [app [lam x x] z] z]
+]
+
+;; =================================================================
+;; Pass 2: NominalAbstraction (Gabbay-Pitts)
+;; nominal-scoping barrier + Exponential
+;;
+;; Theory: Lambda replaced by name-abstraction with explicit swapping
+;; (transpositions) and freshness side-conditions. Based on the
+;; theory of nominal sets (Gabbay & Pitts, 2002).
+;; =================================================================
+
+[Substrate NominalNet
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier nominal-scoping
+  @equality rewrite-equivalence
+]
+
+[Universe NominalWorld :category CCC :substrate NominalNet]
+
+[Theory NominalDemo :in NominalWorld
+  [const a Term]
+  [const b Term]
+]
+
+[Proofs NominalCheck :in NominalDemo
+  ;; Nominal abstraction handles binding via explicit name-swapping
+  [assert-eq nom-beta [app [lam x x] a] a]
+]
+
+;; =================================================================
+;; Pass 3: Defunctionalization (Reynolds)
+;; von-neumann engine + Exponential
+;;
+;; Theory: All closures extracted to a first-order ADT (tagged union)
+;; with a global `apply` dispatch function. Invented by Reynolds (1972).
+;; Also applies to cellular-automaton, symmetric-monoidal, and
+;; reversible-graph engines.
+;; =================================================================
+
+[Substrate VonNeumannMachine
+  @engine von-neumann
+  @resource-mode deep-copy
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Universe DefuncWorld :category CCC :substrate VonNeumannMachine]
+
+[Theory DefuncDemo :in DefuncWorld
+  [const z Term]
+  [const s Term]
+  [@rule app-lam [app [lam x x] ?a] ==> ?a]
+]
+
+;; Von Neumann theories use first-order rewrite rules directly.
+;; The defunctionalization pass compiles higher-order structure
+;; (Exponential, Evaluator) into this first-order representation.
+
+;; =================================================================
+;; Pass 4: TensorSerialization
+;; term-tree engine + TensorProduct
+;;
+;; Theory: Tensor products serialized left-to-right. Sound for pure
+;; (effect-free) operands since tensor products in pure categories
+;; have no race conditions.
+;; =================================================================
+
+[Substrate SequentialTree
+  @engine term-tree
+  @resource-mode deep-copy
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Universe SerialWorld :category MonoidalCat :substrate SequentialTree]
+
+[Theory SerialDemo :in SerialWorld
+  [const a Obj]
+  [const b Obj]
+  [const c Obj]
+  [@rule assoc [tensor [tensor ?a ?b] ?c] ==> [tensor ?a [tensor ?b ?c]]]
+  [@rule lunit [tensor unit ?a] ==> ?a]
+  [@rule runit [tensor ?a unit] ==> ?a]
+]
+
+[Proofs SerialCheck :in SerialDemo
+  ;; Monoidal laws work under sequential serialization
+  [assert-eq serial-assoc  [tensor [tensor a b] c]  [tensor a [tensor b c]]]
+  [assert-eq serial-lunit  [tensor unit a]          a]
+  [assert-eq serial-runit  [tensor a unit]          a]
+]
+
+;; =================================================================
+;; Pass 5: KripkeWorldThreading
+;; transparent barrier + ModalOperator/Context
+;;
+;; Theory: □A compiled to ∀w.A(w) — modal scopes become explicit
+;; world parameters threaded through the program. Based on Kripke
+;; semantics (1963) for modal logic.
+;; =================================================================
+
+[Substrate TransparentNet
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Universe KripkeWorld :category ModalLogic :substrate TransparentNet]
+
+[Theory KripkeDemo :in KripkeWorld
+  [const p Prop]
+  [const q Prop]
+  ;; Modal distribution: □(p → q) → (□p → □q) — the K axiom
+  ;; Under Kripke threading, box becomes a universal quantification
+  ;; over explicit world parameters
+  [@rule box-idem [box [box ?x]] ==> [box ?x]]
+]
+
+[Proofs KripkeCheck :in KripkeDemo
+  [assert-eq k-idem [box [box p]] [box p]]
+]
+
+;; =================================================================
+;; Pass 6: DependentCombinators
+;; cellular-automaton engine + topological-homotopy equality
+;;
+;; Theory: Path spaces compiled to a dependent SKI combinator calculus.
+;; This is the most expensive pass — it replaces all lambda abstractions
+;; and dependent products with a sprawling web of combinators.
+;; Theoretically sound but practically expensive.
+;; =================================================================
+
+[Substrate CellularHoTT
+  @engine cellular-automaton
+  @resource-mode deep-copy
+  @barrier transparent
+  @equality topological-homotopy
+]
+
+[Universe CombinatorHoTTWorld :category HoTTCat :substrate CellularHoTT]
+
+[Theory CombinatorHoTTDemo :in CombinatorHoTTWorld
+  [const a Space]
+  [const b Space]
+  [const p Space]
+]
+
+[Proofs CombinatorHoTTCheck :in CombinatorHoTTDemo
+  ;; Path algebra works under dependent combinator translation
+  ;; refl is auto-injected by PathType
+  [assert-eq refl-concat [concat [refl a] p] p]
+  [assert-eq concat-refl [concat p [refl a]] p]
+  [assert-eq inv-refl    [inv [refl a]]      [refl a]]
+]
+
+;; =================================================================
+;; Bonus: Composed passes
+;; von-neumann + CCC + Modal → Defunctionalization + KripkeWorldThreading
+;; =================================================================
+
+[Category ModalCCC
+  [Object Type]
+  [Object Term]
+  [Morphism app :domain [Term Term] :codomain Term]
+  [Exponential lam :object Term]
+  [Evaluator app]
+  [ModalOperator nec]
+  [Context W]
+]
+
+[Universe ComposedWorld :category ModalCCC :substrate VonNeumannMachine]
+
+[Theory ComposedDemo :in ComposedWorld
+  [const a Term]
+  [@rule app-id [app [lam x x] ?a] ==> ?a]
+  [@rule nec-idem [nec [nec ?x]] ==> [nec ?x]]
+]
+
+;; Two passes compose: closures are defunctionalized AND modal scopes
+;; are compiled to explicit world parameters. Both transformations
+;; are independent and commute.

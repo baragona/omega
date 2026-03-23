@@ -40,6 +40,11 @@ fn example_cross_substrate() {
     run_file("examples/cross-substrate.hyp");
 }
 
+#[test]
+fn example_compilation_passes() {
+    run_file("examples/compilation-passes.hyp");
+}
+
 // ============================================================
 // Category parsing tests
 // ============================================================

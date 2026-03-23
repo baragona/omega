@@ -362,11 +362,21 @@ impl HyperionSession {
         // Drain apeiron output
         self.drain_apeiron_output();
 
+        let pass_info = if compiled.passes.is_empty() {
+            String::from("native")
+        } else {
+            let pass_names: Vec<&str> = compiled.passes.iter().map(|p| p.name()).collect();
+            format!("passes=[{}]", pass_names.join(", "))
+        };
         let msg = format!(
-            "[UNIVERSE] {} compiled (system={}, category={}, substrate={})",
-            name, compiled.system_name, uni_def.category, uni_def.substrate
+            "[UNIVERSE] {} compiled (system={}, category={}, substrate={}, {})",
+            name, compiled.system_name, uni_def.category, uni_def.substrate, pass_info
         );
         self.output.push(msg.clone());
+        for pass in &compiled.passes {
+            let detail = format!("[PASS] {}: {}", pass.name(), pass.description());
+            self.output.push(detail);
+        }
         self.record_result(&name, "valid", Some(format!("universe:{}", name)), Some(msg));
         self.universes.insert(name, compiled);
         Ok(())
