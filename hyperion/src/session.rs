@@ -52,6 +52,8 @@ pub struct VonNeumannTheory {
     pub operators: Vec<String>,
     pub rules: Vec<VonNeumannRule>,
     pub morphism_types: HashMap<String, (Vec<String>, String)>,
+    pub resource_mode: crate::substrate::ResourceMode,
+    pub engine: crate::substrate::Engine,
 }
 
 /// A single rewrite rule in a Von Neumann theory.
@@ -827,6 +829,16 @@ impl HyperionSession {
             rules.len()
         ));
 
+        // Look up substrate for resource mode and engine
+        let sub = self
+            .substrates
+            .get(&compiled.substrate_name)
+            .cloned()
+            .ok_or_else(|| HyperionError::Undefined {
+                kind: "Substrate".into(),
+                name: compiled.substrate_name.clone(),
+            })?;
+
         self.vn_theories.insert(
             theory_name.clone(),
             VonNeumannTheory {
@@ -836,6 +848,8 @@ impl HyperionSession {
                 operators,
                 rules,
                 morphism_types,
+                resource_mode: sub.resource_mode.clone(),
+                engine: sub.engine.clone(),
             },
         );
 

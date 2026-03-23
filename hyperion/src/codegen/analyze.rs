@@ -6,6 +6,7 @@ use apeiron::parser::Sexp;
 use super::rust_ast::*;
 use crate::error::{HyperionError, Result};
 use crate::session::VonNeumannTheory;
+use crate::substrate::ResourceMode;
 
 /// Sorts that are handled specially and should not generate enums.
 const SKIP_SORTS: &[&str] = &["Effect", "Prop", "String", "Unit"];
@@ -154,6 +155,21 @@ pub fn analyze(theory: &VonNeumannTheory) -> Result<RustCrate> {
     // pattern-match on the history of an evaluated function call.
     for rule in &theory.rules {
         validate_lhs_physics(&rule.lhs, &rule.name, &rewrite_heads, true)?;
+    }
+
+    // Step 5.6: Linearity validation — in strictly-linear mode, linear-sort
+    // variables must appear exactly once in RHS (no drops, no duplications).
+    if theory.resource_mode == ResourceMode::StrictlyLinear {
+        let linear_sorts = find_linear_sorts(&theory.morphism_types);
+        for rule in &theory.rules {
+            validate_rhs_linearity(
+                &rule.lhs,
+                &rule.rhs,
+                &rule.name,
+                &theory.morphism_types,
+                &linear_sorts,
+            )?;
+        }
     }
 
     // Step 6: Group rewrite rules by head → match functions
@@ -329,10 +345,18 @@ pub fn analyze(theory: &VonNeumannTheory) -> Result<RustCrate> {
         });
     }
 
+    // Generate runtime harness for SystemIO engine
+    let runtime_trait = if theory.engine == crate::substrate::Engine::SystemIO {
+        trait_name.clone()
+    } else {
+        None
+    };
+
     Ok(RustCrate {
         name: crate_name,
         modules,
         has_box_patterns,
+        runtime_trait,
     })
 }
 
@@ -746,6 +770,111 @@ fn validate_lhs_physics(
         }
         _ => {}
     }
+    Ok(())
+}
+
+/// Find linear sorts: sorts that have a destructor (morphism with codomain Unit).
+/// The destructor pattern `close : FD -> Unit` is the canonical indicator that
+/// FD is a linear resource that must be consumed exactly once.
+fn find_linear_sorts(
+    morphism_types: &HashMap<String, (Vec<String>, String)>,
+) -> HashSet<String> {
+    let mut linear = HashSet::new();
+    for (_, (domain, codomain)) in morphism_types {
+        if codomain == "Unit" {
+            for d in domain {
+                linear.insert(d.clone());
+            }
+        }
+    }
+    linear
+}
+
+/// Infer the sort of a meta-variable from its position in a LHS pattern.
+fn collect_meta_sorts(
+    sexp: &Sexp,
+    parent_sort: &str,
+    _arg_index: Option<usize>,
+    morphism_types: &HashMap<String, (Vec<String>, String)>,
+    result: &mut HashMap<String, String>,
+) {
+    match sexp {
+        Sexp::Atom(name, _) => {
+            if let Some(meta) = name.strip_prefix('?') {
+                result.insert(meta.to_string(), parent_sort.to_string());
+            }
+        }
+        Sexp::List(items, _) if !items.is_empty() => {
+            let head = items[0].as_atom().unwrap_or("");
+            let child_sorts: Vec<String> = morphism_types
+                .get(head)
+                .map(|(d, _)| d.clone())
+                .unwrap_or_default();
+            for (i, arg) in items[1..].iter().enumerate() {
+                let child_sort = child_sorts.get(i).map(|s| s.as_str()).unwrap_or("_");
+                collect_meta_sorts(arg, child_sort, Some(i), morphism_types, result);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Validate that linear-sort variables from LHS appear exactly once in RHS.
+fn validate_rhs_linearity(
+    lhs: &Sexp,
+    rhs: &Sexp,
+    rule_name: &str,
+    morphism_types: &HashMap<String, (Vec<String>, String)>,
+    linear_sorts: &HashSet<String>,
+) -> Result<()> {
+    // Collect meta-variable sorts from LHS
+    let mut meta_sorts: HashMap<String, String> = HashMap::new();
+    // The top-level LHS head determines the context
+    if let Sexp::List(items, _) = lhs {
+        if let Some(head) = items.first().and_then(|s| s.as_atom()) {
+            let child_sorts: Vec<String> = morphism_types
+                .get(head)
+                .map(|(d, _)| d.clone())
+                .unwrap_or_default();
+            for (i, arg) in items[1..].iter().enumerate() {
+                let sort = child_sorts.get(i).map(|s| s.as_str()).unwrap_or("_");
+                collect_meta_sorts(arg, sort, Some(i), morphism_types, &mut meta_sorts);
+            }
+        }
+    }
+
+    // Count RHS occurrences of each meta-variable
+    let mut rhs_counts: HashMap<String, usize> = HashMap::new();
+    count_metas(rhs, &mut rhs_counts);
+
+    // Check linear-sort variables
+    for (meta, sort) in &meta_sorts {
+        if !linear_sorts.contains(sort) {
+            continue;
+        }
+        let count = rhs_counts.get(meta).copied().unwrap_or(0);
+        if count == 0 {
+            return Err(HyperionError::ParseError {
+                block: "kompile".into(),
+                detail: format!(
+                    "Linearity violation in rule '{}': linear resource '?{}' (sort {}) \
+                     is bound in LHS but never used in RHS (resource dropped).",
+                    rule_name, meta, sort
+                ),
+            });
+        }
+        if count > 1 {
+            return Err(HyperionError::ParseError {
+                block: "kompile".into(),
+                detail: format!(
+                    "Linearity violation in rule '{}': linear resource '?{}' (sort {}) \
+                     is used {} times in RHS (resource duplicated).",
+                    rule_name, meta, sort, count
+                ),
+            });
+        }
+    }
+
     Ok(())
 }
 

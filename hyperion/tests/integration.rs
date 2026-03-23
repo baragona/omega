@@ -1189,6 +1189,88 @@ fn physics_rejects_nested_function_in_lhs() {
     assert!(msg.contains("write"), "error should mention 'write': {}", msg);
 }
 
+#[test]
+fn linearity_rejects_dropped_resource() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category IOCat
+            [Object FD] [Object Str] [Object Unit] [Object Path]
+            [Morphism open  :domain [Path]     :codomain FD]
+            [Morphism close :domain [FD]       :codomain Unit]
+        ]
+        [Substrate StrictSub
+            @engine system-io @resource-mode strictly-linear
+            @barrier transparent @equality rewrite-equivalence]
+        [Universe IOWorld :category IOCat :substrate StrictSub]
+        [Theory DropIO :in IOWorld
+            [@rule bad-close [close [open ?p]] ==> done]
+        ]
+    "#;
+    process_all(&mut session, input).unwrap();
+    // This should pass — ?p is Path (not linear), and FD is only constructed, not bound as a meta
+    let theory = &session.vn_theories["DropIO"];
+    hyperion::codegen::analyze::analyze(theory).unwrap();
+}
+
+#[test]
+fn linearity_rejects_duplicated_fd() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category IOCat
+            [Object FD] [Object Str] [Object Unit] [Object Path] [Object Tuple]
+            [Morphism open   :domain [Path]     :codomain FD]
+            [Morphism close  :domain [FD]       :codomain Unit]
+            [Morphism dup-fd :domain [FD]       :codomain Tuple]
+            [Morphism pair   :domain [FD FD]    :codomain Tuple]
+        ]
+        [Substrate StrictSub
+            @engine system-io @resource-mode strictly-linear
+            @barrier transparent @equality rewrite-equivalence]
+        [Universe IOWorld :category IOCat :substrate StrictSub]
+        [Theory DupIO :in IOWorld
+            [@rule bad-dup [dup-fd ?fd] ==> [pair ?fd ?fd]]
+        ]
+    "#;
+    process_all(&mut session, input).unwrap();
+    let theory = &session.vn_theories["DupIO"];
+    let err = hyperion::codegen::analyze::analyze(theory).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("Linearity violation"), "expected linearity error, got: {}", msg);
+    assert!(msg.contains("duplicated"), "should say duplicated: {}", msg);
+}
+
+#[test]
+fn system_io_cargo_check() {
+    // Full pipeline: parse → validate → kompile → cargo check on generated Rust
+    let mut session = HyperionSession::new();
+    let source = std::fs::read_to_string("examples/system-io.hyp").unwrap();
+    let sexps = apeiron::parser::parse(&source).unwrap();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+
+    let out_dir = std::env::temp_dir().join("hyperion_io_test");
+    let _ = std::fs::remove_dir_all(&out_dir);
+    session.kompile("FileIO", out_dir.to_str().unwrap()).unwrap();
+
+    // Verify main.rs was generated (SystemIO engine)
+    assert!(out_dir.join("src/main.rs").exists(), "main.rs should be generated for SystemIO");
+
+    // Run cargo check on the generated crate
+    let output = std::process::Command::new("cargo")
+        .arg("check")
+        .current_dir(&out_dir)
+        .output()
+        .expect("failed to run cargo check");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "cargo check failed on generated code:\n{}",
+        stderr
+    );
+}
+
 // ============================================================
 // Categorical law verification tests
 // ============================================================

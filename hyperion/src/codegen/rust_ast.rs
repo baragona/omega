@@ -10,6 +10,8 @@ pub struct RustCrate {
     pub modules: Vec<RustModule>,
     /// Whether any pattern uses `box` (requires `#![feature(box_patterns)]`).
     pub has_box_patterns: bool,
+    /// If set, emit a main.rs with a runtime harness implementing this trait.
+    pub runtime_trait: Option<String>,
 }
 
 /// A module within the crate (maps to a file).
