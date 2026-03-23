@@ -77,7 +77,8 @@ fn category_with_all_structures() {
 // ============================================================
 
 #[test]
-fn reject_ccc_on_cellular_automaton() {
+fn ccc_on_cellular_automaton_defunctionalizes() {
+    use hyperion::universe::CompilationPass;
     let mut session = HyperionSession::new();
     let input = r#"
         [Category CCC
@@ -90,15 +91,16 @@ fn reject_ccc_on_cellular_automaton() {
             @barrier transparent
             @equality rewrite-equivalence
         ]
-        [Universe Bad :category CCC :substrate Grid]
+        [Universe Defunc :category CCC :substrate Grid]
     "#;
-    let err = process_all(&mut session, input).unwrap_err();
-    let msg = format!("{}", err);
-    assert!(msg.contains("Exponential support"), "Got: {}", msg);
+    process_all(&mut session, input).unwrap();
+    let compiled = &session.universes["Defunc"];
+    assert!(compiled.passes.contains(&CompilationPass::Defunctionalization));
 }
 
 #[test]
-fn reject_modal_on_transparent_barrier() {
+fn modal_on_transparent_barrier_gets_kripke_threading() {
+    use hyperion::universe::CompilationPass;
     let mut session = HyperionSession::new();
     let input = r#"
         [Category Modal
@@ -111,15 +113,16 @@ fn reject_modal_on_transparent_barrier() {
             @barrier transparent
             @equality topological-hash
         ]
-        [Universe Bad :category Modal :substrate Plain]
+        [Universe KripkeModal :category Modal :substrate Plain]
     "#;
-    let err = process_all(&mut session, input).unwrap_err();
-    let msg = format!("{}", err);
-    assert!(msg.contains("scope isolation"), "Got: {}", msg);
+    process_all(&mut session, input).unwrap();
+    let compiled = &session.universes["KripkeModal"];
+    assert!(compiled.passes.contains(&CompilationPass::KripkeWorldThreading));
 }
 
 #[test]
-fn reject_tensor_on_term_tree() {
+fn tensor_on_term_tree_serializes() {
+    use hyperion::universe::CompilationPass;
     let mut session = HyperionSession::new();
     let input = r#"
         [Category Monoidal
@@ -132,15 +135,16 @@ fn reject_tensor_on_term_tree() {
             @barrier transparent
             @equality rewrite-equivalence
         ]
-        [Universe Bad :category Monoidal :substrate Tree]
+        [Universe SerialMonoidal :category Monoidal :substrate Tree]
     "#;
-    let err = process_all(&mut session, input).unwrap_err();
-    let msg = format!("{}", err);
-    assert!(msg.contains("TensorProduct"), "Got: {}", msg);
+    process_all(&mut session, input).unwrap();
+    let compiled = &session.universes["SerialMonoidal"];
+    assert!(compiled.passes.contains(&CompilationPass::TensorSerialization));
 }
 
 #[test]
-fn reject_strictly_linear_exponential() {
+fn strictly_linear_exponential_gets_bang_modality() {
+    use hyperion::universe::CompilationPass;
     let mut session = HyperionSession::new();
     let input = r#"
         [Category CCC
@@ -153,11 +157,11 @@ fn reject_strictly_linear_exponential() {
             @barrier transparent
             @equality topological-hash
         ]
-        [Universe Bad :category CCC :substrate Linear]
+        [Universe LinearCCC :category CCC :substrate Linear]
     "#;
-    let err = process_all(&mut session, input).unwrap_err();
-    let msg = format!("{}", err);
-    assert!(msg.contains("strictly-linear"), "Got: {}", msg);
+    process_all(&mut session, input).unwrap();
+    let compiled = &session.universes["LinearCCC"];
+    assert!(compiled.passes.contains(&CompilationPass::BangModality));
 }
 
 // ============================================================
@@ -867,7 +871,8 @@ fn vn_preamble() -> &'static str {
 }
 
 #[test]
-fn vn_exponential_rejected() {
+fn vn_exponential_defunctionalizes() {
+    use hyperion::universe::CompilationPass;
     let mut session = HyperionSession::new();
     let mut input = String::from(r#"
         [Category CCC
@@ -876,14 +881,15 @@ fn vn_exponential_rejected() {
         ]
     "#);
     input.push_str(vn_preamble());
-    input.push_str("[Universe Bad :category CCC :substrate VonNeumannMachine]");
-    let err = process_all(&mut session, &input).unwrap_err();
-    let msg = format!("{}", err);
-    assert!(msg.contains("Exponential"), "Got: {}", msg);
+    input.push_str("[Universe VN_CCC :category CCC :substrate VonNeumannMachine]");
+    process_all(&mut session, &input).unwrap();
+    let compiled = &session.universes["VN_CCC"];
+    assert!(compiled.passes.contains(&CompilationPass::Defunctionalization));
 }
 
 #[test]
-fn vn_modal_rejected() {
+fn vn_modal_gets_kripke_threading() {
+    use hyperion::universe::CompilationPass;
     let mut session = HyperionSession::new();
     let mut input = String::from(r#"
         [Category Modal
@@ -892,10 +898,10 @@ fn vn_modal_rejected() {
         ]
     "#);
     input.push_str(vn_preamble());
-    input.push_str("[Universe Bad :category Modal :substrate VonNeumannMachine]");
-    let err = process_all(&mut session, &input).unwrap_err();
-    let msg = format!("{}", err);
-    assert!(msg.contains("ModalOperator"), "Got: {}", msg);
+    input.push_str("[Universe VN_Modal :category Modal :substrate VonNeumannMachine]");
+    process_all(&mut session, &input).unwrap();
+    let compiled = &session.universes["VN_Modal"];
+    assert!(compiled.passes.contains(&CompilationPass::KripkeWorldThreading));
 }
 
 #[test]
@@ -1216,21 +1222,22 @@ fn hott_equality_mode_parses() {
 }
 
 #[test]
-fn hott_requires_lambda_engine() {
+fn hott_on_non_lambda_gets_dependent_combinators() {
+    use hyperion::universe::CompilationPass;
     let mut session = HyperionSession::new();
     let input = r#"
         [Category C [Object X]]
-        [Substrate Bad
+        [Substrate CA
             @engine cellular-automaton
             @resource-mode deep-copy
             @barrier transparent
             @equality topological-homotopy
         ]
-        [Universe BadWorld :category C :substrate Bad]
+        [Universe HoTT_CA :category C :substrate CA]
     "#;
-    let err = process_all(&mut session, input).unwrap_err();
-    let msg = format!("{}", err);
-    assert!(msg.contains("topological-homotopy") || msg.contains("path spaces"), "Got: {}", msg);
+    process_all(&mut session, input).unwrap();
+    let compiled = &session.universes["HoTT_CA"];
+    assert!(compiled.passes.contains(&CompilationPass::DependentCombinators));
 }
 
 #[test]
@@ -1251,22 +1258,22 @@ fn hott_on_lambda_engine_accepted() {
 }
 
 #[test]
-fn hott_vn_rejected() {
-    // Von Neumann can't do HoTT (not lambda-capable)
+fn hott_vn_gets_dependent_combinators() {
+    use hyperion::universe::CompilationPass;
     let mut session = HyperionSession::new();
     let input = r#"
         [Category C [Object X]]
-        [Substrate Bad
+        [Substrate VN
             @engine von-neumann
             @resource-mode deep-copy
             @barrier transparent
             @equality topological-homotopy
         ]
-        [Universe BadWorld :category C :substrate Bad]
+        [Universe HoTT_VN :category C :substrate VN]
     "#;
-    let err = process_all(&mut session, input).unwrap_err();
-    let msg = format!("{}", err);
-    assert!(msg.contains("path spaces") || msg.contains("topological-homotopy"), "Got: {}", msg);
+    process_all(&mut session, input).unwrap();
+    let compiled = &session.universes["HoTT_VN"];
+    assert!(compiled.passes.contains(&CompilationPass::DependentCombinators));
 }
 
 #[test]
@@ -1299,8 +1306,8 @@ fn path_type_parses() {
 }
 
 #[test]
-fn path_type_requires_lambda() {
-    // PathType + Evaluator requires lambda-capable engine
+fn path_type_evaluator_on_non_lambda_defunctionalizes() {
+    use hyperion::universe::CompilationPass;
     let mut session = HyperionSession::new();
     let input = r#"
         [Category PathCat
@@ -1315,11 +1322,11 @@ fn path_type_requires_lambda() {
             @barrier transparent
             @equality rewrite-equivalence
         ]
-        [Universe Bad :category PathCat :substrate Grid]
+        [Universe DefuncPath :category PathCat :substrate Grid]
     "#;
-    let err = process_all(&mut session, input).unwrap_err();
-    let msg = format!("{}", err);
-    assert!(msg.contains("PathType") || msg.contains("Exponential"), "Got: {}", msg);
+    process_all(&mut session, input).unwrap();
+    let compiled = &session.universes["DefuncPath"];
+    assert!(compiled.passes.contains(&CompilationPass::Defunctionalization));
 }
 
 #[test]
@@ -2574,7 +2581,8 @@ fn nominal_scoping_end_to_end() {
 }
 
 #[test]
-fn nominal_rejects_exponential() {
+fn nominal_exponential_gets_nominal_abstraction() {
+    use hyperion::universe::CompilationPass;
     let mut session = HyperionSession::new();
     let input = r#"
         [Category CCC
@@ -2587,11 +2595,11 @@ fn nominal_rejects_exponential() {
             @barrier nominal-scoping
             @equality topological-hash
         ]
-        [Universe Bad :category CCC :substrate NomSub]
+        [Universe NomCCC :category CCC :substrate NomSub]
     "#;
-    let err = process_all(&mut session, input).unwrap_err();
-    let msg = format!("{}", err);
-    assert!(msg.contains("Nominal scoping"), "Got: {}", msg);
+    process_all(&mut session, input).unwrap();
+    let compiled = &session.universes["NomCCC"];
+    assert!(compiled.passes.contains(&CompilationPass::NominalAbstraction));
 }
 
 #[test]
@@ -2622,8 +2630,8 @@ fn reversible_engine_end_to_end() {
 }
 
 #[test]
-fn reversible_rejects_exponential() {
-    // ReversibleGraph does not support lambda (beta-reduction is information-destroying)
+fn reversible_exponential_defunctionalizes() {
+    use hyperion::universe::CompilationPass;
     let mut session = HyperionSession::new();
     let input = r#"
         [Category CCC
@@ -2636,11 +2644,11 @@ fn reversible_rejects_exponential() {
             @barrier transparent
             @equality topological-hash
         ]
-        [Universe Bad :category CCC :substrate RevSub]
+        [Universe RevCCC :category CCC :substrate RevSub]
     "#;
-    let err = process_all(&mut session, input).unwrap_err();
-    let msg = format!("{}", err);
-    assert!(msg.contains("Exponential support"), "Got: {}", msg);
+    process_all(&mut session, input).unwrap();
+    let compiled = &session.universes["RevCCC"];
+    assert!(compiled.passes.contains(&CompilationPass::Defunctionalization));
 }
 
 #[test]

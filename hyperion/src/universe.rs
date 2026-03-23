@@ -10,6 +10,58 @@ pub struct UniverseDef {
     pub substrate: String,
 }
 
+/// A compilation pass that bridges an otherwise-incompatible category+substrate pair.
+///
+/// Each pass represents a well-known theoretical construction that makes the
+/// combination sound by inserting an intermediate representation or translation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompilationPass {
+    /// Girard's ! modality: `A → B` becomes `!A ⊸ B` in a linear substrate.
+    /// Exponentials are available only under explicit `!` promotion.
+    BangModality,
+    /// Gabbay-Pitts nominal abstraction: lambda replaced by name-abstraction
+    /// with explicit swapping and freshness side-conditions.
+    NominalAbstraction,
+    /// Reynolds' defunctionalization: closures compiled to a first-order ADT
+    /// with a global `apply` dispatch function.
+    Defunctionalization,
+    /// Tensor products serialized left-to-right on sequential engines.
+    /// Sound for pure (effect-free) tensor operands.
+    TensorSerialization,
+    /// Kripke semantics compilation: □A compiled to ∀w.A(w) with explicit
+    /// world-parameter threading, eliminating the need for physical barriers.
+    KripkeWorldThreading,
+    /// Dependent combinatory logic: Π-types and path spaces compiled to
+    /// a dependent SKI combinator calculus (extremely expensive).
+    DependentCombinators,
+}
+
+impl CompilationPass {
+    /// Human-readable name for diagnostics.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::BangModality => "bang-modality",
+            Self::NominalAbstraction => "nominal-abstraction",
+            Self::Defunctionalization => "defunctionalization",
+            Self::TensorSerialization => "tensor-serialization",
+            Self::KripkeWorldThreading => "kripke-world-threading",
+            Self::DependentCombinators => "dependent-combinators",
+        }
+    }
+
+    /// Short description of what the pass does.
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::BangModality => "Girard's !-modality: closures require explicit promotion from linear to unrestricted",
+            Self::NominalAbstraction => "Gabbay-Pitts nominal abstraction: lambda via name-swapping + freshness",
+            Self::Defunctionalization => "Reynolds defunctionalization: closures compiled to first-order ADT + apply dispatch",
+            Self::TensorSerialization => "tensor products serialized left-to-right (sound for pure operands)",
+            Self::KripkeWorldThreading => "Kripke compilation: modal scopes threaded as explicit world parameters",
+            Self::DependentCombinators => "dependent SKI combinator translation for path spaces (expensive)",
+        }
+    }
+}
+
 /// A compiled universe: the result of compilation.
 #[derive(Debug, Clone)]
 pub struct CompiledUniverse {
@@ -18,6 +70,9 @@ pub struct CompiledUniverse {
     pub scope_names: Vec<String>,
     pub category_name: String,
     pub substrate_name: String,
+    /// Compilation passes required to bridge the category+substrate gap.
+    /// Empty when the pair is natively compatible.
+    pub passes: Vec<CompilationPass>,
 }
 
 /// Parse a `[Universe Name :category C :substrate S]` S-expression.

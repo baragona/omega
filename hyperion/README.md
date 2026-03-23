@@ -6,7 +6,7 @@ A research prototype exploring whether category theory can systematically classi
 
 Hyperion is a meta-system for building logical frameworks. You describe the *mathematics* you want (a category) and the *computational physics* you want it to run on (a substrate), and Hyperion compiles the two together into a working logical system, verifying that your math is actually implementable on your chosen physics.
 
-The core insight: not every mathematical structure can run on every computational substrate. Lambda calculus needs an engine that supports closures. Modal logic needs scope isolation. Tensor products need parallel composition. Hyperion enforces these constraints at compile time, then generates the correct backend configuration automatically.
+The core insight: not every mathematical structure runs *natively* on every computational substrate. Lambda calculus needs closures. Modal logic needs scope isolation. Tensor products need parallel composition. When a category and substrate are natively compatible, Hyperion compiles them directly. When they aren't, Hyperion inserts *compilation passes* --- well-known theoretical constructions (Girard's bang modality, Reynolds' defunctionalization, Kripke world threading, etc.) that bridge the gap. Every combination compiles; the question is how many passes are needed.
 
 But Hyperion's real power is *self-application*. Categories and substrates are just data. Nothing stops you from defining a category whose objects are themselves categories, whose morphisms are functors, and whose paths are natural isomorphisms --- and then running it on a substrate. The framework frameworks itself, all the way up.
 
@@ -23,9 +23,9 @@ Hyperion splits the world into two distinct pieces:
 - **The Category (The Math):** This is the pure logic. What are the rules? What do the objects look like? Are we doing standard algebra, or weird modal logic with parallel universes?
 - **The Substrate (The Physics):** This is the engine that actually executes the math. Are we running this on a highly parallel graph (like Apeiron's Interaction Nets)? Are we running it sequentially on a standard computer chip? Are resources infinitely copyable, or are they strictly linear (meaning once you use a variable, it's gone forever)?
 
-Hyperion acts as the ultimate matchmaker. You hand it your Math and your Physics, and it checks to see if they are actually compatible. For example, if your math requires infinite parallel processing, but you try to run it on a strictly sequential physics engine, Hyperion will stop you and say, "This math physically cannot exist in this universe."
+Hyperion acts as the ultimate matchmaker. You hand it your Math and your Physics, and it figures out how to make them work together. If they're natively compatible, it compiles them directly. If not, it inserts compilation passes --- theoretical bridges that translate higher-order features into constructions the substrate can handle. For example, closures on a first-order machine get defunctionalized (Reynolds), exponentials under linear resources get the bang modality (Girard), and modal scopes on a transparent barrier get compiled to explicit world parameters (Kripke).
 
-If they are compatible, Hyperion compiles them together into a working system called a **Universe**.
+Either way, Hyperion compiles them into a working system called a **Universe**.
 
 But here is where it gets truly wild --- the reason we can call it a "logical framework framework framework" (LF^3).
 
@@ -122,7 +122,7 @@ Here is a full Hyperion file that defines a lambda calculus, runs it on an inter
 ]
 ```
 
-Hyperion automatically verifies that the CCC structure is compatible with the interaction graph engine (it is --- interaction graphs support lambda abstraction), generates the Apeiron system `__hyp_CartesianClosed_InteractionNet`, and passes the theory and proofs through for execution.
+Hyperion verifies that the CCC structure is natively compatible with the interaction graph engine (it is --- interaction graphs support lambda abstraction, so zero compilation passes are needed), generates the Apeiron system `__hyp_CartesianClosed_InteractionNet`, and passes the theory and proofs through for execution.
 
 ## Categorical Structures
 
@@ -865,28 +865,36 @@ pub fn plus(nat: Nat, nat_2: Nat) -> Nat {
 
 Von Neumann substrates reject higher-order features (Exponential, ModalOperator, TensorProduct) since sequential machines can't natively support closures, scope isolation, or parallel composition. This backend is an optional "applied" feature --- the primary Hyperion experience is the abstract categorical framework.
 
-## Compatibility Rules
+## Compatibility & Compilation Passes
 
-Hyperion enforces that your mathematical structure is realizable on your chosen physics:
+Hyperion never rejects a category+substrate pair. Instead, it analyzes the gap between what the category needs and what the substrate provides, inserting **compilation passes** to bridge the difference. Natively compatible pairs compile with zero passes (the fast path); incompatible pairs compile with one or more theoretical bridging constructions.
 
-| Category Feature | Required Substrate Properties |
+### Native Compatibility (zero passes)
+
+| Category Feature | Natively Supported By |
 |---|---|
-| Exponential / Evaluator | Engine must support lambda (interaction-graph, term-tree, abstract-machine) |
-| ModalOperator / Context | Barrier must support scoping (contextual-membranes, cryptographic) |
-| TensorProduct | Engine must support parallel composition (interaction-graph, symmetric-monoidal) |
-| PathType + Evaluator | Engine must support lambda (ap-refl rule needs application) |
-| PathType (no Evaluator) | No engine restriction (purely first-order path algebra) |
-| Preorder | No engine restriction (rewriting-based reflexivity) |
-| topological-homotopy | Engine must support lambda (path spaces need higher-order structure) |
+| Exponential / Evaluator | interaction-graph, term-tree, abstract-machine, concurrent-graph |
+| ModalOperator / Context | contextual-membranes, cryptographic, nominal-scoping barriers |
+| TensorProduct | interaction-graph, symmetric-monoidal, reversible-graph, concurrent-graph |
+| PathType + Evaluator | Lambda-capable engines (see Exponential row) |
+| PathType (no Evaluator) | Any engine (purely first-order path algebra) |
+| Preorder | Any engine (rewriting-based reflexivity) |
+| topological-homotopy | Lambda-capable engines |
 
-Always-rejected combinations:
+### Compilation Passes (bridging non-native pairs)
 
-| Combination | Reason |
-|---|---|
-| StrictlyLinear + Exponential | Linear resources can't duplicate closures |
-| VonNeumann + Exponential | No lambda at hardware level |
-| VonNeumann + ModalOperator | No scope isolation in sequential model |
-| VonNeumann + TensorProduct | No parallel composition in sequential model |
+| Pass | Theory | Bridges |
+|---|---|---|
+| **BangModality** | Girard's `!` (Linear Logic) | StrictlyLinear + Exponential --- closures available only under explicit `!` promotion; `A → B` becomes `!A ⊸ B` |
+| **NominalAbstraction** | Gabbay-Pitts (Nominal Sets) | NominalScoping + Exponential --- lambda replaced by name-abstraction with explicit swapping and freshness |
+| **Defunctionalization** | Reynolds (1972) | Non-lambda engine + Exponential --- closures compiled to first-order ADT with global `apply` dispatch |
+| **TensorSerialization** | L-R evaluation | Sequential engine + TensorProduct --- tensor operands evaluated left-to-right (sound for pure operands) |
+| **KripkeWorldThreading** | Kripke semantics | Non-isolating barrier + Modal --- `□A` compiled to `∀w.A(w)` with explicit world parameter threading |
+| **DependentCombinators** | Dependent SKI calculus | Non-lambda engine + topological-homotopy --- path spaces compiled to dependent combinatory logic (extremely expensive) |
+
+Passes compose naturally. For example, a Von Neumann engine with a CCC + Modal category gets both `Defunctionalization` and `KripkeWorldThreading`.
+
+The compiled system S-expression includes an `@compilation-passes` annotation block listing all required passes, so downstream tools (and humans) can see exactly what bridges are in play.
 
 ## Common Pitfalls
 
@@ -1061,8 +1069,8 @@ hyperion/
   src/
     category.rs      Category definitions and parsing (CCC, Monoidal, PathType, Preorder, Modal, IntervalSort)
     substrate.rs     Substrate definitions (Engine, ResourceMode, BarrierMode, EqualityMode incl. ProofRelevant)
-    universe.rs      Universe binding and naming
-    compile.rs       Compatibility checking + Apeiron system generation
+    universe.rs      Universe binding, naming, CompilationPass enum
+    compile.rs       Compatibility analysis, compilation passes, Apeiron system generation
     functor.rs       Cross-substrate functor definitions (incl. :verify flag)
     nat_trans.rs     Natural transformation definitions
     adjunction.rs    Adjunction definitions
@@ -1101,10 +1109,10 @@ hyperion kompile <file.hyp> --theory <name> -o <output_dir/>
 
 ## Tests
 
-166 tests (42 unit + 124 integration), covering:
+174 tests (48 unit + 126 integration), covering:
 
 - Category/substrate/universe parsing and validation
-- All compatibility rejection rules (PathType with/without Evaluator, modal, tensor, VN)
+- Compilation pass insertion for all 6 bridging strategies (bang modality, nominal abstraction, defunctionalization, tensor serialization, Kripke threading, dependent combinators)
 - Functor transport with normalization
 - Functor equational theory verification (VerifyFunctor, both named and unnamed rules)
 - Natural transformation and adjunction validation

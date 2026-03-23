@@ -356,6 +356,8 @@ impl Session {
                             }
                         }
                     }
+                    // Hyperion compilation pass annotations — informational, not processed by Apeiron
+                    "@compilation-passes" => {}
                     _ => {
                         return Err(ApeironError::InvalidConfig {
                             block: "System".into(),

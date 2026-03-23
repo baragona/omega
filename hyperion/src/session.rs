@@ -2102,7 +2102,8 @@ mod tests {
     }
 
     #[test]
-    fn incompatible_universe_rejected() {
+    fn incompatible_universe_gets_compilation_passes() {
+        use crate::universe::CompilationPass;
         let mut session = HyperionSession::new();
         let input = r#"
             [Category CartesianClosed
@@ -2117,11 +2118,12 @@ mod tests {
                 @equality rewrite-equivalence
             ]
 
-            [Universe Bad :category CartesianClosed :substrate GridWorld]
+            [Universe Bridged :category CartesianClosed :substrate GridWorld]
         "#;
 
-        let result = process_all(&mut session, input);
-        assert!(result.is_err());
+        process_all(&mut session, input).unwrap();
+        let compiled = &session.universes["Bridged"];
+        assert!(compiled.passes.contains(&CompilationPass::Defunctionalization));
     }
 
     #[test]

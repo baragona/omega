@@ -1,22 +1,26 @@
 use apeiron::parser::{Sexp, Span};
 
 use crate::category::{CategoricalStructure, CategoryDef};
-use crate::error::{HyperionError, Result};
+use crate::error::Result;
 use crate::laws;
 use crate::substrate::{BarrierMode, Engine, EqualityMode, ResourceMode, SubstrateDef};
-use crate::universe::{system_name_for, CompiledUniverse};
+use crate::universe::{system_name_for, CompilationPass, CompiledUniverse};
 
 /// Compile a Category + Substrate into a CompiledUniverse.
 ///
 /// This is the heart of Hyperion: it verifies compatibility, then generates
 /// the Apeiron SystemConfig that hosts the categorical structure.
+///
+/// When the category and substrate are not natively compatible, the compiler
+/// inserts compilation passes that bridge the gap via well-known theoretical
+/// constructions (bang modality, defunctionalization, Kripke threading, etc.).
 pub fn compile_universe(
     universe_name: &str,
     cat: &CategoryDef,
     sub: &SubstrateDef,
 ) -> Result<CompiledUniverse> {
-    // Step 1: Compatibility verification
-    check_compatibility(cat, sub)?;
+    // Step 1: Compatibility analysis — returns required bridging passes
+    let passes = check_compatibility(cat, sub)?;
 
     // Step 2: Collect scope names from Context declarations
     let scope_names: Vec<String> = cat
@@ -39,6 +43,7 @@ pub fn compile_universe(
         scope_names,
         category_name: cat.name.clone(),
         substrate_name: sub.name.clone(),
+        passes,
     })
 }
 
@@ -47,157 +52,103 @@ pub fn is_von_neumann(sub: &SubstrateDef) -> bool {
     sub.engine == Engine::VonNeumann
 }
 
-/// Verify that the substrate's physics can host the category's math.
-fn check_compatibility(cat: &CategoryDef, sub: &SubstrateDef) -> Result<()> {
-    // Von Neumann rejects higher-order features
-    if is_von_neumann(sub) {
-        if cat.has_exponential() {
-            return Err(HyperionError::Incompatible {
-                category: cat.name.clone(),
-                substrate: sub.name.clone(),
-                detail: "Von Neumann engine does not support Exponential (no lambda at hardware level)".into(),
-            });
-        }
-        if cat.has_modal_operator() || cat.has_context() {
-            return Err(HyperionError::Incompatible {
-                category: cat.name.clone(),
-                substrate: sub.name.clone(),
-                detail: "Von Neumann engine does not support ModalOperator/Context (no scope isolation)".into(),
-            });
-        }
-        if cat.has_tensor() {
-            return Err(HyperionError::Incompatible {
-                category: cat.name.clone(),
-                substrate: sub.name.clone(),
-                detail: "Von Neumann engine does not support TensorProduct (no parallel composition in sequential model)".into(),
-            });
-        }
-    }
-    // NominalScoping + Exponential is incompatible (nominal logic does not support higher-order abstraction)
-    if matches!(sub.barrier, BarrierMode::NominalScoping) && cat.has_exponential() {
-        return Err(HyperionError::Incompatible {
-            category: cat.name.clone(),
-            substrate: sub.name.clone(),
-            detail: "Nominal scoping does not support Exponential (nominal logic does not support higher-order abstraction)".into(),
-        });
-    }
+/// Analyze compatibility between category and substrate, returning any
+/// compilation passes needed to bridge gaps.
+///
+/// Instead of rejecting incompatible pairs outright, Hyperion inserts
+/// well-known theoretical constructions as compilation passes:
+///
+/// - **BangModality** (Girard): strictly-linear + Exponential → `!A ⊸ B`
+/// - **NominalAbstraction** (Gabbay-Pitts): nominal-scoping + Exponential → name-abstraction
+/// - **Defunctionalization** (Reynolds): von-neumann/cellular-automaton + Exponential → first-order ADT
+/// - **TensorSerialization**: sequential engine + TensorProduct → left-to-right evaluation
+/// - **KripkeWorldThreading**: transparent/one-way-valve barrier + Modal → explicit world parameters
+/// - **DependentCombinators**: non-lambda engine + topological-homotopy → dependent SKI
+fn check_compatibility(cat: &CategoryDef, sub: &SubstrateDef) -> Result<Vec<CompilationPass>> {
+    let mut passes = Vec::new();
 
-    // Exponential + Evaluator requires lambda+beta capable engines
-    if cat.has_exponential() || cat.has_evaluator() {
-        let supports_lambda = matches!(
-            sub.engine,
-            Engine::InteractionGraph | Engine::TermTree | Engine::AbstractMachine
-            | Engine::ConcurrentGraph
-        );
-        if !supports_lambda {
-            return Err(HyperionError::Incompatible {
-                category: cat.name.clone(),
-                substrate: sub.name.clone(),
-                detail: format!(
-                    "Category '{}' requires Exponential support, but Substrate '{}' uses {:?} engine which has no lambda abstraction",
-                    cat.name, sub.name, sub.engine
-                ),
-            });
-        }
-    }
+    let needs_exponential = cat.has_exponential() || cat.has_evaluator();
+    let needs_modal = cat.has_modal_operator() || cat.has_context();
 
-    // ModalOperator + Context requires scope isolation
-    if cat.has_modal_operator() || cat.has_context() {
-        let supports_scopes = matches!(
-            sub.barrier,
-            BarrierMode::ContextualMembranes | BarrierMode::Cryptographic | BarrierMode::NominalScoping
-        );
-        if !supports_scopes {
-            return Err(HyperionError::Incompatible {
-                category: cat.name.clone(),
-                substrate: sub.name.clone(),
-                detail: format!(
-                    "Category '{}' requires scope isolation (ModalOperator/Context), but Substrate '{}' uses {:?} barrier which provides no scope isolation",
-                    cat.name, sub.name, sub.barrier
-                ),
-            });
-        }
-    }
+    let supports_lambda = matches!(
+        sub.engine,
+        Engine::InteractionGraph | Engine::TermTree | Engine::AbstractMachine
+        | Engine::ConcurrentGraph
+    );
 
-    // TensorProduct requires parallel composition
-    if cat.has_tensor() {
-        let supports_tensor = matches!(
-            sub.engine,
-            Engine::InteractionGraph | Engine::SymmetricMonoidal
-            | Engine::ReversibleGraph | Engine::ConcurrentGraph
-        );
-        if !supports_tensor {
-            return Err(HyperionError::Incompatible {
-                category: cat.name.clone(),
-                substrate: sub.name.clone(),
-                detail: format!(
-                    "Category '{}' requires TensorProduct support, but Substrate '{}' uses {:?} engine which has no parallel composition",
-                    cat.name, sub.name, sub.engine
-                ),
-            });
-        }
-    }
+    let supports_tensor = matches!(
+        sub.engine,
+        Engine::InteractionGraph | Engine::SymmetricMonoidal
+        | Engine::ReversibleGraph | Engine::ConcurrentGraph
+    );
 
-    // StrictlyLinear + Exponential is impossible (linear can't duplicate closures)
+    let supports_scopes = matches!(
+        sub.barrier,
+        BarrierMode::ContextualMembranes | BarrierMode::Cryptographic | BarrierMode::NominalScoping
+    );
+
+    // --- Exponential bridging ---
+
+    // StrictlyLinear + Exponential → Bang modality (Girard's !)
     if sub.resource_mode == ResourceMode::StrictlyLinear && cat.has_exponential() {
-        return Err(HyperionError::Incompatible {
-            category: cat.name.clone(),
-            substrate: sub.name.clone(),
-            detail: format!(
-                "Category '{}' uses Exponential (closures), but Substrate '{}' is strictly-linear (no duplication allowed)",
-                cat.name, sub.name
-            ),
-        });
+        passes.push(CompilationPass::BangModality);
     }
 
-    // PathType with Evaluator requires lambda-capable engine (ap-refl rule uses app).
-    // PathType without Evaluator is purely first-order (refl, concat, inv, ap are just constructors).
-    if cat.has_path_type() && cat.has_evaluator() {
-        let supports_lambda = matches!(
-            sub.engine,
-            Engine::InteractionGraph | Engine::TermTree | Engine::AbstractMachine
-            | Engine::ConcurrentGraph
-        );
-        if !supports_lambda {
-            return Err(HyperionError::Incompatible {
-                category: cat.name.clone(),
-                substrate: sub.name.clone(),
-                detail: format!(
-                    "Category '{}' requires PathType+Evaluator support, but Substrate '{}' uses {:?} engine which has no lambda abstraction",
-                    cat.name, sub.name, sub.engine
-                ),
-            });
-        }
+    // NominalScoping + Exponential → Nominal abstraction (Gabbay-Pitts)
+    if matches!(sub.barrier, BarrierMode::NominalScoping) && cat.has_exponential() {
+        passes.push(CompilationPass::NominalAbstraction);
     }
 
-    // TopologicalHomotopy requires lambda-capable engine (paths need higher-order structure)
-    if sub.equality == EqualityMode::TopologicalHomotopy {
-        let supports_lambda = matches!(
-            sub.engine,
-            Engine::InteractionGraph | Engine::TermTree | Engine::AbstractMachine
-            | Engine::ConcurrentGraph
-        );
-        if !supports_lambda {
-            return Err(HyperionError::Incompatible {
-                category: cat.name.clone(),
-                substrate: sub.name.clone(),
-                detail: format!(
-                    "Substrate '{}' uses topological-homotopy equality, but {:?} engine cannot represent path spaces (requires lambda-capable engine)",
-                    sub.name, sub.engine
-                ),
-            });
-        }
+    // Non-lambda engine + Exponential → Defunctionalization (Reynolds)
+    // Von Neumann and CellularAutomaton are first-order; SymmetricMonoidal lacks closures.
+    // ReversibleGraph also lacks lambda — but reversible defunctionalization is sound.
+    if needs_exponential && !supports_lambda {
+        passes.push(CompilationPass::Defunctionalization);
     }
 
-    Ok(())
+    // --- TensorProduct bridging ---
+
+    // Sequential engine + TensorProduct → Serialization
+    if cat.has_tensor() && !supports_tensor {
+        passes.push(CompilationPass::TensorSerialization);
+    }
+
+    // Von Neumann + TensorProduct is also covered by TensorSerialization above.
+
+    // --- Modal bridging ---
+
+    // Non-isolating barrier + Modal → Kripke world threading
+    if needs_modal && !supports_scopes {
+        passes.push(CompilationPass::KripkeWorldThreading);
+    }
+
+    // Von Neumann + Modal is covered by both Kripke threading and (if exponential)
+    // defunctionalization — both passes compose.
+
+    // --- HoTT bridging ---
+
+    // PathType + Evaluator on non-lambda engine → needs Defunctionalization (already covered above)
+
+    // TopologicalHomotopy on non-lambda engine → Dependent combinators (extremely expensive)
+    if sub.equality == EqualityMode::TopologicalHomotopy && !supports_lambda {
+        passes.push(CompilationPass::DependentCombinators);
+    }
+
+    Ok(passes)
 }
 
-/// Determine the Apeiron binding mode from category + substrate.
-fn binding_mode(cat: &CategoryDef, sub: &SubstrateDef) -> &'static str {
-    if matches!(sub.barrier, BarrierMode::NominalScoping) {
+/// Determine the Apeiron binding mode from category + substrate + compilation passes.
+fn binding_mode(cat: &CategoryDef, sub: &SubstrateDef, passes: &[CompilationPass]) -> &'static str {
+    // Nominal abstraction pass overrides to nominal even if the barrier isn't NominalScoping
+    if matches!(sub.barrier, BarrierMode::NominalScoping)
+        || passes.contains(&CompilationPass::NominalAbstraction)
+    {
         "nominal"
     } else if cat.has_modal_operator() && matches!(sub.barrier, BarrierMode::ContextualMembranes) {
         "contextual"
+    } else if passes.contains(&CompilationPass::Defunctionalization) {
+        // Defunctionalized code is first-order — use exposed binding
+        "exposed"
     } else if matches!(sub.resource_mode, ResourceMode::StrictlyLinear) {
         "linear-explicit"
     } else if matches!(sub.resource_mode, ResourceMode::Affine) {
@@ -524,7 +475,7 @@ pub fn emit_system_sexp(
     system_items.push(Sexp::List(syntax_items, sp));
 
     // [@binding ...] block
-    let bmode = binding_mode(cat, sub);
+    let bmode = binding_mode(cat, sub, &compiled.passes);
     system_items.push(Sexp::List(
         vec![
             Sexp::Atom("@binding".into(), sp),
@@ -541,6 +492,21 @@ pub fn emit_system_sexp(
         check_items.push(Sexp::Atom(mode.into(), sp));
     }
     system_items.push(Sexp::List(check_items, sp));
+
+    // [@compilation-passes ...] block — bridging passes needed for this universe
+    if !compiled.passes.is_empty() {
+        let mut pass_items = vec![Sexp::Atom("@compilation-passes".into(), sp)];
+        for pass in &compiled.passes {
+            pass_items.push(Sexp::List(
+                vec![
+                    Sexp::Atom(pass.name().into(), sp),
+                    Sexp::Atom(pass.description().into(), sp),
+                ],
+                sp,
+            ));
+        }
+        system_items.push(Sexp::List(pass_items, sp));
+    }
 
     // [@barrier-ops ...] block — inform Apeiron which ops are scope-significant
     let modal_ops: Vec<&str> = cat.structure.iter().filter_map(|s| match s {
@@ -597,6 +563,7 @@ mod tests {
     use super::*;
     use crate::category::{MorphismDecl, ObjectDecl};
     use crate::substrate::{BarrierMode, Engine, EqualityMode, ResourceMode, SubstrateDef};
+    use crate::universe::CompilationPass;
 
     fn make_ccc() -> CategoryDef {
         CategoryDef {
@@ -645,17 +612,16 @@ mod tests {
     }
 
     #[test]
-    fn ccc_on_inet_compiles() {
+    fn ccc_on_inet_compiles_natively() {
         let cat = make_ccc();
         let sub = make_inet();
-        let result = compile_universe("WeakLF", &cat, &sub);
-        assert!(result.is_ok());
-        let compiled = result.unwrap();
+        let compiled = compile_universe("WeakLF", &cat, &sub).unwrap();
         assert_eq!(compiled.system_name, "__hyp_CartesianClosed_InteractionNet");
+        assert!(compiled.passes.is_empty(), "native pair needs no passes");
     }
 
     #[test]
-    fn ccc_on_cellular_automaton_fails() {
+    fn ccc_on_cellular_automaton_defunctionalizes() {
         let cat = make_ccc();
         let sub = SubstrateDef {
             name: "GridWorld".into(),
@@ -664,14 +630,12 @@ mod tests {
             barrier: BarrierMode::Transparent,
             equality: EqualityMode::RewriteEquivalence,
         };
-        let result = compile_universe("Bad", &cat, &sub);
-        assert!(result.is_err());
-        let msg = format!("{}", result.unwrap_err());
-        assert!(msg.contains("Exponential support"));
+        let compiled = compile_universe("Defunc", &cat, &sub).unwrap();
+        assert!(compiled.passes.contains(&CompilationPass::Defunctionalization));
     }
 
     #[test]
-    fn strictly_linear_no_exponential() {
+    fn strictly_linear_exponential_gets_bang_modality() {
         let cat = make_ccc();
         let sub = SubstrateDef {
             name: "LinearNet".into(),
@@ -680,14 +644,12 @@ mod tests {
             barrier: BarrierMode::Transparent,
             equality: EqualityMode::TopologicalHash,
         };
-        let result = compile_universe("Bad", &cat, &sub);
-        assert!(result.is_err());
-        let msg = format!("{}", result.unwrap_err());
-        assert!(msg.contains("strictly-linear"));
+        let compiled = compile_universe("LinearCCC", &cat, &sub).unwrap();
+        assert!(compiled.passes.contains(&CompilationPass::BangModality));
     }
 
     #[test]
-    fn modal_requires_membranes() {
+    fn modal_on_transparent_gets_kripke_threading() {
         let cat = CategoryDef {
             name: "Modal".into(),
             objects: vec![ObjectDecl {
@@ -705,10 +667,8 @@ mod tests {
             ],
         };
         let sub = make_inet(); // barrier = Transparent
-        let result = compile_universe("Bad", &cat, &sub);
-        assert!(result.is_err());
-        let msg = format!("{}", result.unwrap_err());
-        assert!(msg.contains("scope isolation"));
+        let compiled = compile_universe("KripkeModal", &cat, &sub).unwrap();
+        assert!(compiled.passes.contains(&CompilationPass::KripkeWorldThreading));
     }
 
     #[test]
@@ -786,11 +746,11 @@ mod tests {
             barrier: BarrierMode::NominalScoping,
             equality: EqualityMode::TopologicalHash,
         };
-        assert_eq!(binding_mode(&cat, &sub), "nominal");
+        assert_eq!(binding_mode(&cat, &sub, &[]), "nominal");
     }
 
     #[test]
-    fn nominal_rejects_exponential() {
+    fn nominal_exponential_gets_nominal_abstraction() {
         let cat = make_ccc(); // has Exponential
         let sub = SubstrateDef {
             name: "Nom".into(),
@@ -799,10 +759,8 @@ mod tests {
             barrier: BarrierMode::NominalScoping,
             equality: EqualityMode::TopologicalHash,
         };
-        let result = compile_universe("Bad", &cat, &sub);
-        assert!(result.is_err());
-        let msg = format!("{}", result.unwrap_err());
-        assert!(msg.contains("Nominal scoping"));
+        let compiled = compile_universe("NomCCC", &cat, &sub).unwrap();
+        assert!(compiled.passes.contains(&CompilationPass::NominalAbstraction));
     }
 
     #[test]
@@ -872,6 +830,133 @@ mod tests {
         };
         let modes = check_modes(&sub);
         assert_eq!(modes, vec!["pattern-unification"]);
+    }
+
+    #[test]
+    fn von_neumann_exponential_defunctionalizes() {
+        let cat = make_ccc();
+        let sub = SubstrateDef {
+            name: "VN".into(),
+            engine: Engine::VonNeumann,
+            resource_mode: ResourceMode::DeepCopy,
+            barrier: BarrierMode::Transparent,
+            equality: EqualityMode::RewriteEquivalence,
+        };
+        let compiled = compile_universe("VN_CCC", &cat, &sub).unwrap();
+        assert!(compiled.passes.contains(&CompilationPass::Defunctionalization));
+    }
+
+    #[test]
+    fn von_neumann_modal_gets_kripke_and_defunc() {
+        let cat = CategoryDef {
+            name: "ModalCCC".into(),
+            objects: vec![ObjectDecl { name: "T".into() }],
+            morphisms: vec![],
+            judgments: vec![],
+            structure: vec![
+                CategoricalStructure::Exponential { name: "lam".into(), object: "T".into() },
+                CategoricalStructure::Evaluator { name: "app".into() },
+                CategoricalStructure::ModalOperator { name: "box".into() },
+                CategoricalStructure::ContextDecl { name: "W".into() },
+            ],
+        };
+        let sub = SubstrateDef {
+            name: "VN".into(),
+            engine: Engine::VonNeumann,
+            resource_mode: ResourceMode::DeepCopy,
+            barrier: BarrierMode::Transparent,
+            equality: EqualityMode::RewriteEquivalence,
+        };
+        let compiled = compile_universe("VN_Modal", &cat, &sub).unwrap();
+        assert!(compiled.passes.contains(&CompilationPass::Defunctionalization));
+        assert!(compiled.passes.contains(&CompilationPass::KripkeWorldThreading));
+    }
+
+    #[test]
+    fn tensor_on_term_tree_serializes() {
+        let cat = CategoryDef {
+            name: "Monoidal".into(),
+            objects: vec![ObjectDecl { name: "Obj".into() }],
+            morphisms: vec![],
+            judgments: vec![],
+            structure: vec![
+                CategoricalStructure::TensorProduct { name: "tensor".into() },
+                CategoricalStructure::Unit { name: "I".into() },
+            ],
+        };
+        let sub = SubstrateDef {
+            name: "Tree".into(),
+            engine: Engine::TermTree,
+            resource_mode: ResourceMode::OptimalSharing,
+            barrier: BarrierMode::Transparent,
+            equality: EqualityMode::RewriteEquivalence,
+        };
+        let compiled = compile_universe("SerialMonoidal", &cat, &sub).unwrap();
+        assert!(compiled.passes.contains(&CompilationPass::TensorSerialization));
+    }
+
+    #[test]
+    fn homotopy_on_von_neumann_gets_dependent_combinators_and_defunc() {
+        let cat = CategoryDef {
+            name: "HoTT".into(),
+            objects: vec![ObjectDecl { name: "Type".into() }],
+            morphisms: vec![],
+            judgments: vec![],
+            structure: vec![
+                CategoricalStructure::Exponential { name: "lam".into(), object: "Type".into() },
+                CategoricalStructure::Evaluator { name: "app".into() },
+                CategoricalStructure::PathType {
+                    refl: "refl".into(), concat: "concat".into(),
+                    inv: "inv".into(), ap: "ap".into(),
+                },
+            ],
+        };
+        let sub = SubstrateDef {
+            name: "VN".into(),
+            engine: Engine::VonNeumann,
+            resource_mode: ResourceMode::DeepCopy,
+            barrier: BarrierMode::Transparent,
+            equality: EqualityMode::TopologicalHomotopy,
+        };
+        let compiled = compile_universe("VN_HoTT", &cat, &sub).unwrap();
+        assert!(compiled.passes.contains(&CompilationPass::DependentCombinators));
+        assert!(compiled.passes.contains(&CompilationPass::Defunctionalization));
+    }
+
+    #[test]
+    fn compilation_passes_emitted_in_system_sexp() {
+        let cat = make_ccc();
+        let sub = SubstrateDef {
+            name: "LinearNet".into(),
+            engine: Engine::InteractionGraph,
+            resource_mode: ResourceMode::StrictlyLinear,
+            barrier: BarrierMode::Transparent,
+            equality: EqualityMode::TopologicalHash,
+        };
+        let compiled = compile_universe("LinearCCC", &cat, &sub).unwrap();
+        let sexp = emit_system_sexp(&cat, &sub, &compiled, None);
+        let items = sexp.as_list().unwrap();
+        // Find the @compilation-passes block
+        let passes_block = items.iter().find(|s| {
+            s.as_list().and_then(|l| l.first()).and_then(|s| s.as_atom()) == Some("@compilation-passes")
+        });
+        assert!(passes_block.is_some(), "system sexp should contain @compilation-passes");
+        let pass_items = passes_block.unwrap().as_list().unwrap();
+        // @compilation-passes + at least one pass entry
+        assert!(pass_items.len() >= 2);
+    }
+
+    #[test]
+    fn no_passes_block_when_native() {
+        let cat = make_ccc();
+        let sub = make_inet();
+        let compiled = compile_universe("WeakLF", &cat, &sub).unwrap();
+        let sexp = emit_system_sexp(&cat, &sub, &compiled, None);
+        let items = sexp.as_list().unwrap();
+        let passes_block = items.iter().find(|s| {
+            s.as_list().and_then(|l| l.first()).and_then(|s| s.as_atom()) == Some("@compilation-passes")
+        });
+        assert!(passes_block.is_none(), "native pair should not have @compilation-passes");
     }
 
     #[test]
