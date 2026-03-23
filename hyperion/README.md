@@ -60,7 +60,7 @@ It strips everything away until all you are left with is the pure relationship b
 
 A **Category** declares pure mathematical structure: what your sorts are (Objects), what operations exist (Morphisms), what judgment forms are available (Judgments), and what higher structure is present (Exponentials for lambda, TensorProducts for parallel composition, ModalOperators for necessity, PathType for HoTT, Preorder for reflexive relations).
 
-A **Substrate** declares computational physics: what engine executes your terms (interaction graphs, term trees, cellular automata, symmetric monoidal nets, von Neumann machines), how resources are managed (optimal sharing, linear, affine, deep copy), how scoping works (transparent, contextual membranes, cryptographic), and what notion of equality the system uses (rewriting, hashing, unification, homotopy, equality saturation, proof-relevant).
+A **Substrate** declares computational physics: what engine executes your terms (interaction graphs, term trees, cellular automata, symmetric monoidal nets, von Neumann machines, network-rpc clusters), how resources are managed (optimal sharing, linear, affine, deep copy, eventually-consistent), how scoping works (transparent, contextual membranes, cryptographic, network partitions), and what notion of equality the system uses (rewriting, hashing, unification, homotopy, equality saturation, proof-relevant).
 
 A **Universe** binds a Category to a Substrate. Hyperion checks compatibility, then compiles both into an [Apeiron](../apeiron/) system configuration with the correct binding mode, checking strategy, and scope declarations.
 
@@ -863,7 +863,7 @@ pub fn plus(nat: Nat, nat_2: Nat) -> Nat {
 }
 ```
 
-Von Neumann substrates reject higher-order features (Exponential, ModalOperator, TensorProduct) since sequential machines can't natively support closures, scope isolation, or parallel composition. This backend is an optional "applied" feature --- the primary Hyperion experience is the abstract categorical framework.
+Von Neumann and Network RPC substrates are first-order engines that bypass Apeiron. They capture rewrite rules directly as pattern-matching functions. When higher-order features (Exponential, ModalOperator, TensorProduct) are present, compilation passes bridge the gap automatically (Defunctionalization, KripkeWorldThreading, etc.).
 
 ## Compatibility & Compilation Passes
 
@@ -891,8 +891,11 @@ Hyperion never rejects a category+substrate pair. Instead, it analyzes the gap b
 | **TensorSerialization** | L-R evaluation | Sequential engine + TensorProduct --- tensor operands evaluated left-to-right (sound for pure operands) |
 | **KripkeWorldThreading** | Kripke semantics | Non-isolating barrier + Modal --- `□A` compiled to `∀w.A(w)` with explicit world parameter threading |
 | **DependentCombinators** | Dependent SKI calculus | Non-lambda engine + topological-homotopy --- path spaces compiled to dependent combinatory logic (extremely expensive) |
+| **RpcSerialization** | Wire serialization | NetworkPartition barrier --- all data crossing partition boundaries must be serializable to a wire format |
+| **ConsensusReplication** | CRDTs / Raft / Paxos | EventuallyConsistent resource mode --- operations must be commutative (CRDT) or totally ordered |
+| **PartitionTolerance** | CAP theorem | NetworkPartition + ModalOperator --- `□A` compiled to AP/CP availability trade-off points |
 
-Passes compose naturally. For example, a Von Neumann engine with a CCC + Modal category gets both `Defunctionalization` and `KripkeWorldThreading`.
+Passes compose naturally. For example, a Von Neumann engine with a CCC + Modal category gets both `Defunctionalization` and `KripkeWorldThreading`. A distributed modal consensus system gets `RpcSerialization` + `ConsensusReplication` + `PartitionTolerance` --- the CAP theorem enforced at compile time.
 
 The compiled system S-expression includes an `@compilation-passes` annotation block listing all required passes, so downstream tools (and humans) can see exactly what bridges are in play.
 
@@ -1061,6 +1064,8 @@ User theories can also declare `@law` equational laws (bidirectional in e-graph)
 | `catlab-features.hyp` | Proof-term extraction, assert-exists, proof-relevant mode, kernel cubical reduction |
 | `weak-equivalence.hyp` | WeakEquivalence directive --- roundtrip maps verified via e-graph paths |
 | `tactics-demo.hyp` | Nested parameterized theories, tactic proofs (apply/auto/assumption), assert-refuted, forward-chaining refutation |
+| `compilation-passes.hyp` | All 6 single-machine compilation passes with working theories and proofs |
+| `distributed-actor.hyp` | Network as a substrate: CRDT key-value store, CAP-aware modal consensus, local→distributed functor transport |
 
 ## Architecture
 
@@ -1088,7 +1093,7 @@ hyperion/
     integration.rs   107 integration tests
 ```
 
-Hyperion depends on [Apeiron](../apeiron/) for term rewriting, beta reduction, and oracle checking. The Von Neumann backend is the only path that bypasses Apeiron entirely.
+Hyperion depends on [Apeiron](../apeiron/) for term rewriting, beta reduction, and oracle checking. The Von Neumann and Network RPC backends are first-order paths that bypass Apeiron.
 
 ## CLI Reference
 
@@ -1109,10 +1114,10 @@ hyperion kompile <file.hyp> --theory <name> -o <output_dir/>
 
 ## Tests
 
-174 tests (48 unit + 126 integration), covering:
+178 tests (48 unit + 130 integration), covering:
 
 - Category/substrate/universe parsing and validation
-- Compilation pass insertion for all 6 bridging strategies (bang modality, nominal abstraction, defunctionalization, tensor serialization, Kripke threading, dependent combinators)
+- Compilation pass insertion for all 9 bridging strategies (bang modality, nominal abstraction, defunctionalization, tensor serialization, Kripke threading, dependent combinators, RPC serialization, consensus replication, partition tolerance)
 - Functor transport with normalization
 - Functor equational theory verification (VerifyFunctor, both named and unnamed rules)
 - Natural transformation and adjunction validation

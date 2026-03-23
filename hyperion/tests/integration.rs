@@ -45,6 +45,58 @@ fn example_compilation_passes() {
     run_file("examples/compilation-passes.hyp");
 }
 
+#[test]
+fn example_distributed_actor() {
+    run_file("examples/distributed-actor.hyp");
+}
+
+#[test]
+fn distributed_passes_rpc_and_consensus() {
+    use hyperion::universe::CompilationPass;
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category KV [Object Key] [Object Value] [Object Store]
+            [Morphism get :domain [Store Key] :codomain Value]
+            [Morphism put :domain [Store Key Value] :codomain Store]
+        ]
+        [Substrate Cluster
+            @engine network-rpc
+            @resource-mode eventually-consistent
+            @barrier network-partition
+            @equality rewrite-equivalence
+        ]
+        [Universe DistKV :category KV :substrate Cluster]
+    "#;
+    process_all(&mut session, input).unwrap();
+    let compiled = &session.universes["DistKV"];
+    assert!(compiled.passes.contains(&CompilationPass::RpcSerialization));
+    assert!(compiled.passes.contains(&CompilationPass::ConsensusReplication));
+}
+
+#[test]
+fn distributed_modal_gets_partition_tolerance() {
+    use hyperion::universe::CompilationPass;
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category DistModal [Object Prop]
+            [ModalOperator consensus]
+            [Context Replica]
+        ]
+        [Substrate Cluster
+            @engine interaction-graph
+            @resource-mode eventually-consistent
+            @barrier network-partition
+            @equality rewrite-equivalence
+        ]
+        [Universe CAPWorld :category DistModal :substrate Cluster]
+    "#;
+    process_all(&mut session, input).unwrap();
+    let compiled = &session.universes["CAPWorld"];
+    assert!(compiled.passes.contains(&CompilationPass::RpcSerialization));
+    assert!(compiled.passes.contains(&CompilationPass::ConsensusReplication));
+    assert!(compiled.passes.contains(&CompilationPass::PartitionTolerance));
+}
+
 // ============================================================
 // Category parsing tests
 // ============================================================

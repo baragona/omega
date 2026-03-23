@@ -34,6 +34,19 @@ pub enum CompilationPass {
     /// Dependent combinatory logic: Π-types and path spaces compiled to
     /// a dependent SKI combinator calculus (extremely expensive).
     DependentCombinators,
+    /// RPC serialization: all data crossing network partition barriers must be
+    /// serialized to a wire format. Generates proof obligation that every
+    /// cross-partition type is an instance of a Serializable category.
+    RpcSerialization,
+    /// Consensus replication: eventually-consistent resources require conflict
+    /// resolution. Operations must be commutative (CRDT-compatible) or
+    /// totally ordered (Raft/Paxos). Generates commutativity proof obligations.
+    ConsensusReplication,
+    /// Partition tolerance: modal operators on network-partition barriers
+    /// become availability/consistency trade-off points. Each □A is compiled
+    /// to "A is available at all non-partitioned replicas" (AP) or
+    /// "A is consistent across all replicas before proceeding" (CP).
+    PartitionTolerance,
 }
 
 impl CompilationPass {
@@ -46,6 +59,9 @@ impl CompilationPass {
             Self::TensorSerialization => "tensor-serialization",
             Self::KripkeWorldThreading => "kripke-world-threading",
             Self::DependentCombinators => "dependent-combinators",
+            Self::RpcSerialization => "rpc-serialization",
+            Self::ConsensusReplication => "consensus-replication",
+            Self::PartitionTolerance => "partition-tolerance",
         }
     }
 
@@ -58,6 +74,9 @@ impl CompilationPass {
             Self::TensorSerialization => "tensor products serialized left-to-right (sound for pure operands)",
             Self::KripkeWorldThreading => "Kripke compilation: modal scopes threaded as explicit world parameters",
             Self::DependentCombinators => "dependent SKI combinator translation for path spaces (expensive)",
+            Self::RpcSerialization => "RPC serialization: cross-partition data must be wire-serializable",
+            Self::ConsensusReplication => "consensus replication: operations must be commutative (CRDT) or totally ordered (Raft/Paxos)",
+            Self::PartitionTolerance => "partition tolerance: modal operators compiled to AP/CP availability trade-offs",
         }
     }
 }

@@ -1,0 +1,159 @@
+;; Hyperion Example: Distributed Systems as a Substrate
+;;
+;; The network is just another physics engine. Hyperion compiles pure
+;; business logic to distributed systems by inserting three passes:
+;;
+;;   1. RpcSerialization    — data crossing partitions must be wire-serializable
+;;   2. ConsensusReplication — operations on replicated state must be commutative
+;;   3. PartitionTolerance   — modal operators become AP/CP trade-off points
+;;
+;; This makes Hyperion the first language where the CAP theorem is enforced
+;; at compile time via category theory.
+;;
+;; Run: hyperion check examples/distributed-actor.hyp -v
+
+;; =================================================================
+;; Part 1: A simple key-value store category
+;; =================================================================
+
+[Category KVStore
+  [Object Key]
+  [Object Value]
+  [Object Store]
+  [Morphism get    :domain [Store Key]       :codomain Value]
+  [Morphism put    :domain [Store Key Value] :codomain Store]
+  [Morphism delete :domain [Store Key]       :codomain Store]
+  [Morphism merge  :domain [Store Store]     :codomain Store]
+]
+
+;; =================================================================
+;; Part 2: The distributed substrate
+;; =================================================================
+
+;; The cluster: network-rpc engine, eventually-consistent resources,
+;; network-partition barrier (messages can be lost/delayed/reordered).
+[Substrate DistributedCluster
+  @engine network-rpc
+  @resource-mode eventually-consistent
+  @barrier network-partition
+  @equality rewrite-equivalence
+]
+
+;; Compile: Hyperion inserts RpcSerialization + ConsensusReplication
+[Universe DistributedKV :category KVStore :substrate DistributedCluster]
+
+;; The theory defines CRDT-compatible merge semantics.
+;; ConsensusReplication pass requires these operations to be commutative.
+[Theory KVRules :in DistributedKV
+  ;; Idempotent merge (required for at-least-once delivery)
+  [@rule merge-idem [merge ?a ?a] ==> ?a]
+
+  ;; Delete-delete idempotence
+  [@rule del-idem [delete [delete ?s ?k] ?k] ==> [delete ?s ?k]]
+]
+
+;; =================================================================
+;; Part 3: A modal distributed category (CAP-aware)
+;; =================================================================
+
+;; Adding ModalOperator lets us reason about what is "known" at each
+;; replica. With network-partition barrier, this triggers PartitionTolerance:
+;; each □A becomes an availability/consistency trade-off point.
+
+[Category DistributedConsensus
+  [Object Prop]
+  [Object Node]
+  [Morphism and :domain [Prop Prop] :codomain Prop]
+
+  ;; □A = "all reachable replicas agree on A"
+  [ModalOperator consensus]
+
+  ;; Each node is a separate partition context
+  [Context Replica]
+]
+
+;; For the modal consensus category, we use an interaction-graph engine
+;; (lambda-capable, needed for modal reasoning) but keep the distributed
+;; barrier and resource modes. The compilation passes still fire.
+[Substrate DistributedReasoner
+  @engine interaction-graph
+  @resource-mode eventually-consistent
+  @barrier network-partition
+  @equality rewrite-equivalence
+]
+
+[Universe CAPWorld :category DistributedConsensus :substrate DistributedReasoner]
+
+[Theory CAPRules :in CAPWorld
+  [const written Prop]
+  [const readable Prop]
+  [const consistent Prop]
+
+  ;; Consensus is idempotent (agreeing on agreement is agreement)
+  [@rule consensus-idem [consensus [consensus ?p]] ==> [consensus ?p]]
+
+  ;; Consensus distributes over conjunction (if we agree on A and B
+  ;; separately, we agree on A∧B) — the key distributed systems law
+  [@rule consensus-dist [consensus [and ?p ?q]] ==> [and [consensus ?p] [consensus ?q]]]
+]
+
+[Proofs CAPCheck :in CAPRules
+  [assert-eq cap-idem [consensus [consensus written]] [consensus written]]
+  [assert-eq cap-dist [consensus [and written readable]] [and [consensus written] [consensus readable]]]
+]
+
+;; =================================================================
+;; Part 4: Functor from pure logic to distributed system
+;; =================================================================
+
+;; The pure "sandbox" — same math, local physics
+[Substrate LocalMachine
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality equality-saturation
+]
+
+[Universe LocalKV :category KVStore :substrate LocalMachine]
+
+;; Transport: verify that local KV semantics survive network distribution.
+;; The functor maps between substrates; Hyperion checks that the rewrite
+;; rules are preserved across the physics boundary.
+[Functor KVTransport
+  :from LocalMachine
+  :to DistributedCluster
+  :map-object [Key Key]
+  :map-object [Value Value]
+  :map-object [Store Store]
+  :map-morphism [get get]
+  :map-morphism [put put]
+  :map-morphism [delete delete]
+  :map-morphism [merge merge]
+]
+
+;; =================================================================
+;; Part 5: Bonus — pure logic prototyped locally
+;; =================================================================
+
+[Theory LocalKVRules :in LocalKV
+  [const my-store Store]
+  [const k1 Key]
+  [const k2 Key]
+  [const v1 Value]
+  [const v2 Value]
+
+  ;; Same CRDT rules as the distributed version
+  [@rule merge-idem [merge ?a ?a] ==> ?a]
+  [@rule del-idem [delete [delete ?s ?k] ?k] ==> [delete ?s ?k]]
+]
+
+[Proofs LocalCheck :in LocalKVRules
+  ;; Prototype locally with e-graph — verify merge commutativity
+  [assert-eq local-merge-idem [merge my-store my-store] my-store]
+  [assert-eq local-del-idem [delete [delete my-store k1] k1] [delete my-store k1]]
+]
+
+;; The dev-to-prod story:
+;; 1. Prototype in LocalKV (e-graph finds missing lemmas, GC'd resources)
+;; 2. VerifyFunctor proves your logic survives distribution
+;; 3. Kompile to network-rpc target with serialization + consensus

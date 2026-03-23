@@ -13,6 +13,9 @@ pub enum Engine {
     VonNeumann,
     ReversibleGraph,
     ConcurrentGraph,
+    /// Distributed RPC: first-order like VonNeumann, but execution spans
+    /// network boundaries. Requires serialization of all cross-partition data.
+    NetworkRpc,
 }
 
 /// Resource management mode.
@@ -23,6 +26,9 @@ pub enum ResourceMode {
     Affine,
     Relevant,
     DeepCopy,
+    /// Eventually-consistent: replicas may diverge temporarily but converge.
+    /// Models CRDTs, last-writer-wins registers, and similar distributed data structures.
+    EventuallyConsistent,
 }
 
 /// Barrier/scoping mode.
@@ -34,6 +40,9 @@ pub enum BarrierMode {
     TemporalPhase,
     Cryptographic,
     NominalScoping,
+    /// Network partition: physical isolation between nodes. Data crossing
+    /// this barrier must be serializable. Models the "P" in CAP theorem.
+    NetworkPartition,
 }
 
 /// Equality checking mode.
@@ -172,10 +181,11 @@ fn parse_engine(val: &str, substrate: &str) -> Result<Engine> {
         "von-neumann" => Ok(Engine::VonNeumann),
         "reversible-graph" => Ok(Engine::ReversibleGraph),
         "concurrent-graph" => Ok(Engine::ConcurrentGraph),
+        "network-rpc" => Ok(Engine::NetworkRpc),
         _ => Err(HyperionError::ParseError {
             block: "Substrate".into(),
             detail: format!(
-                "Substrate '{}': unknown engine '{}'. Expected one of: interaction-graph, term-tree, symmetric-monoidal, cellular-automaton, abstract-machine, von-neumann, reversible-graph, concurrent-graph",
+                "Substrate '{}': unknown engine '{}'. Expected one of: interaction-graph, term-tree, symmetric-monoidal, cellular-automaton, abstract-machine, von-neumann, reversible-graph, concurrent-graph, network-rpc",
                 substrate, val
             ),
         }),
@@ -189,10 +199,11 @@ fn parse_resource_mode(val: &str, substrate: &str) -> Result<ResourceMode> {
         "affine" => Ok(ResourceMode::Affine),
         "relevant" => Ok(ResourceMode::Relevant),
         "deep-copy" => Ok(ResourceMode::DeepCopy),
+        "eventually-consistent" => Ok(ResourceMode::EventuallyConsistent),
         _ => Err(HyperionError::ParseError {
             block: "Substrate".into(),
             detail: format!(
-                "Substrate '{}': unknown resource-mode '{}'. Expected one of: optimal-sharing, strictly-linear, affine, relevant, deep-copy",
+                "Substrate '{}': unknown resource-mode '{}'. Expected one of: optimal-sharing, strictly-linear, affine, relevant, deep-copy, eventually-consistent",
                 substrate, val
             ),
         }),
@@ -207,10 +218,11 @@ fn parse_barrier_mode(val: &str, substrate: &str) -> Result<BarrierMode> {
         "temporal-phase" => Ok(BarrierMode::TemporalPhase),
         "cryptographic" => Ok(BarrierMode::Cryptographic),
         "nominal-scoping" => Ok(BarrierMode::NominalScoping),
+        "network-partition" => Ok(BarrierMode::NetworkPartition),
         _ => Err(HyperionError::ParseError {
             block: "Substrate".into(),
             detail: format!(
-                "Substrate '{}': unknown barrier '{}'. Expected one of: transparent, contextual-membranes, one-way-valve, temporal-phase, cryptographic, nominal-scoping",
+                "Substrate '{}': unknown barrier '{}'. Expected one of: transparent, contextual-membranes, one-way-valve, temporal-phase, cryptographic, nominal-scoping, network-partition",
                 substrate, val
             ),
         }),

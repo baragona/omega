@@ -47,6 +47,12 @@ pub fn compile_universe(
     })
 }
 
+/// Check if a substrate uses a first-order engine (VonNeumann or NetworkRpc).
+/// These engines bypass Apeiron and use direct rewrite-rule theories.
+pub fn is_first_order_engine(sub: &SubstrateDef) -> bool {
+    matches!(sub.engine, Engine::VonNeumann | Engine::NetworkRpc)
+}
+
 /// Check if a substrate uses the Von Neumann engine.
 pub fn is_von_neumann(sub: &SubstrateDef) -> bool {
     sub.engine == Engine::VonNeumann
@@ -84,7 +90,8 @@ fn check_compatibility(cat: &CategoryDef, sub: &SubstrateDef) -> Result<Vec<Comp
 
     let supports_scopes = matches!(
         sub.barrier,
-        BarrierMode::ContextualMembranes | BarrierMode::Cryptographic | BarrierMode::NominalScoping
+        BarrierMode::ContextualMembranes | BarrierMode::Cryptographic
+        | BarrierMode::NominalScoping | BarrierMode::NetworkPartition
     );
 
     // --- Exponential bridging ---
@@ -132,6 +139,25 @@ fn check_compatibility(cat: &CategoryDef, sub: &SubstrateDef) -> Result<Vec<Comp
     // TopologicalHomotopy on non-lambda engine → Dependent combinators (extremely expensive)
     if sub.equality == EqualityMode::TopologicalHomotopy && !supports_lambda {
         passes.push(CompilationPass::DependentCombinators);
+    }
+
+    // --- Distributed systems bridging ---
+
+    // NetworkPartition barrier → RPC serialization for any data crossing the partition
+    if matches!(sub.barrier, BarrierMode::NetworkPartition) {
+        passes.push(CompilationPass::RpcSerialization);
+    }
+
+    // EventuallyConsistent resource mode → consensus replication
+    // Operations must be commutative (CRDT) or totally ordered (Raft/Paxos)
+    if matches!(sub.resource_mode, ResourceMode::EventuallyConsistent) {
+        passes.push(CompilationPass::ConsensusReplication);
+    }
+
+    // Modal operators on network-partition → partition tolerance (CAP theorem)
+    // □A becomes an availability/consistency trade-off point
+    if needs_modal && matches!(sub.barrier, BarrierMode::NetworkPartition) {
+        passes.push(CompilationPass::PartitionTolerance);
     }
 
     Ok(passes)

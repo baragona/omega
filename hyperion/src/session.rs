@@ -38,7 +38,7 @@ use crate::compile;
 use crate::error::{HyperionError, Result};
 use crate::functor::{self, FunctorDef};
 use crate::nat_trans::{self, NatTransDef};
-use crate::substrate::{self, Engine, SubstrateDef};
+use crate::substrate::{self, SubstrateDef};
 use crate::universe::{self, CompiledUniverse};
 
 /// A Von Neumann theory: rewrite rules on first-order data, no Apeiron involvement.
@@ -695,11 +695,11 @@ impl HyperionSession {
         }
     }
 
-    /// Check if a universe uses a Von Neumann substrate.
+    /// Check if a universe uses a first-order engine (Von Neumann or NetworkRpc).
     fn is_vn_universe(&self, universe_name: &str) -> bool {
         if let Some(compiled) = self.universes.get(universe_name) {
             if let Some(sub) = self.substrates.get(&compiled.substrate_name) {
-                return sub.engine == Engine::VonNeumann;
+                return compile::is_first_order_engine(sub);
             }
         }
         false
