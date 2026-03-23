@@ -152,6 +152,11 @@ pub struct Session {
     pub theory_ops: HashMap<String, Vec<String>>,
     /// Per-theory raw @rule declarations (for alias renaming at import).
     pub raw_theory_rules: HashMap<String, Vec<RewriteRule>>,
+    /// Optional e-graph fuel override: (iter_limit, node_limit).
+    /// When set, all e-graph calls use these limits instead of defaults (30, 10_000).
+    pub egraph_fuel: Option<(usize, usize)>,
+    /// Stored proof terms from extract-proof assertions, keyed by assertion name.
+    pub proof_terms: HashMap<String, egraph::ProofTerm>,
 }
 
 impl Session {
@@ -175,6 +180,16 @@ impl Session {
             templates: HashMap::new(),
             theory_ops: HashMap::new(),
             raw_theory_rules: HashMap::new(),
+            egraph_fuel: None,
+            proof_terms: HashMap::new(),
+        }
+    }
+
+    /// Get e-graph fuel config. Uses override if set, else defaults (30 iters, 10k nodes).
+    pub fn egraph_fuel(&self) -> egraph::EGraphFuel {
+        match self.egraph_fuel {
+            Some((iter_limit, node_limit)) => egraph::EGraphFuel { iter_limit, node_limit },
+            None => egraph::EGraphFuel::default(),
         }
     }
 
@@ -2061,7 +2076,7 @@ impl Session {
         let readback_sexp = rewrite::term_to_sexp(&term);
         let theory_rules = self.rules.get(theory_name).cloned().unwrap_or_default();
         let filtered = egraph::filter_barrier_rules(&theory_rules, &config.barrier_ops);
-        let simplified = egraph::extract_simplest(&readback_sexp, &filtered);
+        let simplified = egraph::extract_simplest(&readback_sexp, &filtered, self.egraph_fuel());
 
         self.output.push(format!(
             "[SIMPLIFY] {} = {} ({} interactions)",
@@ -2125,6 +2140,11 @@ impl Session {
         let rhs_hash = hash::topological_hash_mode(&self.arena, rhs_ptr, canonical);
 
         if lhs_hash == rhs_hash {
+            let lhs_term = readback::readback(&self.arena, lhs_ptr);
+            self.proof_terms.insert(
+                name.clone(),
+                egraph::ProofTerm::Refl(format!("{}", rewrite::term_to_sexp(&lhs_term))),
+            );
             self.output.push(format!("[ASSERT] {} passed", name));
             return Ok(());
         }
@@ -2139,11 +2159,12 @@ impl Session {
             let theory_rules = self.rules.get(theory_name).cloned().unwrap_or_default();
             let filtered = egraph::filter_barrier_rules(&theory_rules, &config.barrier_ops);
             let (result, proof) = egraph::check_equal_with_proof(
-                &lhs_readback, &rhs_readback, &filtered
+                &lhs_readback, &rhs_readback, &filtered, self.egraph_fuel()
             );
 
             if result == egraph::EGraphResult::Equal {
                 if let Some(ref proof) = proof {
+                    self.proof_terms.insert(name.clone(), proof.clone());
                     self.output
                         .push(format!("[ASSERT] {} passed (e-graph, proof: {})", name, proof.to_json()));
                 } else {
@@ -2346,7 +2367,7 @@ impl Session {
             let theory_rules = self.rules.get(theory_name).cloned().unwrap_or_default();
             let filtered = egraph::filter_barrier_rules(&theory_rules, &config.barrier_ops);
             let (result, proof) = egraph::check_equal_with_proof(
-                &lhs_readback, &rhs_readback, &filtered
+                &lhs_readback, &rhs_readback, &filtered, self.egraph_fuel()
             );
 
             if result == egraph::EGraphResult::Equal {
@@ -2469,7 +2490,7 @@ impl Session {
 
             let mut all_eq = true;
             for (lhs_sexp, rhs_sexp) in &lhs_rhs_pairs {
-                let result = egraph::check_equal_egraph(lhs_sexp, rhs_sexp, &filtered);
+                let result = egraph::check_equal_egraph(lhs_sexp, rhs_sexp, &filtered, self.egraph_fuel());
                 if result != egraph::EGraphResult::Equal {
                     all_eq = false;
                     break;
@@ -2546,7 +2567,7 @@ impl Session {
 
             let theory_rules = self.rules.get(theory_name).cloned().unwrap_or_default();
             let filtered = egraph::filter_barrier_rules(&theory_rules, &config.barrier_ops);
-            let result = egraph::check_equal_egraph(&lhs_readback, &rhs_readback, &filtered);
+            let result = egraph::check_equal_egraph(&lhs_readback, &rhs_readback, &filtered, self.egraph_fuel());
 
             if result == egraph::EGraphResult::Equal {
                 // E-graph merged them — in proof-relevant mode, this means
@@ -2588,7 +2609,7 @@ impl Session {
         let filtered = egraph::filter_barrier_rules(&theory_rules, &config.barrier_ops);
 
         let mut preg = egraph::ProofRelevantEGraph::new();
-        preg.saturate_with_rules(&lhs_readback, &rhs_readback, &filtered);
+        preg.saturate_with_rules(&lhs_readback, &rhs_readback, &filtered, self.egraph_fuel());
 
         if preg.roots.len() >= 2 {
             let from_id = preg.roots[0];

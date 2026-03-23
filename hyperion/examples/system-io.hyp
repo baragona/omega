@@ -1,0 +1,96 @@
+;; Hyperion Example: System I/O with Linear File Descriptors
+;;
+;; Demonstrates the SystemIO engine: file descriptors are linear resources
+;; that must be opened exactly once and closed exactly once. The strictly-linear
+;; resource mode ensures no descriptor leaks or double-closes.
+;;
+;; The Effect sort compiles to a trait — the user implements it with real syscalls.
+;; Pure operations (string manipulation, FD threading) compile to match functions.
+;;
+;; Run: hyperion check examples/system-io.hyp -v
+;; Compile: hyperion kompile examples/system-io.hyp --theory FileIO -o out/file_io/
+
+;; =================================================================
+;; Category: Linear I/O
+;; =================================================================
+
+;; A linear category where all morphisms thread state.
+;; No Exponential — closures would duplicate file descriptors.
+[Category LinearIO
+  [Object FD]         ;; File descriptor (linear resource)
+  [Object Str]        ;; String data (freely copyable)
+  [Object Unit]       ;; Terminal object (void return)
+  [Object Tuple]      ;; Pair type for resource threading
+  [Object Effect]     ;; Side effects → compiled to trait methods
+  [Object Path]       ;; File path (freely copyable)
+
+  ;; Resource lifecycle: open → use → close
+  [Morphism open     :domain [Path]        :codomain FD]
+  [Morphism read     :domain [FD]          :codomain Tuple]   ;; FD → (Str, FD)
+  [Morphism write    :domain [FD Str]      :codomain FD]      ;; (FD, Str) → FD
+  [Morphism close    :domain [FD]          :codomain Unit]    ;; FD → () (destructor)
+
+  ;; Tuple constructor for linear threading
+  [Morphism pair     :domain [Str FD]      :codomain Tuple]   ;; (Str, FD)
+
+  ;; String constants (nullary morphisms)
+  [Morphism hello    :domain []            :codomain Str]
+  [Morphism world    :domain []            :codomain Str]
+  [Morphism newline  :domain []            :codomain Str]
+
+  ;; Path constants
+  [Morphism greeting-path :domain []       :codomain Path]
+
+  ;; String operations (pure)
+  [Morphism concat   :domain [Str Str]     :codomain Str]
+  [Morphism to-upper :domain [Str]         :codomain Str]
+
+  ;; Effects (compiled to trait methods)
+  [Morphism log      :domain [Str]         :codomain Effect]
+  [Morphism emit     :domain [Str]         :codomain Effect]
+]
+
+;; =================================================================
+;; Substrate: Strictly Linear System I/O
+;; =================================================================
+
+[Substrate POSIX
+  @engine system-io
+  @resource-mode strictly-linear
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+;; =================================================================
+;; Universe
+;; =================================================================
+
+[Universe IOWorld :category LinearIO :substrate POSIX]
+
+;; =================================================================
+;; Theory: File I/O with Linear Resource Discipline
+;; =================================================================
+;;
+;; Von Neumann physics: strict evaluation, call-by-value.
+;; Every rule operates on one function at a time — no nested
+;; function calls in LHS patterns, because values don't remember
+;; their computational history after evaluation.
+
+[Theory FileIO :in IOWorld
+  ;; Pure string rewrites (data constructor → data constructor)
+  [@rule to-upper-hello [to-upper hello] ==> hello]
+  [@rule concat-id      [concat ?s newline] ==> ?s]
+
+  ;; I/O protocol — each rule is one step of the pipeline
+  ;; read: takes an FD, returns (content, FD) pair
+  [@rule read-fd [read [open ?path]] ==> [pair hello [open ?path]]]
+
+  ;; write: takes (FD, content), returns FD with content consumed
+  [@rule write-fd [write [open ?path] ?content] ==> [open ?path]]
+
+  ;; close: destructor — consumes FD, returns unit
+  [@rule close-fd [close [open ?path]] ==> done]
+
+  ;; Effect rules — compiled to trait method calls
+  [@rule log-msg [log ?msg] ==> [emit ?msg]]
+]

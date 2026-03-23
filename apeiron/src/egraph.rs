@@ -68,6 +68,19 @@ fn json_string(s: &str) -> String {
     format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
+/// E-graph fuel limits: controls how much work the e-graph can do before stopping.
+#[derive(Debug, Clone, Copy)]
+pub struct EGraphFuel {
+    pub iter_limit: usize,
+    pub node_limit: usize,
+}
+
+impl Default for EGraphFuel {
+    fn default() -> Self {
+        EGraphFuel { iter_limit: 30, node_limit: 10_000 }
+    }
+}
+
 /// Result of an e-graph equality check.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EGraphResult {
@@ -185,6 +198,7 @@ pub fn check_equal_egraph(
     lhs: &Sexp,
     rhs: &Sexp,
     rules: &[RewriteRule],
+    fuel: EGraphFuel,
 ) -> EGraphResult {
     let lhs_expr = sexp_to_recexpr(lhs);
     let rhs_expr = sexp_to_recexpr(rhs);
@@ -193,8 +207,8 @@ pub fn check_equal_egraph(
     let runner = Runner::default()
         .with_expr(&lhs_expr)
         .with_expr(&rhs_expr)
-        .with_iter_limit(30)
-        .with_node_limit(10_000)
+        .with_iter_limit(fuel.iter_limit)
+        .with_node_limit(fuel.node_limit)
         .run(&rewrites);
 
     let lhs_root = runner.roots[0];
@@ -221,6 +235,7 @@ pub fn check_equal_with_proof(
     lhs: &Sexp,
     rhs: &Sexp,
     rules: &[RewriteRule],
+    fuel: EGraphFuel,
 ) -> (EGraphResult, Option<ProofTerm>) {
     let lhs_expr = sexp_to_recexpr(lhs);
     let rhs_expr = sexp_to_recexpr(rhs);
@@ -230,8 +245,8 @@ pub fn check_equal_with_proof(
         .with_explanations_enabled()
         .with_expr(&lhs_expr)
         .with_expr(&rhs_expr)
-        .with_iter_limit(30)
-        .with_node_limit(10_000)
+        .with_iter_limit(fuel.iter_limit)
+        .with_node_limit(fuel.node_limit)
         .run(&rewrites);
 
     let lhs_root = runner.roots[0];
@@ -349,6 +364,7 @@ pub fn assert_exists_egraph(
     constraints: &[(String, Sexp)],
     all_terms: &[Sexp],
     rules: &[RewriteRule],
+    fuel: EGraphFuel,
 ) -> Option<Sexp> {
     if all_terms.is_empty() {
         return None;
@@ -357,8 +373,8 @@ pub fn assert_exists_egraph(
     // Add all terms to the e-graph and saturate
     let rewrites = rules_to_rewrites(rules);
     let mut runner = Runner::default()
-        .with_iter_limit(30)
-        .with_node_limit(10_000);
+        .with_iter_limit(fuel.iter_limit)
+        .with_node_limit(fuel.node_limit);
 
     // Add each term
     let mut term_ids: Vec<(String, Id)> = Vec::new();
@@ -444,14 +460,14 @@ fn recexpr_to_sexp_inner(nodes: &[SymbolLang], id: Id, s: crate::parser::Span) -
 /// 2. Saturate with directional-aware rewrites
 /// 3. Extract cheapest via AstSize cost function
 /// 4. Convert back to Sexp
-pub fn extract_simplest(expr: &Sexp, rules: &[RewriteRule]) -> Sexp {
+pub fn extract_simplest(expr: &Sexp, rules: &[RewriteRule], fuel: EGraphFuel) -> Sexp {
     let recexpr = sexp_to_recexpr(expr);
     let rewrites = rules_to_rewrites(rules);
 
     let runner = Runner::default()
         .with_expr(&recexpr)
-        .with_iter_limit(30)
-        .with_node_limit(10_000)
+        .with_iter_limit(fuel.iter_limit)
+        .with_node_limit(fuel.node_limit)
         .run(&rewrites);
 
     let root = runner.roots[0];
@@ -521,6 +537,7 @@ impl ProofRelevantEGraph {
         lhs: &Sexp,
         rhs: &Sexp,
         rules: &[RewriteRule],
+        fuel: EGraphFuel,
     ) {
         let lhs_expr = sexp_to_recexpr(lhs);
         let rhs_expr = sexp_to_recexpr(rhs);
@@ -530,8 +547,8 @@ impl ProofRelevantEGraph {
             .with_explanations_enabled()
             .with_expr(&lhs_expr)
             .with_expr(&rhs_expr)
-            .with_iter_limit(30)
-            .with_node_limit(10_000)
+            .with_iter_limit(fuel.iter_limit)
+            .with_node_limit(fuel.node_limit)
             .run(&rewrites);
 
         let lhs_root = runner.roots[0];

@@ -1,0 +1,122 @@
+;; Example: Modal Homotopy Type Theory in Hyperion
+;; Demonstrates: Combining CCC, PathType (auto-injected path algebra), and ModalOperator (user-defined modal rules)
+;;               Compatibility checking for lambda-capable engine with barriers and homotopy equality
+;;               Cross-substrate functor with equational theory verification (preserves user rules)
+;;               Natural transformation and adjunction between parallel functors
+;;
+;; This showcases Hyperion's power as a "Logical Framework Framework Framework":
+;; - Framework: Universes are logical frameworks (e.g., modal HoTT as a logic)
+;; - Framework Framework: Hyperion builds these by composing math (category) + physics (substrate)
+;; - Framework Framework Framework: Meta-features like functors/adjunctions relate frameworks,
+;;   verifying preservation at a higher level, enabling modular, verified logical system design.
+;;
+;; Original submission had 5 bugs, all fixed:
+;;   1. Named @rule format ([@rule name lhs ==> rhs]) not handled by VerifyFunctor rule capture
+;;   2. VerifyFunctor source/target must be distinct theories (each in its own universe)
+;;   3. NatTrans requires parallel functors (same source AND target substrate)
+;;   4. NatTrans components must reference objects from the category (Type/Term, not Nat)
+;;   5. [eval boxed-ap [box [ap lam p]]] — lam is a binder, not a term; use a constant instead
+
+;; 1. Category: CCC + PathType + ModalOperator for Modal HoTT
+[Category ModalHoTT
+  [Object Type]
+  [Object Term]
+  [Morphism arrow :domain [Type Type] :codomain Type]
+  [Morphism app   :domain [Term Term] :codomain Term]
+  [Exponential lam :object Term]
+  [Evaluator app]
+  [PathType :refl refl :concat concat :inv inv :ap ap]  ;; Auto-injects 5 path algebra rules
+  [ModalOperator box]  ;; User will define modal rules in theory
+  [Context World]      ;; For scope isolation
+]
+
+;; 2. Substrate: Interaction Graph with barriers and homotopy equality
+[Substrate GraphHomotopy
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier contextual-membranes  ;; Required for ModalOperator + Context
+  @equality topological-homotopy ;; Path-based equality for PathType
+]
+
+;; 3. Universe: Bind category to substrate (Hyperion checks compatibility)
+[Universe ModalHoTTGraph :category ModalHoTT :substrate GraphHomotopy]
+
+;; 4. Theory: Modal path algebra (auto-path + user-modal rules)
+[Theory ModalPathTheory :in ModalHoTTGraph
+  ;; Constants
+  [const a Term]
+  [const f Term]  ;; A function constant for ap tests
+
+  ;; Example path
+  [def p [refl a]]
+
+  ;; Modal rules: Make box functorial on paths (inspired by modal HoTT literature)
+  [@rule box-refl   [box [refl ?x]] ==> [refl [box ?x]]]         ;; box preserves reflexivity
+  [@rule box-concat [box [concat ?p ?q]] ==> [concat [box ?p] [box ?q]]]  ;; box preserves composition
+  [@rule box-inv    [box [inv ?p]] ==> [inv [box ?p]]]           ;; box preserves inverses
+  [@rule box-ap     [box [ap ?f ?p]] ==> [ap [box ?f] [box ?p]]] ;; box preserves ap
+]
+
+;; 5. Proofs: Use auto-injected path rules + user modal rules
+[Proofs ModalPathChecks :in ModalPathTheory
+  ;; Auto-path assertions (from PathType auto-injection)
+  [assert-eq left-unit  [concat [refl a] p] p]
+  [assert-eq assoc      [concat [concat p [refl a]] [refl a]] [concat p [concat [refl a] [refl a]]]]
+
+  ;; Modal-path interactions: box distributes over path operations
+  [assert-eq box-left-unit [box [concat [refl a] p]] [concat [refl [box a]] [box p]]]
+
+  ;; box distributes over ap, then ap-refl fires on the distributed form:
+  ;; box(ap(f, refl(a))) -> ap(box(f), box(refl(a))) -> ap(box(f), refl(box(a))) -> refl(app(box(f), box(a)))
+  [assert-eq box-ap-refl [box [ap f [refl a]]] [refl [app [box f] [box a]]]]
+
+  ;; Evaluate: box distributes over path inverse
+  [eval boxed-inv [box [inv [refl a]]]]
+]
+
+;; 6. Another Substrate: Term Tree with barriers and homotopy (different engine, same capabilities)
+[Substrate TreeHomotopy
+  @engine term-tree
+  @resource-mode deep-copy
+  @barrier contextual-membranes
+  @equality topological-homotopy
+]
+
+[Universe ModalHoTTTree :category ModalHoTT :substrate TreeHomotopy]
+
+;; 7. Target theory on the Tree substrate (same modal rules, for functor verification)
+[Theory ModalPathTreeTheory :in ModalHoTTTree
+  [const a Term]
+  [const f Term]
+
+  [@rule box-refl   [box [refl ?x]] ==> [refl [box ?x]]]
+  [@rule box-concat [box [concat ?p ?q]] ==> [concat [box ?p] [box ?q]]]
+  [@rule box-inv    [box [inv ?p]] ==> [inv [box ?p]]]
+  [@rule box-ap     [box [ap ?f ?p]] ==> [ap [box ?f] [box ?p]]]
+]
+
+;; 8. Two parallel functors (both Graph -> Tree) for NatTrans
+[Functor GraphToTree :from GraphHomotopy :to TreeHomotopy :verify]
+[Functor GraphToTree2 :from GraphHomotopy :to TreeHomotopy]
+
+;; Verify functor preserves equational theory (user modal rules)
+[VerifyFunctor GraphToTree :source ModalPathTheory :target ModalPathTreeTheory]
+
+;; 9. Natural Transformation between parallel functors
+;;    Both GraphToTree and GraphToTree2 go GraphHomotopy -> TreeHomotopy (parallel!)
+[NatTrans Eta :from GraphToTree :to GraphToTree2
+  :component [Type id_type]
+  :component [Term id_term]
+]
+
+;; Another natural transformation in the same direction
+[NatTrans Eps :from GraphToTree :to GraphToTree2
+  :component [Type eps_type]
+  :component [Term eps_term]
+]
+
+;; 10. Adjunction between the two parallel functors
+[Adjunction ModalAdj :left GraphToTree :right GraphToTree2 :unit Eta :counit Eps]
+
+;; Automatic law verification: CCC (3 witness tests) + PathType (5 witness tests) = 8 total
+;; Functor verification: 4 user-written modal rules verified across substrates

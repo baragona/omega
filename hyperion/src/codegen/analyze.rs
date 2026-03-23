@@ -7,9 +7,38 @@ use super::rust_ast::*;
 use crate::error::{HyperionError, Result};
 use crate::session::VonNeumannTheory;
 
+/// Sorts that are handled specially and should not generate enums.
+const SKIP_SORTS: &[&str] = &["Effect", "Prop", "String", "Unit"];
+
 /// Analyze a VN theory and produce a RustCrate.
 pub fn analyze(theory: &VonNeumannTheory) -> Result<RustCrate> {
     let crate_name = to_snake_case(&theory.name);
+
+    // Detect Effect sort and its constructors
+    let has_effect_sort = theory.sorts.contains(&"Effect".to_string());
+
+    // Collect effect constructors: operators whose codomain is Effect
+    let mut effect_ops: HashSet<String> = HashSet::new();
+    if has_effect_sort {
+        for (op_name, (_, codomain)) in &theory.morphism_types {
+            if codomain == "Effect" {
+                effect_ops.insert(op_name.clone());
+            }
+        }
+    }
+
+    // Check for Tuple sort (used for linear resource threading)
+    let has_tuple_sort = theory.sorts.contains(&"Tuple".to_string());
+
+    // Find the tuple constructor's domain to determine the tuple field types
+    let tuple_fields: Vec<String> = if has_tuple_sort {
+        ["pair", "tuple", "mk-tuple"]
+            .iter()
+            .find_map(|name| theory.morphism_types.get(*name).map(|(d, _)| d.clone()))
+            .unwrap_or_default()
+    } else {
+        vec![]
+    };
 
     // Step 1: Detect rewrite heads — these become functions, not enum variants
     let mut rewrite_heads: HashSet<String> = HashSet::new();
@@ -25,12 +54,21 @@ pub fn analyze(theory: &VonNeumannTheory) -> Result<RustCrate> {
     // Step 3: Group operators by codomain → each sort becomes an enum
     let mut sort_variants: HashMap<String, Vec<(String, Vec<String>)>> = HashMap::new();
     for sort in &theory.sorts {
-        sort_variants.entry(sort.clone()).or_default();
+        if !SKIP_SORTS.contains(&sort.as_str()) && !(has_tuple_sort && sort == "Tuple") {
+            sort_variants.entry(sort.clone()).or_default();
+        }
     }
 
     for (op_name, (domain, codomain)) in &theory.morphism_types {
-        if rewrite_heads.contains(op_name) {
-            continue; // functions, not variants
+        if rewrite_heads.contains(op_name) || effect_ops.contains(op_name) {
+            continue; // functions or effect methods, not variants
+        }
+        if SKIP_SORTS.contains(&codomain.as_str()) {
+            continue;
+        }
+        // For Tuple constructors, skip — they'll be handled as native tuples
+        if has_tuple_sort && codomain == "Tuple" {
+            continue;
         }
         sort_variants
             .entry(codomain.clone())
@@ -43,6 +81,9 @@ pub fn analyze(theory: &VonNeumannTheory) -> Result<RustCrate> {
     let mut has_box_patterns = false;
 
     for (sort_name, variants) in &sort_variants {
+        if variants.is_empty() {
+            continue; // Skip sorts with no constructors
+        }
         let enum_name = to_pascal_case(sort_name);
         let mut rust_variants = Vec::new();
 
@@ -51,7 +92,7 @@ pub fn analyze(theory: &VonNeumannTheory) -> Result<RustCrate> {
             let fields: Vec<RustField> = domain
                 .iter()
                 .map(|d| {
-                    let base_ty = RustType::Named(to_pascal_case(d));
+                    let base_ty = sort_to_type(d, has_tuple_sort, &tuple_fields);
                     if recursive_sorts.contains(d) {
                         RustField {
                             ty: RustType::Boxed(Box::new(base_ty)),
@@ -74,7 +115,48 @@ pub fn analyze(theory: &VonNeumannTheory) -> Result<RustCrate> {
         }));
     }
 
-    // Step 5: Group rewrite rules by head → match functions
+    // Step 5: Build trait from Effect sort (if present)
+    let trait_name = if has_effect_sort {
+        Some(format!("{}Effects", to_pascal_case(&theory.name)))
+    } else {
+        None
+    };
+
+    if has_effect_sort {
+        let mut methods = Vec::new();
+        for op_name in &effect_ops {
+            if let Some((domain, _)) = theory.morphism_types.get(op_name) {
+                let method_name = to_snake_case(op_name);
+                let params: Vec<RustParam> = domain
+                    .iter()
+                    .enumerate()
+                    .map(|(i, d)| RustParam {
+                        name: derive_param_name(d, i),
+                        ty: sort_to_type(d, has_tuple_sort, &tuple_fields),
+                    })
+                    .collect();
+                methods.push(RustTraitMethod {
+                    name: method_name,
+                    params,
+                    ret: RustType::Unit,
+                });
+            }
+        }
+        type_items.push(RustItem::Trait(RustTrait {
+            name: trait_name.clone().unwrap(),
+            methods,
+        }));
+    }
+
+    // Step 5.5: Physics validation — reject nested function calls in LHS patterns.
+    // Von Neumann substrates use strict (call-by-value) evaluation: inner calls
+    // collapse to opaque values before the outer call sees them. You cannot
+    // pattern-match on the history of an evaluated function call.
+    for rule in &theory.rules {
+        validate_lhs_physics(&rule.lhs, &rule.name, &rewrite_heads, true)?;
+    }
+
+    // Step 6: Group rewrite rules by head → match functions
     let mut func_items: Vec<RustItem> = Vec::new();
     let mut rules_by_head: HashMap<String, Vec<&crate::session::VonNeumannRule>> = HashMap::new();
     for rule in &theory.rules {
@@ -97,7 +179,10 @@ pub fn analyze(theory: &VonNeumannTheory) -> Result<RustCrate> {
             }
         })?;
 
-        let ret_type = RustType::Named(to_pascal_case(codomain));
+        let ret_type = sort_to_type(codomain, has_tuple_sort, &tuple_fields);
+
+        // Check if this function returns Effect → effectful function
+        let is_effectful = has_effect_sort && codomain == "Effect";
 
         // Build params
         let params: Vec<RustParam> = domain
@@ -105,7 +190,7 @@ pub fn analyze(theory: &VonNeumannTheory) -> Result<RustCrate> {
             .enumerate()
             .map(|(i, d)| RustParam {
                 name: derive_param_name(d, i),
-                ty: RustType::Named(to_pascal_case(d)),
+                ty: sort_to_type(d, has_tuple_sort, &tuple_fields),
             })
             .collect();
 
@@ -144,7 +229,7 @@ pub fn analyze(theory: &VonNeumannTheory) -> Result<RustCrate> {
                     .iter()
                     .zip(domain.iter())
                     .map(|(arg, sort)| {
-                        sexp_to_pattern(arg, sort, &theory.morphism_types, &recursive_sorts, &mut rename_map.clone())
+                        sexp_to_pattern(arg, sort, &theory.morphism_types, &recursive_sorts, &mut rename_map.clone(), has_tuple_sort)
                     })
                     .collect()
             } else {
@@ -165,8 +250,10 @@ pub fn analyze(theory: &VonNeumannTheory) -> Result<RustCrate> {
                 &theory.morphism_types,
                 &recursive_sorts,
                 &rewrite_heads,
+                &effect_ops,
                 &rhs_meta_counts,
                 &mut rhs_meta_used,
+                has_tuple_sort,
             );
 
             // Build the scrutinee pattern
@@ -174,11 +261,7 @@ pub fn analyze(theory: &VonNeumannTheory) -> Result<RustCrate> {
                 patterns.into_iter().next().unwrap()
             } else {
                 // Tuple pattern for multi-arg functions
-                RustPattern::Constructor {
-                    enum_name: String::new(),
-                    variant: String::new(),
-                    fields: patterns,
-                }
+                RustPattern::TuplePattern(patterns)
             };
 
             arms.push(RustMatchArm {
@@ -199,11 +282,9 @@ pub fn analyze(theory: &VonNeumannTheory) -> Result<RustCrate> {
         let scrutinee = if params.len() == 1 {
             Box::new(RustExpr::Var(params[0].name.clone()))
         } else {
-            // Tuple of params
-            Box::new(RustExpr::Call {
-                func: String::new(),
-                args: params.iter().map(|p| RustExpr::Var(p.name.clone())).collect(),
-            })
+            Box::new(RustExpr::TupleExpr(
+                params.iter().map(|p| RustExpr::Var(p.name.clone())).collect(),
+            ))
         };
 
         // Check if any pattern uses box
@@ -218,8 +299,9 @@ pub fn analyze(theory: &VonNeumannTheory) -> Result<RustCrate> {
         func_items.push(RustItem::Function(RustFunction {
             name: func_name,
             params,
-            ret: ret_type,
+            ret: if is_effectful { RustType::Unit } else { ret_type },
             body,
+            effects_trait: if is_effectful { trait_name.clone() } else { None },
         }));
     }
 
@@ -252,6 +334,22 @@ pub fn analyze(theory: &VonNeumannTheory) -> Result<RustCrate> {
         modules,
         has_box_patterns,
     })
+}
+
+/// Convert a sort name to a RustType, handling Tuple and Unit specially.
+fn sort_to_type(sort: &str, has_tuple_sort: bool, tuple_fields: &[String]) -> RustType {
+    if sort == "Unit" {
+        RustType::Unit
+    } else if has_tuple_sort && sort == "Tuple" && !tuple_fields.is_empty() {
+        RustType::Tuple(
+            tuple_fields
+                .iter()
+                .map(|s| sort_to_type(s, false, &[]))
+                .collect(),
+        )
+    } else {
+        RustType::Named(to_pascal_case(sort))
+    }
 }
 
 /// Get the head symbol of an S-expression (if it's a list).
@@ -293,6 +391,7 @@ fn sexp_to_pattern(
     morphism_types: &HashMap<String, (Vec<String>, String)>,
     recursive_sorts: &HashSet<String>,
     rename_map: &mut HashMap<String, Vec<String>>,
+    has_tuple_sort: bool,
 ) -> RustPattern {
     match sexp {
         Sexp::Atom(name, _) => {
@@ -321,6 +420,24 @@ fn sexp_to_pattern(
         }
         Sexp::List(items, _) if !items.is_empty() => {
             let head = items[0].as_atom().unwrap_or("");
+
+            // Check if this is a tuple constructor
+            if has_tuple_sort && (head == "pair" || head == "tuple" || head == "mk-tuple") {
+                let child_sorts: Vec<String> = morphism_types
+                    .get(head)
+                    .map(|(d, _)| d.clone())
+                    .unwrap_or_default();
+                let fields: Vec<RustPattern> = items[1..]
+                    .iter()
+                    .enumerate()
+                    .map(|(i, arg)| {
+                        let child_sort = child_sorts.get(i).map(|s| s.as_str()).unwrap_or(sort);
+                        sexp_to_pattern(arg, child_sort, morphism_types, recursive_sorts, rename_map, has_tuple_sort)
+                    })
+                    .collect();
+                return RustPattern::TuplePattern(fields);
+            }
+
             let enum_name = to_pascal_case(sort);
             let variant = to_pascal_case(head);
 
@@ -336,7 +453,7 @@ fn sexp_to_pattern(
                 .map(|(i, arg)| {
                     let child_sort = child_sorts.get(i).map(|s| s.as_str()).unwrap_or(sort);
                     let inner =
-                        sexp_to_pattern(arg, child_sort, morphism_types, recursive_sorts, rename_map);
+                        sexp_to_pattern(arg, child_sort, morphism_types, recursive_sorts, rename_map, has_tuple_sort);
                     if recursive_sorts.contains(child_sort) {
                         RustPattern::Box(Box::new(inner))
                     } else {
@@ -361,8 +478,10 @@ fn sexp_to_expr(
     morphism_types: &HashMap<String, (Vec<String>, String)>,
     recursive_sorts: &HashSet<String>,
     rewrite_heads: &HashSet<String>,
+    effect_ops: &HashSet<String>,
     rhs_meta_counts: &HashMap<String, usize>,
     rhs_meta_used: &mut HashMap<String, usize>,
+    has_tuple_sort: bool,
 ) -> RustExpr {
     match sexp {
         Sexp::Atom(name, _) => {
@@ -375,10 +494,13 @@ fn sexp_to_expr(
                 } else {
                     RustExpr::Var(meta.to_string())
                 }
+            } else if name == "unit" || name == "done" {
+                // Unit value
+                RustExpr::TupleExpr(vec![])
             } else {
                 // Nullary constructor — need to figure out which enum
                 let enum_name = morphism_types
-                    .get(name)
+                    .get(name.as_str())
                     .map(|(_, c)| to_pascal_case(c))
                     .unwrap_or_else(|| "Unknown".into());
                 let variant = to_pascal_case(name);
@@ -391,6 +513,31 @@ fn sexp_to_expr(
         }
         Sexp::List(items, _) if !items.is_empty() => {
             let head = items[0].as_atom().unwrap_or("");
+
+            // Effect constructor → method call on effects trait
+            if effect_ops.contains(head) {
+                let args: Vec<RustExpr> = items[1..]
+                    .iter()
+                    .map(|arg| {
+                        sexp_to_expr(arg, morphism_types, recursive_sorts, rewrite_heads, effect_ops, rhs_meta_counts, rhs_meta_used, has_tuple_sort)
+                    })
+                    .collect();
+                return RustExpr::EffectCall {
+                    method: to_snake_case(head),
+                    args,
+                };
+            }
+
+            // Tuple constructor → tuple expression
+            if has_tuple_sort && (head == "pair" || head == "tuple" || head == "mk-tuple") {
+                let elems: Vec<RustExpr> = items[1..]
+                    .iter()
+                    .map(|arg| {
+                        sexp_to_expr(arg, morphism_types, recursive_sorts, rewrite_heads, effect_ops, rhs_meta_counts, rhs_meta_used, has_tuple_sort)
+                    })
+                    .collect();
+                return RustExpr::TupleExpr(elems);
+            }
 
             let args: Vec<RustExpr> = items[1..]
                 .iter()
@@ -406,8 +553,10 @@ fn sexp_to_expr(
                         morphism_types,
                         recursive_sorts,
                         rewrite_heads,
+                        effect_ops,
                         rhs_meta_counts,
                         rhs_meta_used,
+                        has_tuple_sort,
                     );
                     if recursive_sorts.contains(child_sort) {
                         RustExpr::BoxNew(Box::new(inner))
@@ -427,8 +576,10 @@ fn sexp_to_expr(
                             morphism_types,
                             recursive_sorts,
                             rewrite_heads,
+                            effect_ops,
                             rhs_meta_counts,
                             rhs_meta_used,
+                            has_tuple_sort,
                         )
                     })
                     .collect();
@@ -476,6 +627,7 @@ fn pattern_has_box(pat: &RustPattern) -> bool {
     match pat {
         RustPattern::Box(_) => true,
         RustPattern::Constructor { fields, .. } => fields.iter().any(pattern_has_box),
+        RustPattern::TuplePattern(elems) => elems.iter().any(pattern_has_box),
         _ => false,
     }
 }
@@ -560,6 +712,41 @@ fn can_reach(
         }
     }
     false
+}
+
+/// Validate that LHS patterns don't contain nested function calls (rewrite heads).
+/// In Von Neumann physics, strict evaluation collapses inner calls to opaque values
+/// before the outer call executes — values don't remember their computational history.
+/// The `is_root` flag allows the outermost head (which IS the function being defined).
+fn validate_lhs_physics(
+    sexp: &Sexp,
+    rule_name: &str,
+    rewrite_heads: &HashSet<String>,
+    is_root: bool,
+) -> Result<()> {
+    match sexp {
+        Sexp::List(items, _) if !items.is_empty() => {
+            if let Some(head) = items[0].as_atom() {
+                if !is_root && rewrite_heads.contains(head) {
+                    return Err(HyperionError::ParseError {
+                        block: "kompile".into(),
+                        detail: format!(
+                            "Physics mismatch in rule '{}': substrate uses strict evaluation \
+                             and cannot pattern-match on the history of evaluated function calls \
+                             (found '{}' nested in LHS pattern). Use data constructors for matching, \
+                             or switch to a graph-reduction substrate.",
+                            rule_name, head
+                        ),
+                    });
+                }
+            }
+            for arg in &items[1..] {
+                validate_lhs_physics(arg, rule_name, rewrite_heads, false)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 #[cfg(test)]

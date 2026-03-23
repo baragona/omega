@@ -1036,6 +1036,40 @@ Several categorical structures auto-inject rules or ops into theories. This tabl
 
 User theories can also declare `@law` equational laws (bidirectional in e-graph) alongside `@rule` declarations. See [Equational Laws](#equational-laws-law-and-e-graph-simplification).
 
+## Compile-Time Metaprogramming: `[Meta ...]`
+
+Hyperion's AST is reified as a first-class category (`MetaCat` in the prelude), and the compiler itself is available as a substrate (`CompilerEngine`). The `[Meta ...]` block provides compile-time introspection and optimization:
+
+```lisp
+;; Inspect compilation passes needed by a universe
+[Meta reify-passes :universe MyWorld]
+
+;; Inspect the structure of a first-order theory
+[Meta reify-theory :theory MyTheory]
+
+;; Run e-graph simplification at compile time
+[Meta optimize :in MyTheory [some expression]]
+
+;; Synthesize a witness via assert-exists
+[Meta synthesize :in MyTheory :goal [some pattern]]
+
+;; Splice: run a meta command and bind the result as a definition
+[Meta splice my-def [optimize :in MyTheory [some expression]]]
+
+;; Explicit fuel limit (default: 5000 nodes for Meta commands)
+[Meta optimize :fuel 2000 :in MyTheory [some expression]]
+
+;; Reify a proof term as an AST object for meta-level manipulation
+[Meta reify-proof :name some-assertion]
+```
+
+`MetaCat` objects include `Expr`, `Sort`, `RuleDef`, `TheoryDef`, `CatDef`, `SubDef`, `UniDef`, and `PassDef`. Compiler operations (`normalize`, `simplify`, `synthesize`) are morphisms. The `CompilerEngine` substrate uses equality-saturation internally, enabling the compiler to reason about its own transformations.
+
+**Safety features:**
+- **Fuel limits**: All Meta commands have configurable e-graph fuel (`:fuel N`, default 5000 nodes). Prevents runaway saturation from hanging the compiler.
+- **Meta-level bounding**: Meta blocks cannot invoke other Meta blocks (depth capped at 1). Prevents infinite meta-meta recursion that would blow the Rust stack.
+- **Proof reification**: Completed proofs (from `assert-eq` blocks) can be extracted as first-class AST objects via `reify-proof`, enabling programmatic proof transformation across substrates.
+
 ## Examples
 
 | File | What it demonstrates |
@@ -1066,6 +1100,7 @@ User theories can also declare `@law` equational laws (bidirectional in e-graph)
 | `tactics-demo.hyp` | Nested parameterized theories, tactic proofs (apply/auto/assumption), assert-refuted, forward-chaining refutation |
 | `compilation-passes.hyp` | All 6 single-machine compilation passes with working theories and proofs |
 | `distributed-actor.hyp` | Network as a substrate: CRDT key-value store, CAP-aware modal consensus, local→distributed functor transport |
+| `meta-demo.hyp` | Compile-time metaprogramming: reify-passes, reify-theory, optimize, splice, fuel limits |
 
 ## Architecture
 
@@ -1088,9 +1123,9 @@ hyperion/
       emit.rs        Rust AST -> source files
     main.rs          CLI (check + kompile subcommands)
   prelude.hyp        Standard prelude (categories + substrates)
-  examples/          22 example files
+  examples/          23 example files
   tests/
-    integration.rs   107 integration tests
+    integration.rs   139 integration tests
 ```
 
 Hyperion depends on [Apeiron](../apeiron/) for term rewriting, beta reduction, and oracle checking. The Von Neumann and Network RPC backends are first-order paths that bypass Apeiron.
@@ -1114,7 +1149,7 @@ hyperion kompile <file.hyp> --theory <name> -o <output_dir/>
 
 ## Tests
 
-178 tests (48 unit + 130 integration), covering:
+187 tests (48 unit + 139 integration), covering:
 
 - Category/substrate/universe parsing and validation
 - Compilation pass insertion for all 9 bridging strategies (bang modality, nominal abstraction, defunctionalization, tensor serialization, Kripke threading, dependent combinators, RPC serialization, consensus replication, partition tolerance)
@@ -1136,6 +1171,7 @@ hyperion kompile <file.hyp> --theory <name> -o <output_dir/>
 - Kernel cubical reduction (`IntervalSort` + auto-injected coe-concat, coe-inv rules)
 - Weak equivalence verification (`WeakEquivalence` with `:via` maps and roundtrip checking)
 - Tactic proofs (apply, auto, assumption, exact, cut, intro)
+- Meta blocks: reification, splice, fuel limits, meta-depth bounding, proof reification
 - Nested parameterized theory imports
 - `assert-refuted` negative assertions
 - Forward-chaining refutation strategy

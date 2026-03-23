@@ -1,0 +1,124 @@
+;; Example: Symmetric Monoidal Category with PathType for Monoidal HoTT
+;; Demonstrates:
+;;   - [SymmetricMonoidal tensor unit] compound syntax → TensorProduct + Unit
+;;   - PathType without Evaluator on non-lambda engine (first-order path algebra)
+;;   - Auto-law verification: monoidal (6 tests) + path (4 tests) = 10 total
+;;   - User-defined tensor-path interaction rules
+;;   - Functor + VerifyFunctor across substrates
+;;   - Natural transformations and adjunction between parallel functors
+;;
+;; Original submission had 5 bugs, all fixed:
+;;   1. [SymmetricMonoidal tensor unit] was not valid syntax (now implemented as compound)
+;;   2. PathType required lambda-capable engine unconditionally (now relaxed: only if Evaluator present)
+;;   3. Target theory used different op names (prod/one) but shared category fixes ops to tensor/unit
+;;   4. Missing monoidal structure rules (assoc, left-unit, right-unit) caused law verification failure
+;;   5. Proof assertions had wrong expected values given reduction order with monoidal rules
+
+;; 1. Category: Symmetric Monoidal + PathType (no Evaluator — purely first-order)
+[Category MonoidalHoTT
+  [Object Type]
+  [Object Term]
+  [Morphism tensor :domain [Term Term] :codomain Term]
+  [Morphism unit   :domain [] :codomain Term]
+  [SymmetricMonoidal tensor unit]   ;; Compound syntax → TensorProduct + Unit
+  [PathType :refl refl :concat concat :inv inv :ap ap]
+]
+
+;; 2. Substrate: Interaction Graph for parallel composition
+[Substrate ParallelGraph
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+;; 3. Universe
+[Universe MonoidalGraph :category MonoidalHoTT :substrate ParallelGraph]
+
+;; 4. Theory: Monoidal structure + path interaction rules
+[Theory MonoidalPathTheory :in MonoidalGraph
+  ;; Constants
+  [const a Term]
+  [const b Term]
+
+  ;; Example path
+  [def p [refl a]]
+
+  ;; Monoidal structure rules (required for law verification)
+  [@rule mon-assoc  [tensor [tensor ?a ?b] ?c] ==> [tensor ?a [tensor ?b ?c]]]
+  [@rule mon-lunit  [tensor unit ?a] ==> ?a]
+  [@rule mon-runit  [tensor ?a unit] ==> ?a]
+
+  ;; User rules: Tensor functorial on paths (monoidal HoTT style)
+  [@rule tensor-refl   [tensor [refl ?x] [refl ?y]] ==> [refl [tensor ?x ?y]]]
+  [@rule tensor-concat [tensor [concat ?p ?q] ?r] ==> [concat [tensor ?p ?r] [tensor ?q ?r]]]
+]
+
+;; 5. Proofs: Auto-verified monoidal + path laws, plus user proofs
+[Proofs MonoidalPathChecks :in MonoidalPathTheory
+  ;; Auto-monoidal (verified by law checker): tensor(tensor(a,b),a) = tensor(a,tensor(b,a))
+  [assert-eq assoc [tensor [tensor a b] a] [tensor a [tensor b a]]]
+
+  ;; Auto-path (verified by law checker): concat(refl(a), p) = p
+  [assert-eq left-unit [concat [refl a] p] p]
+
+  ;; User: tensor(refl(unit), refl(a)) -> refl(tensor(unit,a)) -> refl(a)
+  ;; (tensor-refl fires, then mon-lunit normalizes inside refl)
+  [assert-eq tensor-unit [tensor [refl unit] [refl a]] [refl a]]
+
+  ;; Evaluate: tensor(inv(refl(a)), refl(b))
+  ;; inv(refl(a)) -> refl(a) [path inv-refl], then tensor(refl(a), refl(b)) -> refl(tensor(a,b)) [tensor-refl]
+  [eval tensor-inv [tensor [inv [refl a]] [refl b]]]
+]
+
+;; 6. Second substrate: Symmetric Monoidal engine (supports tensor; PathType works without Evaluator)
+[Substrate SymmetricEngine
+  @engine symmetric-monoidal
+  @resource-mode deep-copy            ;; Must support duplication (tensor-concat uses ?r twice)
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Universe MonoidalSymmetric :category MonoidalHoTT :substrate SymmetricEngine]
+
+;; 7. Target theory with same rules (same ops — both universes share MonoidalHoTT category)
+[Theory MonoidalPathSymTheory :in MonoidalSymmetric
+  [const a Term]
+  [const b Term]
+
+  ;; Same monoidal + user rules
+  [@rule mon-assoc  [tensor [tensor ?a ?b] ?c] ==> [tensor ?a [tensor ?b ?c]]]
+  [@rule mon-lunit  [tensor unit ?a] ==> ?a]
+  [@rule mon-runit  [tensor ?a unit] ==> ?a]
+  [@rule tensor-refl   [tensor [refl ?x] [refl ?y]] ==> [refl [tensor ?x ?y]]]
+  [@rule tensor-concat [tensor [concat ?p ?q] ?r] ==> [concat [tensor ?p ?r] [tensor ?q ?r]]]
+]
+
+;; 8. Functor (identity on ops — same category)
+[Functor MonoidalMap :from ParallelGraph :to SymmetricEngine :verify]
+
+;; Verify functor preserves equational theory
+[VerifyFunctor MonoidalMap :source MonoidalPathTheory :target MonoidalPathSymTheory]
+
+;; 9. Parallel functor (same direction, for NatTrans)
+[Functor MonoidalMap2 :from ParallelGraph :to SymmetricEngine]
+
+;; 10. Natural Transformations between parallel functors
+[NatTrans MonoidalUnit :from MonoidalMap :to MonoidalMap2
+  :component [Type id_type]
+  :component [Term id_term]
+]
+
+[NatTrans MonoidalCounit :from MonoidalMap :to MonoidalMap2
+  :component [Type eps_type]
+  :component [Term eps_term]
+]
+
+;; 11. Adjunction
+[Adjunction MonoidalAdj :left MonoidalMap :right MonoidalMap2
+  :unit MonoidalUnit :counit MonoidalCounit]
+
+;; Law verification summary:
+;;   MonoidalPathTheory: SymmetricMonoidal (6 tests) + PathType (4 tests, no ap-refl) = 10 total
+;;   MonoidalPathSymTheory: same 10 tests
+;;   VerifyFunctor: 5 user rules verified across substrates

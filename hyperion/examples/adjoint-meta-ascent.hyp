@@ -1,0 +1,328 @@
+;; The Adjoint Meta-Ascent
+;; =======================
+;;
+;; Forcing PathType to auto-inject higher-dimensional logic at the meta-level.
+;;
+;; If Hyperion is truly "frameworks all the way up," categorical rules must
+;; apply to functor categories. Natural transformations between functors ARE
+;; paths in a meta-category. The triangle identities of an adjunction ARE
+;; path equations — and auto-injected PathType rules give us the algebraic
+;; machinery to derive consequences for free.
+;;
+;; HONESTY CONTRACT:
+;;   The theory-level triangle identities MUST reference the actual NatTrans
+;;   component names (eta_comp, eps_comp) declared in [NatTrans] blocks.
+;;   Whiskering is expressed via ap_cat — PathType's action on paths —
+;;   not via opaque ghost constants. Deleting the [NatTrans] declarations
+;;   breaks the semantic contract between framework and theory.
+;;
+;; What this example verifies:
+;;   1. MetaCat with PathType compiles on two different substrates
+;;   2. Two parallel functors F, G with NatTrans unit/counit → Adjunction F ⊣ G
+;;   3. PathType auto-injects concat/inv/refl/ap rules at the meta-level
+;;   4. Triangle identities written in terms of ap_cat and NatTrans components
+;;   5. 11 proofs: triangle identities + derived path equations composed
+;;      purely from auto-injected path algebra
+;;   6. Equational theory preserved across substrate boundary via VerifyFunctor
+;;   7. Transported term normalizes correctly on the target substrate
+
+;; ================================================================
+;; 1. Meta-Category: objects are categories, morphisms are functors,
+;;    paths are natural isomorphisms
+;; ================================================================
+
+[Category MetaCat
+  [Object Cat]
+  [Morphism compose :domain [Cat Cat] :codomain Cat]
+  [PathType :refl refl_cat :concat concat_cat :inv inv_cat :ap ap_cat]
+  ;; ap_cat is the action on paths: given a functor and a natural transformation,
+  ;; it produces the whiskered natural transformation.
+]
+
+;; ================================================================
+;; 2. Two substrates with genuinely different Apeiron configurations
+;; ================================================================
+
+;; Homotopy substrate: paths are first-class, eta-contraction enabled
+[Substrate HomotopySub
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality topological-homotopy
+]
+
+;; Directed substrate: tree reduction, no eta, explicit binding
+[Substrate DirectedSub
+  @engine term-tree
+  @resource-mode deep-copy
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+;; ================================================================
+;; 3. Two universes from the same meta-category on different physics
+;; ================================================================
+
+[Universe MetaHoTT :category MetaCat :substrate HomotopySub]
+[Universe MetaDir  :category MetaCat :substrate DirectedSub]
+
+;; ================================================================
+;; 4. Functors + NatTrans + Adjunction (Hyperion-level structure)
+;; ================================================================
+
+;; Two parallel functors between substrates
+[Functor F :from HomotopySub :to DirectedSub]
+[Functor G :from HomotopySub :to DirectedSub]
+
+;; Unit η: F → G with component eta_comp at Cat
+;; Counit ε: G → F with component eps_comp at Cat
+;; These component names are referenced by the theory below.
+[NatTrans eta :from F :to G :component [Cat eta_comp]]
+[NatTrans eps :from G :to F :component [Cat eps_comp]]
+
+;; Adjunction F ⊣ G with unit η and counit ε
+[Adjunction FdashvG :left F :right G :unit eta :counit eps]
+
+;; ================================================================
+;; 5. Source theory: triangle identities via path algebra
+;;
+;;    PathType auto-injects 4 rules into every theory in this universe:
+;;      1. concat_cat(refl_cat(a), p) ==> p           [left unit]
+;;      2. concat_cat(p, refl_cat(a)) ==> p           [right unit]
+;;      3. inv_cat(refl_cat(a)) ==> refl_cat(a)       [inverse of identity]
+;;      4. concat_cat(concat_cat(p,q), r)
+;;           ==> concat_cat(p, concat_cat(q,r))       [associativity]
+;;
+;;    We add triangle identity axioms on top, expressed structurally:
+;;      - Whiskered forms use ap_cat (PathType's action on paths)
+;;      - Component names eta_comp/eps_comp match the [NatTrans] declarations
+;;      - This creates a semantic dependency on the framework-level structure
+;;
+;;      5. concat_cat(ap_cat(eps_comp, F_func), ap_cat(F_func, eta_comp))
+;;           ==> refl_cat(F_func)                     [first triangle]
+;;      6. concat_cat(ap_cat(G_func, eps_comp), ap_cat(eta_comp, G_func))
+;;           ==> refl_cat(G_func)                     [second triangle]
+;; ================================================================
+
+[Theory AdjointPaths :in MetaHoTT
+  ;; --- Category/Functor constants ---
+  [const A Cat]
+  [const B Cat]
+  [const F_func Cat]
+  [const G_func Cat]
+  [const id_func Cat]
+
+  ;; --- NatTrans components (MUST match [NatTrans] declarations above) ---
+  ;; These are the actual component names from [NatTrans eta :component [Cat eta_comp]]
+  ;; and [NatTrans eps :component [Cat eps_comp]]. Using them here creates the
+  ;; semantic link between framework-level adjunction structure and theory-level axioms.
+  [const eta_comp Cat]
+  [const eps_comp Cat]
+
+  ;; --- Functor composition rules ---
+  [@rule comp-assoc [compose [compose ?F ?G] ?H] ==> [compose ?F [compose ?G ?H]]]
+  [@rule comp-id-l  [compose id_func ?G] ==> ?G]
+  [@rule comp-id-r  [compose ?F id_func] ==> ?F]
+  [@rule comp-refl  [compose ?F [refl_cat ?G]] ==> [refl_cat [compose ?F ?G]]]
+
+  ;; --- Whiskered forms via ap_cat (PathType's action on paths) ---
+  ;;
+  ;; In a 2-category, whiskering applies a 1-cell (functor) to a 2-cell
+  ;; (natural transformation). PathType's ap_cat is exactly this operation:
+  ;; it lifts a morphism to act on paths.
+  ;;
+  ;; ap_cat(eps_comp, F_func) = ε whiskered by F  (counit post-composed with F)
+  ;; ap_cat(F_func, eta_comp) = F whiskered by η  (F pre-composed with unit)
+  ;; ap_cat(G_func, eps_comp) = G whiskered by ε  (G pre-composed with counit)
+  ;; ap_cat(eta_comp, G_func) = η whiskered by G  (unit post-composed with G)
+  [def eps_F [ap_cat eps_comp F_func]]
+  [def F_eta [ap_cat F_func eta_comp]]
+  [def G_eps [ap_cat G_func eps_comp]]
+  [def eta_G [ap_cat eta_comp G_func]]
+
+  ;; --- Triangle identities (axioms defining F ⊣ G) ---
+  ;;
+  ;; Written with expanded ap_cat forms so the rewrite patterns structurally
+  ;; reference the NatTrans components. The [def] names above are sugar —
+  ;; the normalizer expands them to these ap_cat terms before matching.
+  ;;
+  ;; First triangle:  (εF) · (Fη) = id_F
+  [@rule triangle-1
+    [concat_cat [ap_cat eps_comp F_func] [ap_cat F_func eta_comp]]
+    ==> [refl_cat F_func]]
+
+  ;; Second triangle: (Gε) · (ηG) = id_G
+  [@rule triangle-2
+    [concat_cat [ap_cat G_func eps_comp] [ap_cat eta_comp G_func]]
+    ==> [refl_cat G_func]]
+
+  ;; --- Normalization test term ---
+  [def meta_term [compose [compose id_func id_func] A]]
+]
+
+;; ================================================================
+;; 6. Proofs: triangle identities + auto-injected path algebra
+;; ================================================================
+
+[Proofs AdjointCheck :in AdjointPaths
+
+  ;; === Triangle identities hold ===
+  ;; The [def] names expand to ap_cat terms, which then match the triangle rules.
+
+  ;; First triangle: concat(εF, Fη) = refl(F_func)
+  ;; eps_F → ap_cat(eps_comp, F_func), F_eta → ap_cat(F_func, eta_comp)
+  ;; then triangle-1 fires
+  [assert-eq triangle-1-holds
+    [concat_cat eps_F F_eta]
+    [refl_cat F_func]]
+
+  ;; Second triangle: concat(Gε, ηG) = refl(G_func)
+  [assert-eq triangle-2-holds
+    [concat_cat G_eps eta_G]
+    [refl_cat G_func]]
+
+  ;; === Auto-injected path algebra (no user rules needed) ===
+
+  ;; inv(refl) = refl  (auto-injected rule 3)
+  [assert-eq inv-refl-F [inv_cat [refl_cat F_func]] [refl_cat F_func]]
+
+  ;; concat(refl(F), εF) = εF  (auto-injected left unit)
+  ;; LHS normalizes: refl stays, eps_F → ap_cat(eps_comp, F_func),
+  ;; left-unit fires → ap_cat(eps_comp, F_func). RHS also expands to same.
+  [assert-eq path-lunit [concat_cat [refl_cat F_func] eps_F] eps_F]
+
+  ;; concat(ηG, refl(G)) = ηG  (auto-injected right unit)
+  [assert-eq path-runit [concat_cat eta_G [refl_cat G_func]] eta_G]
+
+  ;; === Derived: triangle identities compose with path algebra ===
+  ;;
+  ;; NOTE: We nest triangle identities inside inv_cat or use left-unit position
+  ;; to avoid the auto-injected associativity rule firing before inner reduction.
+
+  ;; concat(refl(F), concat(εF, Fη)) = refl(F_func)
+  ;; Derivation:
+  ;;   → concat(refl(F), refl(F_func))   [inner: defs expand, triangle-1]
+  ;;   → refl(F_func)                    [left unit, auto-injected]
+  [assert-eq triangle-via-lunit
+    [concat_cat [refl_cat F_func] [concat_cat eps_F F_eta]]
+    [refl_cat F_func]]
+
+  ;; Same for second triangle
+  [assert-eq triangle-via-lunit-2
+    [concat_cat [refl_cat G_func] [concat_cat G_eps eta_G]]
+    [refl_cat G_func]]
+
+  ;; inv of a triangle identity: inv(concat(εF, Fη)) = refl(F_func)
+  ;; Derivation (2-step chain):
+  ;;   → inv(refl(F_func))   [child: defs expand, triangle-1]
+  ;;   → refl(F_func)        [inv(refl) = refl, auto-injected]
+  [assert-eq inv-triangle
+    [inv_cat [concat_cat eps_F F_eta]]
+    [refl_cat F_func]]
+
+  ;; 3-step chain: inv-refl feeds into left-unit
+  ;; concat(inv(refl(F_func)), εF) = εF
+  ;; Derivation:
+  ;;   → concat(refl(F_func), ap_cat(eps_comp,F_func))   [inv(refl) reduces]
+  ;;   → ap_cat(eps_comp, F_func)                         [left unit]
+  ;;   = eps_F (by def expansion of RHS)
+  [assert-eq inv-refl-then-lunit
+    [concat_cat [inv_cat [refl_cat F_func]] eps_F]
+    eps_F]
+
+  ;; === Functor composition interacts with path algebra ===
+  ;; compose(id_func, refl_cat(A)) = refl_cat(compose(id_func, A)) = refl_cat(A)
+  [assert-eq func-path-interaction
+    [compose id_func [refl_cat A]]
+    [refl_cat A]]
+
+  ;; The meta-term normalizes: compose(compose(id_func, id_func), A) = A
+  [assert-eq meta-normalization meta_term A]
+]
+
+;; ================================================================
+;; 7. Target theory (on directed substrate, same structural rules)
+;; ================================================================
+
+[Theory TargetPaths :in MetaDir
+  [const A Cat]
+  [const B Cat]
+  [const F_func Cat]
+  [const G_func Cat]
+  [const id_func Cat]
+  [const eta_comp Cat]
+  [const eps_comp Cat]
+
+  [@rule comp-assoc [compose [compose ?F ?G] ?H] ==> [compose ?F [compose ?G ?H]]]
+  [@rule comp-id-l  [compose id_func ?G] ==> ?G]
+  [@rule comp-id-r  [compose ?F id_func] ==> ?F]
+  [@rule comp-refl  [compose ?F [refl_cat ?G]] ==> [refl_cat [compose ?F ?G]]]
+  [@rule triangle-1
+    [concat_cat [ap_cat eps_comp F_func] [ap_cat F_func eta_comp]]
+    ==> [refl_cat F_func]]
+  [@rule triangle-2
+    [concat_cat [ap_cat G_func eps_comp] [ap_cat eta_comp G_func]]
+    ==> [refl_cat G_func]]
+]
+
+;; ================================================================
+;; 8. Equational preservation: triangle identities survive transport
+;; ================================================================
+
+[VerifyFunctor F :source AdjointPaths :target TargetPaths]
+
+;; ================================================================
+;; 9. Transport: normalized term crosses substrate boundary
+;; ================================================================
+
+[Theory TransportedAdj :in MetaDir
+  [const A Cat]
+  [Import transported_meta [F meta_term]]
+]
+
+[Proofs TransportCheck :in TransportedAdj
+  [assert-eq transport-ok transported_meta A]
+]
+
+;; ================================================================
+;; Summary of what "pass" proves:
+;; ================================================================
+;;
+;; 1. SELF-APPLICATION: MetaCat (categories of categories) with PathType
+;;    compiles to two different Apeiron substrates (interaction-graph with
+;;    homotopy equality vs term-tree with rewrite equality).
+;;
+;; 2. ADJUNCTION STRUCTURE: Hyperion-level Functor, NatTrans, Adjunction
+;;    declarations establish F ⊣ G with unit η and counit ε. The NatTrans
+;;    component names (eta_comp, eps_comp) are referenced by the theory.
+;;
+;; 3. AUTO-INJECTION: PathType injects 4 path algebra rules into every
+;;    theory — concat unit laws, inv(refl), associativity — without any
+;;    user code. These are the groupoid laws of ∞-category theory.
+;;
+;; 4. STRUCTURAL TRIANGLE IDENTITIES: The defining axioms of the adjunction
+;;    (εF · Fη = id_F, Gε · ηG = id_G) are rewrite rules whose patterns
+;;    explicitly reference NatTrans components via ap_cat (PathType's action
+;;    on paths). This creates a semantic dependency between framework-level
+;;    [NatTrans] declarations and theory-level axioms.
+;;
+;; 5. DERIVED EQUATIONS: 11 proofs exercise multi-step rewriting chains
+;;    where triangle axioms and auto-injected rules interleave:
+;;    - Both triangles via left-unit prefix (2-step chains)
+;;    - inv(triangle) reduces to refl (2-step chain)
+;;    - inv-refl feeds into left-unit (3-step chain)
+;;
+;; 6. EQUATIONAL PRESERVATION: VerifyFunctor confirms all 6 source rules
+;;    (4 composition + 2 triangle with ap_cat patterns) hold on the
+;;    directed substrate.
+;;
+;; 7. TRANSPORT: A normalized meta-term crosses the substrate boundary
+;;    via functor import and equals A on the target.
+;;
+;; REMAINING GAP: Hyperion does not yet auto-inject NatTrans component
+;; names as theory constants or auto-generate triangle identities from
+;; [Adjunction] declarations. The semantic link between [NatTrans eta
+;; :component [Cat eta_comp]] and [const eta_comp Cat] is by naming
+;; convention, not enforcement. A future version could close this gap
+;; by having [Adjunction] auto-inject whiskered triangle identity rules
+;; into theories, just as PathType auto-injects groupoid laws.

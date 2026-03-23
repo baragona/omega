@@ -31,6 +31,8 @@ pub struct JsonOutput {
     pub discoveries: Vec<Discovery>,
 }
 
+use apeiron::egraph::ProofTerm;
+
 use crate::adjunction::{self, AdjunctionDef};
 use crate::category::{self, CategoryDef};
 use crate::codegen;
@@ -92,6 +94,56 @@ pub struct HyperionSession {
     pub node_annotations: HashMap<String, String>,
     /// Pending assert-eq terms: name → (lhs_text, rhs_text) for discovery reporting
     pub pending_assertions: HashMap<String, (String, String)>,
+    /// Current meta-evaluation depth (prevents infinite meta-meta recursion)
+    meta_depth: u32,
+    /// Maximum allowed meta depth (default: 1 — Meta blocks cannot invoke other Meta blocks)
+    pub max_meta_depth: u32,
+    /// Meta splice bindings: name → result Sexp from optimize/synthesize
+    pub meta_bindings: HashMap<String, Sexp>,
+}
+
+/// Convert a ProofTerm into an S-expression for meta-level manipulation.
+fn proof_term_to_sexp(proof: &ProofTerm, sp: apeiron::parser::Span) -> Sexp {
+    match proof {
+        ProofTerm::Refl(expr) => Sexp::List(
+            vec![Sexp::Atom("refl".into(), sp), Sexp::Atom(expr.clone(), sp)],
+            sp,
+        ),
+        ProofTerm::Step { rule, from, to, sub_proofs } => {
+            let mut items = vec![
+                Sexp::Atom("step".into(), sp),
+                Sexp::Atom(rule.clone(), sp),
+                Sexp::Atom(from.clone(), sp),
+                Sexp::Atom(to.clone(), sp),
+            ];
+            for sub in sub_proofs {
+                items.push(proof_term_to_sexp(sub, sp));
+            }
+            Sexp::List(items, sp)
+        }
+        ProofTerm::Concat(a, b) => Sexp::List(
+            vec![
+                Sexp::Atom("concat".into(), sp),
+                proof_term_to_sexp(a, sp),
+                proof_term_to_sexp(b, sp),
+            ],
+            sp,
+        ),
+        ProofTerm::Inv(p) => Sexp::List(
+            vec![Sexp::Atom("inv".into(), sp), proof_term_to_sexp(p, sp)],
+            sp,
+        ),
+        ProofTerm::Cong { func, arg_proofs } => {
+            let mut items = vec![
+                Sexp::Atom("cong".into(), sp),
+                Sexp::Atom(func.clone(), sp),
+            ];
+            for sub in arg_proofs {
+                items.push(proof_term_to_sexp(sub, sp));
+            }
+            Sexp::List(items, sp)
+        }
+    }
 }
 
 impl HyperionSession {
@@ -115,6 +167,9 @@ impl HyperionSession {
             discoveries: Vec::new(),
             node_annotations: HashMap::new(),
             pending_assertions: HashMap::new(),
+            meta_depth: 0,
+            max_meta_depth: 1,
+            meta_bindings: HashMap::new(),
         }
     }
 
@@ -260,6 +315,7 @@ impl HyperionSession {
             "Proofs" => self.process_proofs(sexp),
             "VerifyFunctor" => self.process_verify_functor(items),
             "WeakEquivalence" => self.process_weak_equivalence(items),
+            "Meta" => self.process_meta(items),
             _ => Err(HyperionError::UnknownBlock {
                 name: head.to_string(),
             }),
@@ -1955,6 +2011,443 @@ impl HyperionSession {
     }
 
     /// Drain Apeiron output into our output buffer, parsing structured results.
+    /// Process a `[Meta <command> ...]` compile-time metaprogramming block.
+    ///
+    /// Supported commands:
+    ///   [Meta optimize :in TheoryName EXPR]
+    ///     — Normalize EXPR via the theory's rewrite rules + e-graph, emit the result.
+    ///   [Meta synthesize :in TheoryName :goal EXPR]
+    ///     — Use assert-exists to find a witness satisfying the goal pattern.
+    ///   [Meta reify-passes :universe UniName]
+    ///     — Emit the compilation passes for a universe as structured output.
+    ///   [Meta reify-theory :theory TheoryName]
+    ///     — Emit the theory's structure (sorts, operators, rules) as structured output.
+    fn process_meta(&mut self, items: &[Sexp]) -> Result<()> {
+        if items.len() < 2 {
+            return Err(HyperionError::ParseError {
+                block: "Meta".into(),
+                detail: "missing meta command".into(),
+            });
+        }
+
+        // Meta-level bounding: prevent infinite meta-meta recursion
+        if self.meta_depth >= self.max_meta_depth {
+            return Err(HyperionError::ParseError {
+                block: "Meta".into(),
+                detail: format!(
+                    "meta depth {} exceeds maximum {} (meta blocks cannot invoke other meta blocks)",
+                    self.meta_depth + 1, self.max_meta_depth
+                ),
+            });
+        }
+        self.meta_depth += 1;
+
+        let command = items[1].as_atom().ok_or_else(|| HyperionError::ParseError {
+            block: "Meta".into(),
+            detail: "meta command must be an atom".into(),
+        })?;
+
+        let result = match command {
+            "optimize" => self.meta_optimize(items),
+            "synthesize" => self.meta_synthesize(items),
+            "splice" => self.meta_splice(items),
+            "reify-passes" => self.meta_reify_passes(items),
+            "reify-theory" => self.meta_reify_theory(items),
+            "reify-proof" => self.meta_reify_proof(items),
+            _ => Err(HyperionError::ParseError {
+                block: "Meta".into(),
+                detail: format!("unknown meta command '{}'. Expected: optimize, synthesize, splice, reify-passes, reify-theory, reify-proof", command),
+            }),
+        };
+
+        self.meta_depth -= 1;
+        result
+    }
+
+    /// Parse optional `:fuel N` from Meta items. Returns fuel value if present.
+    fn parse_meta_fuel(&self, items: &[Sexp]) -> Option<usize> {
+        let fuel_pos = items.iter().position(|s| s.as_atom() == Some(":fuel"))?;
+        items.get(fuel_pos + 1)
+            .and_then(|s| s.as_atom())
+            .and_then(|s| s.parse::<usize>().ok())
+    }
+
+    /// Set Apeiron e-graph fuel override, returning the previous value.
+    fn set_meta_fuel(&mut self, items: &[Sexp]) -> Option<(usize, usize)> {
+        let fuel = self.parse_meta_fuel(items);
+        let prev = self.apeiron.egraph_fuel;
+        if let Some(n) = fuel {
+            self.apeiron.egraph_fuel = Some((30.min(n / 100 + 1), n));
+        } else {
+            // Default meta fuel: 5000 nodes (more conservative than Apeiron's 10k)
+            self.apeiron.egraph_fuel = Some((30, 5000));
+        }
+        prev
+    }
+
+    /// Restore Apeiron e-graph fuel to previous value.
+    fn restore_meta_fuel(&mut self, prev: Option<(usize, usize)>) {
+        self.apeiron.egraph_fuel = prev;
+    }
+
+    /// [Meta optimize :fuel N :in TheoryName EXPR] — normalize via rewrite + e-graph
+    fn meta_optimize(&mut self, items: &[Sexp]) -> Result<()> {
+        let sp = apeiron::parser::Span::default();
+        let prev_fuel = self.set_meta_fuel(items);
+
+        // Parse :in TheoryName
+        let in_pos = items.iter().position(|s| s.as_atom() == Some(":in"))
+            .ok_or_else(|| HyperionError::ParseError {
+                block: "Meta".into(),
+                detail: "optimize requires :in <TheoryName>".into(),
+            })?;
+        let theory_name = items.get(in_pos + 1)
+            .and_then(|s| s.as_atom())
+            .ok_or_else(|| HyperionError::ParseError {
+                block: "Meta".into(),
+                detail: "missing theory name after :in".into(),
+            })?;
+
+        // Collect expression items (skip keyword pairs like :fuel N)
+        let exprs: Vec<&Sexp> = {
+            let mut result = Vec::new();
+            let mut j = in_pos + 2;
+            while j < items.len() {
+                if let Some(kw) = items[j].as_atom() {
+                    if kw.starts_with(':') { j += 2; continue; }
+                }
+                result.push(&items[j]);
+                j += 1;
+            }
+            result
+        };
+        if exprs.is_empty() {
+            self.restore_meta_fuel(prev_fuel);
+            return Err(HyperionError::ParseError {
+                block: "Meta".into(),
+                detail: "optimize requires at least one expression".into(),
+            });
+        }
+
+        // Build a Proofs block with eval-simplify for each expression
+        let proofs_name = format!("__meta_opt_{}", theory_name);
+        let mut proof_items: Vec<Sexp> = Vec::new();
+        proof_items.push(Sexp::Atom("Proofs".into(), sp));
+        proof_items.push(Sexp::Atom(proofs_name, sp));
+        proof_items.push(Sexp::Atom(":in".into(), sp));
+        proof_items.push(Sexp::Atom(theory_name.to_string(), sp));
+
+        for (i, expr) in exprs.iter().enumerate() {
+            let name = format!("meta-opt-{}", i);
+            proof_items.push(Sexp::List(
+                vec![
+                    Sexp::Atom("eval-simplify".into(), sp),
+                    Sexp::Atom(name.clone(), sp),
+                    (*expr).clone(),
+                ],
+                sp,
+            ));
+        }
+
+        let proofs_sexp = Sexp::List(proof_items, sp);
+        let result = self.apeiron.process(&proofs_sexp);
+
+        // Drain and report: capture [SIMPLIFY] output as [META] output
+        let lines: Vec<String> = self.apeiron.output.drain(..).collect();
+        for line in &lines {
+            if line.starts_with("[SIMPLIFY] ") {
+                let meta_line = format!("[META] optimize: {}", &line[11..]);
+                self.output.push(meta_line.clone());
+                self.record_result("meta-optimize", "valid",
+                    Some("meta:optimize".into()), Some(meta_line));
+            }
+        }
+        self.output.extend(lines);
+
+        self.restore_meta_fuel(prev_fuel);
+        Ok(result?)
+    }
+
+    /// [Meta synthesize :fuel N :in TheoryName :goal EXPR] — find a witness via assert-exists
+    fn meta_synthesize(&mut self, items: &[Sexp]) -> Result<()> {
+        let sp = apeiron::parser::Span::default();
+        let prev_fuel = self.set_meta_fuel(items);
+
+        // Parse :in TheoryName
+        let in_pos = items.iter().position(|s| s.as_atom() == Some(":in"))
+            .ok_or_else(|| HyperionError::ParseError {
+                block: "Meta".into(),
+                detail: "synthesize requires :in <TheoryName>".into(),
+            })?;
+        let theory_name = items.get(in_pos + 1)
+            .and_then(|s| s.as_atom())
+            .ok_or_else(|| HyperionError::ParseError {
+                block: "Meta".into(),
+                detail: "missing theory name after :in".into(),
+            })?;
+
+        // Parse :goal EXPR
+        let goal_pos = items.iter().position(|s| s.as_atom() == Some(":goal"))
+            .ok_or_else(|| HyperionError::ParseError {
+                block: "Meta".into(),
+                detail: "synthesize requires :goal <EXPR>".into(),
+            })?;
+        let goal_expr = items.get(goal_pos + 1)
+            .ok_or_else(|| HyperionError::ParseError {
+                block: "Meta".into(),
+                detail: "missing expression after :goal".into(),
+            })?;
+
+        // Build a Proofs block with assert-exists
+        let proofs_name = format!("__meta_synth_{}", theory_name);
+        let mut proof_items: Vec<Sexp> = Vec::new();
+        proof_items.push(Sexp::Atom("Proofs".into(), sp));
+        proof_items.push(Sexp::Atom(proofs_name, sp));
+        proof_items.push(Sexp::Atom(":in".into(), sp));
+        proof_items.push(Sexp::Atom(theory_name.to_string(), sp));
+
+        proof_items.push(Sexp::List(
+            vec![
+                Sexp::Atom("assert-exists".into(), sp),
+                Sexp::Atom("meta-synthesis".into(), sp),
+                Sexp::Atom(":such-that".into(), sp),
+                goal_expr.clone(),
+            ],
+            sp,
+        ));
+
+        let proofs_sexp = Sexp::List(proof_items, sp);
+        let result = match self.apeiron.process(&proofs_sexp) {
+            Ok(()) => {
+                self.drain_apeiron_output();
+                let msg = format!("[META] synthesize: witness found for goal in {}", theory_name);
+                self.output.push(msg.clone());
+                self.record_result("meta-synthesize", "valid",
+                    Some("meta:synthesize".into()), Some(msg));
+                Ok(())
+            }
+            Err(e) => {
+                self.drain_apeiron_output();
+                let msg = format!("[META] synthesize: no witness found — {}", e);
+                self.output.push(msg);
+                Err(HyperionError::ParseError {
+                    block: "Meta".into(),
+                    detail: format!("synthesis failed: {}", e),
+                })
+            }
+        };
+        self.restore_meta_fuel(prev_fuel);
+        result
+    }
+
+    /// [Meta reify-passes :universe UniName] — emit compilation passes as structured data
+    fn meta_reify_passes(&mut self, items: &[Sexp]) -> Result<()> {
+        let uni_pos = items.iter().position(|s| s.as_atom() == Some(":universe"))
+            .ok_or_else(|| HyperionError::ParseError {
+                block: "Meta".into(),
+                detail: "reify-passes requires :universe <Name>".into(),
+            })?;
+        let uni_name = items.get(uni_pos + 1)
+            .and_then(|s| s.as_atom())
+            .ok_or_else(|| HyperionError::ParseError {
+                block: "Meta".into(),
+                detail: "missing universe name after :universe".into(),
+            })?;
+
+        let compiled = self.universes.get(uni_name)
+            .ok_or_else(|| HyperionError::Undefined {
+                kind: "Universe".into(),
+                name: uni_name.to_string(),
+            })?;
+
+        if compiled.passes.is_empty() {
+            let msg = format!("[META] reify-passes: {} is native (zero passes)", uni_name);
+            self.output.push(msg.clone());
+            self.record_result("meta-reify-passes", "valid",
+                Some(format!("meta:reify-passes:{}", uni_name)), Some(msg));
+        } else {
+            for pass in &compiled.passes {
+                let msg = format!("[META] reify-passes: {} → {} ({})",
+                    uni_name, pass.name(), pass.description());
+                self.output.push(msg.clone());
+            }
+            let summary = format!("[META] reify-passes: {} has {} compilation pass(es)",
+                uni_name, compiled.passes.len());
+            self.output.push(summary.clone());
+            self.record_result("meta-reify-passes", "valid",
+                Some(format!("meta:reify-passes:{}", uni_name)), Some(summary));
+        }
+
+        Ok(())
+    }
+
+    /// [Meta reify-theory :theory TheoryName] — emit theory structure
+    fn meta_reify_theory(&mut self, items: &[Sexp]) -> Result<()> {
+        let th_pos = items.iter().position(|s| s.as_atom() == Some(":theory"))
+            .ok_or_else(|| HyperionError::ParseError {
+                block: "Meta".into(),
+                detail: "reify-theory requires :theory <Name>".into(),
+            })?;
+        let theory_name = items.get(th_pos + 1)
+            .and_then(|s| s.as_atom())
+            .ok_or_else(|| HyperionError::ParseError {
+                block: "Meta".into(),
+                detail: "missing theory name after :theory".into(),
+            })?;
+
+        // Check VN theories first
+        if let Some(vn) = self.vn_theories.get(theory_name) {
+            self.output.push(format!("[META] reify-theory: {} (first-order)", theory_name));
+            self.output.push(format!("[META]   sorts: {}", vn.sorts.join(", ")));
+            self.output.push(format!("[META]   operators: {}", vn.operators.join(", ")));
+            self.output.push(format!("[META]   rules: {}", vn.rules.len()));
+            for rule in &vn.rules {
+                self.output.push(format!("[META]   rule {}: {} ==> {}",
+                    rule.name, rule.lhs, rule.rhs));
+            }
+        } else {
+            // For Apeiron-backed theories, we can report what we know
+            self.output.push(format!("[META] reify-theory: {} (Apeiron-backed)", theory_name));
+            // Check theory_rules for functor verification
+            if let Some(rules) = self.theory_rules.get(theory_name) {
+                self.output.push(format!("[META]   rules: {}", rules.len()));
+                for (lhs, rhs) in rules {
+                    self.output.push(format!("[META]   rule: {} ==> {}",
+                        lhs, rhs));
+                }
+            }
+        }
+
+        self.record_result("meta-reify-theory", "valid",
+            Some(format!("meta:reify-theory:{}", theory_name)), None);
+        Ok(())
+    }
+
+    /// [Meta reify-proof :name <proof-name>] — extract proof term as AST data
+    fn meta_reify_proof(&mut self, items: &[Sexp]) -> Result<()> {
+        let name_pos = items.iter().position(|s| s.as_atom() == Some(":name"))
+            .ok_or_else(|| HyperionError::ParseError {
+                block: "Meta".into(),
+                detail: "reify-proof requires :name <proof-name>".into(),
+            })?;
+        let proof_name = items.get(name_pos + 1)
+            .and_then(|s| s.as_atom())
+            .ok_or_else(|| HyperionError::ParseError {
+                block: "Meta".into(),
+                detail: "missing proof name after :name".into(),
+            })?;
+
+        let proof = self.apeiron.proof_terms.get(proof_name)
+            .ok_or_else(|| HyperionError::Undefined {
+                kind: "Proof".into(),
+                name: proof_name.to_string(),
+            })?;
+
+        // Convert ProofTerm to Sexp for meta-level manipulation
+        let sp = apeiron::parser::Span::default();
+        let proof_sexp = proof_term_to_sexp(proof, sp);
+
+        let msg = format!("[META] reify-proof: {} = {}", proof_name, proof_sexp);
+        self.output.push(msg.clone());
+
+        // Store as meta binding for use by splice
+        self.meta_bindings.insert(proof_name.to_string(), proof_sexp);
+
+        self.record_result("meta-reify-proof", "valid",
+            Some(format!("meta:reify-proof:{}", proof_name)), Some(msg));
+        Ok(())
+    }
+
+    /// [Meta splice <name> [optimize/synthesize ...]] — run meta command, bind result as definition
+    fn meta_splice(&mut self, items: &[Sexp]) -> Result<()> {
+        if items.len() < 4 {
+            return Err(HyperionError::ParseError {
+                block: "Meta".into(),
+                detail: "splice requires: splice <name> [<meta-command> ...]".into(),
+            });
+        }
+
+        let bind_name = items[2].as_atom()
+            .ok_or_else(|| HyperionError::ParseError {
+                block: "Meta".into(),
+                detail: "splice binding name must be an atom".into(),
+            })?
+            .to_string();
+
+        // The inner command is a list: [optimize :in T expr] or [synthesize :in T :goal expr]
+        let inner = items[3].as_list()
+            .ok_or_else(|| HyperionError::ParseError {
+                block: "Meta".into(),
+                detail: "splice inner command must be a list".into(),
+            })?;
+
+        if inner.is_empty() {
+            return Err(HyperionError::ParseError {
+                block: "Meta".into(),
+                detail: "splice inner command is empty".into(),
+            });
+        }
+
+        let inner_cmd = inner[0].as_atom().unwrap_or("");
+
+        // Build a full Meta item list: [Meta <inner_cmd> <inner_args...>]
+        let sp = apeiron::parser::Span::default();
+        let mut meta_items = vec![Sexp::Atom("Meta".into(), sp)];
+        meta_items.extend(inner.iter().cloned());
+
+        // Capture output before running the inner command
+        let output_before = self.output.len();
+
+        match inner_cmd {
+            "optimize" => {
+                self.meta_optimize(&meta_items)?;
+                // Extract simplified expression from output
+                for line in &self.output[output_before..] {
+                    if line.starts_with("[META] optimize: ") {
+                        // Parse "name = expr (N interactions)"
+                        let rest = &line[17..];
+                        if let Some(eq_pos) = rest.find(" = ") {
+                            let after_eq = &rest[eq_pos + 3..];
+                            // Strip trailing " (N interactions)"
+                            let expr_str = if let Some(paren) = after_eq.rfind(" (") {
+                                &after_eq[..paren]
+                            } else {
+                                after_eq
+                            };
+                            // Parse the result expression
+                            if let Ok(sexps) = apeiron::parser::parse(expr_str) {
+                                if let Some(sexp) = sexps.into_iter().next() {
+                                    self.meta_bindings.insert(bind_name.clone(), sexp);
+                                }
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+            "synthesize" => {
+                self.meta_synthesize(&meta_items)?;
+                // Witness isn't directly available as sexp yet, store a marker
+                self.meta_bindings.insert(
+                    bind_name.clone(),
+                    Sexp::Atom(format!("__witness_{}", bind_name), sp),
+                );
+            }
+            _ => {
+                return Err(HyperionError::ParseError {
+                    block: "Meta".into(),
+                    detail: format!("splice only supports optimize and synthesize, got '{}'", inner_cmd),
+                });
+            }
+        }
+
+        let msg = format!("[META] splice: {} bound", bind_name);
+        self.output.push(msg.clone());
+        self.record_result("meta-splice", "valid",
+            Some(format!("meta:splice:{}", bind_name)), Some(msg));
+        Ok(())
+    }
+
     fn drain_apeiron_output(&mut self) {
         let lines: Vec<String> = self.apeiron.output.drain(..).collect();
         for line in &lines {

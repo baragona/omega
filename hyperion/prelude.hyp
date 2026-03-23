@@ -45,3 +45,48 @@
   @barrier transparent
   @equality rewrite-equivalence
 ]
+
+;; ============================================================
+;; Meta-Categorical Infrastructure: Hyperion's AST as Objects
+;; ============================================================
+
+;; The reified AST category: Hyperion talks about its own code.
+;; Objects are the syntactic categories of the framework itself.
+;; Morphisms are the compiler's own operations, exposed as first-class data.
+[Category MetaCat
+  ;; Syntactic categories
+  [Object Expr]          ;; Terms / expressions
+  [Object Sort]          ;; Sort names
+  [Object RuleDef]       ;; Rewrite rule definitions
+  [Object TheoryDef]     ;; Theory definitions
+  [Object CatDef]        ;; Category definitions
+  [Object SubDef]        ;; Substrate definitions
+  [Object UniDef]        ;; Universe definitions
+  [Object PassDef]       ;; Compilation pass annotations
+
+  ;; Structural morphisms: navigating the AST
+  [Morphism rule-lhs     :domain [RuleDef]           :codomain Expr]
+  [Morphism rule-rhs     :domain [RuleDef]           :codomain Expr]
+  [Morphism theory-rules :domain [TheoryDef]         :codomain RuleDef]
+  [Morphism uni-cat      :domain [UniDef]            :codomain CatDef]
+  [Morphism uni-sub      :domain [UniDef]            :codomain SubDef]
+  [Morphism uni-passes   :domain [UniDef]            :codomain PassDef]
+
+  ;; Compiler operations as morphisms
+  [Morphism normalize    :domain [Expr TheoryDef]    :codomain Expr]
+  [Morphism simplify     :domain [Expr TheoryDef]    :codomain Expr]
+  [Morphism synthesize   :domain [Expr TheoryDef]    :codomain Expr]
+
+  ;; CCC structure: MetaCat has lambdas (code-generating functions)
+  [Exponential meta-lam :object Expr]
+  [Evaluator meta-app]
+]
+
+;; The compiler substrate: Hyperion's own engine.
+;; Equality-saturation because the compiler uses e-graphs internally.
+[Substrate CompilerEngine
+  @engine compiler
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality equality-saturation
+]

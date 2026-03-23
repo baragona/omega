@@ -47,15 +47,20 @@ pub fn compile_universe(
     })
 }
 
-/// Check if a substrate uses a first-order engine (VonNeumann or NetworkRpc).
+/// Check if a substrate uses a first-order engine (VonNeumann, NetworkRpc, or SystemIO).
 /// These engines bypass Apeiron and use direct rewrite-rule theories.
 pub fn is_first_order_engine(sub: &SubstrateDef) -> bool {
-    matches!(sub.engine, Engine::VonNeumann | Engine::NetworkRpc)
+    matches!(sub.engine, Engine::VonNeumann | Engine::NetworkRpc | Engine::SystemIO)
 }
 
 /// Check if a substrate uses the Von Neumann engine.
 pub fn is_von_neumann(sub: &SubstrateDef) -> bool {
     sub.engine == Engine::VonNeumann
+}
+
+/// Check if a substrate uses the SystemIO engine.
+pub fn is_system_io(sub: &SubstrateDef) -> bool {
+    sub.engine == Engine::SystemIO
 }
 
 /// Analyze compatibility between category and substrate, returning any
@@ -79,7 +84,7 @@ fn check_compatibility(cat: &CategoryDef, sub: &SubstrateDef) -> Result<Vec<Comp
     let supports_lambda = matches!(
         sub.engine,
         Engine::InteractionGraph | Engine::TermTree | Engine::AbstractMachine
-        | Engine::ConcurrentGraph
+        | Engine::ConcurrentGraph | Engine::Compiler
     );
 
     let supports_tensor = matches!(

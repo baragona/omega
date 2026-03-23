@@ -1,0 +1,127 @@
+;; Hyperion Example: Meta-Circular Features
+;;
+;; Demonstrates compile-time metaprogramming via [Meta ...] blocks:
+;;   - reify-passes: inspect compilation passes of a universe
+;;   - reify-theory: inspect structure of first-order theories
+;;   - optimize: e-graph simplification at compile time
+;;
+;; Run: hyperion check examples/meta-demo.hyp -v
+
+;; =================================================================
+;; Categories
+;; =================================================================
+
+[Category CCC
+  [Object Type]
+  [Object Term]
+  [Morphism arrow :domain [Type Type] :codomain Type]
+  [Morphism app :domain [Term Term] :codomain Term]
+  [Exponential lam :object Term]
+  [Evaluator app]
+]
+
+[Category SimpleCat
+  [Object Elem]
+  [Morphism compose :domain [Elem Elem] :codomain Elem]
+]
+
+;; =================================================================
+;; Substrates
+;; =================================================================
+
+[Substrate INet
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Substrate LinearSub
+  @engine interaction-graph
+  @resource-mode strictly-linear
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Substrate VNSub
+  @engine von-neumann
+  @resource-mode deep-copy
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+;; =================================================================
+;; Universes
+;; =================================================================
+
+;; Native: CCC on INet needs no passes
+[Universe NativeWorld :category CCC :substrate INet]
+
+;; Needs BangModality pass: CCC (has exponential) on strictly-linear substrate
+[Universe BangWorld :category CCC :substrate LinearSub]
+
+;; First-order VN universe
+[Universe VNWorld :category SimpleCat :substrate VNSub]
+
+;; =================================================================
+;; Theories
+;; =================================================================
+
+[Theory NatTheory :in NativeWorld
+  [const nat Type]
+  [const zero Term]
+  [const succ Term]
+  [const add Term]
+  [@rule add-zero [app [app add ?x] zero] ==> ?x]
+  [@rule add-succ [app [app add ?x] [app succ ?y]] ==> [app succ [app [app add ?x] ?y]]]
+  [@law add-comm [app [app add ?a] ?b] === [app [app add ?b] ?a]]
+]
+
+[Theory BangDemo :in BangWorld :no-laws
+  [const val Type]
+  [const unit Term]
+  [const pair Term]
+]
+
+[Theory StateMachine :in VNWorld
+  [@sort State]
+  [@op idle : State]
+  [@op running : State]
+  [@op done : State]
+  [@rule step1 [compose idle running] ==> running]
+  [@rule step2 [compose running done] ==> done]
+]
+
+;; =================================================================
+;; Meta: Reify Passes
+;; =================================================================
+
+;; Inspect what passes NativeWorld needs (should be zero)
+[Meta reify-passes :universe NativeWorld]
+
+;; Inspect what passes BangWorld needs (should have BangModality)
+[Meta reify-passes :universe BangWorld]
+
+;; =================================================================
+;; Meta: Reify Theory
+;; =================================================================
+
+;; Inspect the VN theory structure
+[Meta reify-theory :theory StateMachine]
+
+;; =================================================================
+;; Meta: Optimize via E-Graph
+;; =================================================================
+
+;; Use compile-time e-graph to simplify expressions in NatTheory
+[Meta optimize :in NatTheory [app [app add [app [app add zero] [app succ zero]]] zero]]
+
+;; Optimize with explicit fuel limit (conservative: 2000 nodes)
+[Meta optimize :fuel 2000 :in NatTheory [app [app add zero] zero]]
+
+;; =================================================================
+;; Meta: Splice — bind optimized result as a definition
+;; =================================================================
+
+;; Run optimize and bind the result under the name "fast-expr"
+[Meta splice fast-expr [optimize :in NatTheory [app [app add zero] [app succ zero]]]]

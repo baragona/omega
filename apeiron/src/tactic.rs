@@ -218,7 +218,7 @@ fn try_egraph_equality(state: &mut ProofState, graph_rules: &[RewriteRule]) -> b
             let rhs = &items[2];
             let empty: Vec<String> = vec![];
             let filtered = egraph::filter_barrier_rules(graph_rules, &empty);
-            let result = egraph::check_equal_egraph(lhs, rhs, &filtered);
+            let result = egraph::check_equal_egraph(lhs, rhs, &filtered, egraph::EGraphFuel::default());
             if result == egraph::EGraphResult::Equal {
                 state.goals.remove(0);
                 return true;

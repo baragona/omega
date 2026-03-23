@@ -16,6 +16,15 @@ pub enum Engine {
     /// Distributed RPC: first-order like VonNeumann, but execution spans
     /// network boundaries. Requires serialization of all cross-partition data.
     NetworkRpc,
+    /// Compiler engine: the Hyperion compiler itself as an execution substrate.
+    /// Theories in this engine can manipulate ASTs, invoke the e-graph, and
+    /// synthesize code at compile time. Enables meta-circular bootstrapping.
+    Compiler,
+    /// System I/O engine: first-order like VonNeumann, but with a distinguished
+    /// Effect sort that compiles to trait methods. Combined with strictly-linear
+    /// resource mode, enforces that file descriptors, sockets, and handles are
+    /// opened exactly once and closed exactly once.
+    SystemIO,
 }
 
 /// Resource management mode.
@@ -182,10 +191,12 @@ fn parse_engine(val: &str, substrate: &str) -> Result<Engine> {
         "reversible-graph" => Ok(Engine::ReversibleGraph),
         "concurrent-graph" => Ok(Engine::ConcurrentGraph),
         "network-rpc" => Ok(Engine::NetworkRpc),
+        "compiler" => Ok(Engine::Compiler),
+        "system-io" | "systemio" => Ok(Engine::SystemIO),
         _ => Err(HyperionError::ParseError {
             block: "Substrate".into(),
             detail: format!(
-                "Substrate '{}': unknown engine '{}'. Expected one of: interaction-graph, term-tree, symmetric-monoidal, cellular-automaton, abstract-machine, von-neumann, reversible-graph, concurrent-graph, network-rpc",
+                "Substrate '{}': unknown engine '{}'. Expected one of: interaction-graph, term-tree, symmetric-monoidal, cellular-automaton, abstract-machine, von-neumann, reversible-graph, concurrent-graph, network-rpc, compiler, system-io",
                 substrate, val
             ),
         }),

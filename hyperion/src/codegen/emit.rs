@@ -56,6 +56,7 @@ fn emit_module(module: &RustModule) -> String {
         match item {
             RustItem::Enum(e) => emit_enum(e, &mut buf),
             RustItem::Function(f) => emit_function(f, &mut buf),
+            RustItem::Trait(t) => emit_trait(t, &mut buf),
         }
     }
 
@@ -82,8 +83,37 @@ fn emit_enum(e: &RustEnum, buf: &mut String) {
     buf.push_str("}\n");
 }
 
+fn emit_trait(t: &RustTrait, buf: &mut String) {
+    buf.push_str(&format!("pub trait {} {{\n", t.name));
+    for m in &t.methods {
+        buf.push_str(&format!("    fn {}(&mut self", m.name));
+        for p in &m.params {
+            buf.push_str(&format!(", {}: ", p.name));
+            emit_type(&p.ty, buf);
+        }
+        buf.push(')');
+        match &m.ret {
+            RustType::Unit => {}
+            other => {
+                buf.push_str(" -> ");
+                emit_type(other, buf);
+            }
+        }
+        buf.push_str(";\n");
+    }
+    buf.push_str("}\n");
+}
+
 fn emit_function(f: &RustFunction, buf: &mut String) {
-    buf.push_str(&format!("pub fn {}(", f.name));
+    buf.push_str(&format!("pub fn {}", f.name));
+    if let Some(ref trait_name) = f.effects_trait {
+        buf.push_str(&format!("(effects: &mut impl {}", trait_name));
+        if !f.params.is_empty() {
+            buf.push_str(", ");
+        }
+    } else {
+        buf.push('(');
+    }
     for (i, p) in f.params.iter().enumerate() {
         if i > 0 {
             buf.push_str(", ");
@@ -93,7 +123,7 @@ fn emit_function(f: &RustFunction, buf: &mut String) {
     }
     buf.push(')');
     match &f.ret {
-        RustType::Named(n) if n == "()" => {}
+        RustType::Unit => {}
         other => {
             buf.push_str(" -> ");
             emit_type(other, buf);
@@ -113,6 +143,17 @@ fn emit_type(ty: &RustType, buf: &mut String) {
             emit_type(inner, buf);
             buf.push('>');
         }
+        RustType::Tuple(elems) => {
+            buf.push('(');
+            for (i, e) in elems.iter().enumerate() {
+                if i > 0 {
+                    buf.push_str(", ");
+                }
+                emit_type(e, buf);
+            }
+            buf.push(')');
+        }
+        RustType::Unit => buf.push_str("()"),
     }
 }
 
@@ -147,7 +188,7 @@ fn emit_expr_impl(expr: &RustExpr, buf: &mut String, indent: Option<usize>) {
         }
         RustExpr::Call { func, args } => {
             if func.is_empty() {
-                // Tuple expression
+                // Tuple expression (legacy path)
                 buf.push('(');
                 for (i, a) in args.iter().enumerate() {
                     if i > 0 {
@@ -166,6 +207,26 @@ fn emit_expr_impl(expr: &RustExpr, buf: &mut String, indent: Option<usize>) {
                 }
                 buf.push(')');
             }
+        }
+        RustExpr::EffectCall { method, args } => {
+            buf.push_str(&format!("effects.{}(", method));
+            for (i, a) in args.iter().enumerate() {
+                if i > 0 {
+                    buf.push_str(", ");
+                }
+                emit_expr_inline(a, buf);
+            }
+            buf.push(')');
+        }
+        RustExpr::TupleExpr(elems) => {
+            buf.push('(');
+            for (i, e) in elems.iter().enumerate() {
+                if i > 0 {
+                    buf.push_str(", ");
+                }
+                emit_expr_inline(e, buf);
+            }
+            buf.push(')');
         }
         RustExpr::BoxNew(inner) => {
             buf.push_str("Box::new(");
@@ -224,7 +285,7 @@ fn emit_pattern(pat: &RustPattern, buf: &mut String) {
             fields,
         } => {
             if enum_name.is_empty() && variant.is_empty() {
-                // Tuple pattern
+                // Tuple pattern (legacy path)
                 buf.push('(');
                 for (i, f) in fields.iter().enumerate() {
                     if i > 0 {
@@ -246,6 +307,16 @@ fn emit_pattern(pat: &RustPattern, buf: &mut String) {
                     buf.push(')');
                 }
             }
+        }
+        RustPattern::TuplePattern(elems) => {
+            buf.push('(');
+            for (i, e) in elems.iter().enumerate() {
+                if i > 0 {
+                    buf.push_str(", ");
+                }
+                emit_pattern(e, buf);
+            }
+            buf.push(')');
         }
         RustPattern::Box(inner) => {
             buf.push_str("box ");

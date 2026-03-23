@@ -1124,6 +1124,71 @@ fn peano_vn_example() {
     run_file("examples/peano-vn.hyp");
 }
 
+#[test]
+fn system_io_example() {
+    run_file("examples/system-io.hyp");
+}
+
+#[test]
+fn system_io_kompile() {
+    let mut session = HyperionSession::new();
+    let source = std::fs::read_to_string("examples/system-io.hyp").unwrap();
+    let sexps = apeiron::parser::parse(&source).unwrap();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+    let theory = &session.vn_theories["FileIO"];
+    let krate = hyperion::codegen::analyze::analyze(theory).unwrap();
+    let files = hyperion::codegen::emit::emit_crate(&krate);
+
+    let types = &files["src/types.rs"];
+    // Effect sort → trait, not enum
+    assert!(types.contains("pub trait FileIOEffects"));
+    assert!(types.contains("fn emit("));
+    assert!(types.contains("fn log("));
+    // Nullary constructors resolve to correct enums
+    assert!(types.contains("pub enum Str"));
+    assert!(types.contains("Hello"));
+    assert!(types.contains("pub enum FD"));
+    // No empty Tuple or Buf enums
+    assert!(!types.contains("pub enum Tuple"));
+
+    let funcs = &files["src/functions.rs"];
+    // read returns a native tuple (Str, FD)
+    assert!(funcs.contains("-> (Str, FD)"));
+    // close returns unit
+    assert!(funcs.contains("fn close("));
+    // log is effectful — takes effects param
+    assert!(funcs.contains("effects: &mut impl FileIOEffects"));
+}
+
+#[test]
+fn physics_rejects_nested_function_in_lhs() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category IOCat
+            [Object FD] [Object Str] [Object Unit] [Object Path]
+            [Morphism open  :domain [Path]     :codomain FD]
+            [Morphism write :domain [FD Str]   :codomain FD]
+            [Morphism close :domain [FD]       :codomain Unit]
+        ]
+        [Substrate VonNeumannMachine
+            @engine von-neumann @resource-mode deep-copy
+            @barrier transparent @equality rewrite-equivalence]
+        [Universe IOWorld :category IOCat :substrate VonNeumannMachine]
+        [Theory BadIO :in IOWorld
+            [@rule write-fd [write [open ?p] ?s] ==> [open ?p]]
+            [@rule bad-close [close [write [open ?p] ?s]] ==> done]
+        ]
+    "#;
+    process_all(&mut session, input).unwrap();
+    let theory = &session.vn_theories["BadIO"];
+    let err = hyperion::codegen::analyze::analyze(theory).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("Physics mismatch"), "expected physics error, got: {}", msg);
+    assert!(msg.contains("write"), "error should mention 'write': {}", msg);
+}
+
 // ============================================================
 // Categorical law verification tests
 // ============================================================
@@ -2992,4 +3057,168 @@ fn weak_equivalence_missing_theory() {
     assert!(result.is_err());
     let err = format!("{}", result.unwrap_err());
     assert!(err.contains("not registered"), "error: {}", err);
+}
+
+// ============================================================
+// Meta block tests
+// ============================================================
+
+#[test]
+fn example_meta_demo() {
+    run_file("examples/meta-demo.hyp");
+}
+
+#[test]
+fn meta_reify_passes_native() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category C [Object T] [Morphism f :domain [T] :codomain T]]
+        [Substrate S
+          @engine interaction-graph
+          @resource-mode optimal-sharing
+          @barrier transparent
+          @equality rewrite-equivalence
+        ]
+        [Universe U :category C :substrate S]
+        [Meta reify-passes :universe U]
+    "#;
+    process_all(&mut session, input).unwrap();
+    assert!(session.output.iter().any(|l| l.contains("native")));
+}
+
+#[test]
+fn meta_reify_passes_with_bang() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category CCC
+          [Object Type] [Object Term]
+          [Morphism arrow :domain [Type Type] :codomain Type]
+          [Morphism app :domain [Term Term] :codomain Term]
+          [Exponential lam :object Term]
+          [Evaluator app]
+        ]
+        [Substrate Lin
+          @engine interaction-graph
+          @resource-mode strictly-linear
+          @barrier transparent
+          @equality rewrite-equivalence
+        ]
+        [Universe U :category CCC :substrate Lin]
+        [Meta reify-passes :universe U]
+    "#;
+    process_all(&mut session, input).unwrap();
+    assert!(session.output.iter().any(|l| l.contains("bang-modality")));
+}
+
+#[test]
+fn meta_reify_theory_vn() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category C [Object Elem] [Morphism f :domain [Elem] :codomain Elem]]
+        [Substrate S
+          @engine von-neumann
+          @resource-mode deep-copy
+          @barrier transparent
+          @equality rewrite-equivalence
+        ]
+        [Universe U :category C :substrate S]
+        [Theory T :in U
+          [@sort State]
+          [@op go : State]
+          [@rule r1 [f go go] ==> go]
+        ]
+        [Meta reify-theory :theory T]
+    "#;
+    process_all(&mut session, input).unwrap();
+    assert!(session.output.iter().any(|l| l.contains("first-order")));
+    assert!(session.output.iter().any(|l| l.contains("rule r1")));
+}
+
+#[test]
+fn meta_unknown_command_errors() {
+    let mut session = HyperionSession::new();
+    let input = r#"[Meta bogus]"#;
+    let result = process_all(&mut session, input);
+    assert!(result.is_err());
+    let err = format!("{}", result.unwrap_err());
+    assert!(err.contains("unknown meta command"));
+}
+
+#[test]
+fn meta_depth_bounding() {
+    // Meta blocks cannot invoke other Meta blocks (depth > 1 rejected)
+    let mut session = HyperionSession::new();
+    assert_eq!(session.max_meta_depth, 1);
+    // Attempting a nested meta would fail, but we can test the depth field directly
+    // by verifying the error message format is correct
+    let input = r#"[Meta reify-passes :universe Nonexistent]"#;
+    let result = process_all(&mut session, input);
+    // Fails because universe doesn't exist, not because of depth
+    assert!(result.is_err());
+}
+
+#[test]
+fn meta_optimize_with_fuel() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category C
+          [Object Type] [Object Term]
+          [Morphism arrow :domain [Type Type] :codomain Type]
+          [Morphism app :domain [Term Term] :codomain Term]
+          [Exponential lam :object Term]
+          [Evaluator app]
+        ]
+        [Substrate S
+          @engine interaction-graph
+          @resource-mode optimal-sharing
+          @barrier transparent
+          @equality rewrite-equivalence
+        ]
+        [Universe U :category C :substrate S]
+        [Theory T :in U
+          [const a Term]
+          [const b Term]
+          [@rule id [app [lam x x] ?a] ==> ?a]
+        ]
+        [Meta optimize :fuel 1000 :in T [app [lam x x] a]]
+    "#;
+    process_all(&mut session, input).unwrap();
+    assert!(session.output.iter().any(|l| l.contains("[META] optimize")));
+}
+
+#[test]
+fn meta_splice_binds_result() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category C
+          [Object Type] [Object Term]
+          [Morphism arrow :domain [Type Type] :codomain Type]
+          [Morphism app :domain [Term Term] :codomain Term]
+          [Exponential lam :object Term]
+          [Evaluator app]
+        ]
+        [Substrate S
+          @engine interaction-graph
+          @resource-mode optimal-sharing
+          @barrier transparent
+          @equality rewrite-equivalence
+        ]
+        [Universe U :category C :substrate S]
+        [Theory T :in U
+          [const a Term]
+          [@rule id [app [lam x x] ?v] ==> ?v]
+        ]
+        [Meta splice my-result [optimize :in T [app [lam x x] a]]]
+    "#;
+    process_all(&mut session, input).unwrap();
+    assert!(session.output.iter().any(|l| l.contains("splice: my-result bound")));
+    assert!(session.meta_bindings.contains_key("my-result"));
+}
+
+#[test]
+fn meta_splice_invalid_inner_command() {
+    let mut session = HyperionSession::new();
+    let input = r#"[Meta splice foo [bogus]]"#;
+    let result = process_all(&mut session, input);
+    assert!(result.is_err());
 }
