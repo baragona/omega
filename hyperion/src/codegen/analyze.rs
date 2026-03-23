@@ -61,8 +61,8 @@ pub fn analyze(theory: &VonNeumannTheory) -> Result<RustCrate> {
     }
 
     for (op_name, (domain, codomain)) in &theory.morphism_types {
-        if rewrite_heads.contains(op_name) || effect_ops.contains(op_name) {
-            continue; // functions or effect methods, not variants
+        if effect_ops.contains(op_name) {
+            continue; // effect methods are trait methods, not variants
         }
         if SKIP_SORTS.contains(&codomain.as_str()) {
             continue;
@@ -149,12 +149,21 @@ pub fn analyze(theory: &VonNeumannTheory) -> Result<RustCrate> {
         }));
     }
 
-    // Step 5.5: Physics validation — reject nested function calls in LHS patterns.
-    // Von Neumann substrates use strict (call-by-value) evaluation: inner calls
-    // collapse to opaque values before the outer call sees them. You cannot
-    // pattern-match on the history of an evaluated function call.
+    // Step 5.5: Physics validation — reject nested opaque/effectful calls in LHS patterns.
+    // Von Neumann substrates have two kinds of morphisms:
+    //   - Algebraic (e.g., cat : [Str Str] -> Str, open : Path -> FD): data constructors
+    //     that compile to enum variants. Can be pattern-matched even when nested, because
+    //     the smart constructor fallback builds the variant when no rewrite rule applies.
+    //   - Opaque (e.g., log : Str -> Effect): side-effectful operations whose results are
+    //     not data — they're unit/effect values with no structural content to match on.
+    //
+    // Only reject nesting of truly opaque morphisms (codomain is Effect or Unit).
+    let mut opaque_sorts: HashSet<String> = HashSet::new();
+    opaque_sorts.insert("Effect".to_string());
+    opaque_sorts.insert("Unit".to_string());
+
     for rule in &theory.rules {
-        validate_lhs_physics(&rule.lhs, &rule.name, &rewrite_heads, true)?;
+        validate_lhs_physics(&rule.lhs, &rule.name, &theory.morphism_types, &opaque_sorts, true)?;
     }
 
     // Step 5.6: Linearity validation — in strictly-linear mode, linear-sort
@@ -287,11 +296,43 @@ pub fn analyze(theory: &VonNeumannTheory) -> Result<RustCrate> {
             });
         }
 
-        // Add unreachable wildcard arm if needed
+        // Fallback arm: for algebraic morphisms (pure data), construct the enum variant
+        // (smart constructor pattern). For effectful morphisms, use unreachable!().
+        let is_smart_ctor = !is_effectful && codomain != "Unit"
+            && !(has_tuple_sort && codomain == "Tuple");
+        let fallback_body = if is_smart_ctor {
+            // Smart constructor: fall back to building the data
+            let enum_name = to_pascal_case(codomain);
+            let variant = to_pascal_case(head);
+            let args: Vec<RustExpr> = params.iter().enumerate().map(|(i, p)| {
+                let needs_box = domain.get(i)
+                    .map(|s| recursive_sorts.contains(s))
+                    .unwrap_or(false);
+                if needs_box {
+                    RustExpr::BoxNew(Box::new(RustExpr::Var(p.name.clone())))
+                } else {
+                    RustExpr::Var(p.name.clone())
+                }
+            }).collect();
+            RustExpr::Constructor { enum_name, variant, args }
+        } else {
+            RustExpr::Unreachable
+        };
+        // For smart constructors with multiple params, rebind param names
+        // in the fallback pattern (tuple scrutinee consumes the originals).
+        let fallback_pattern = if is_smart_ctor && params.len() > 1 {
+            RustPattern::TuplePattern(
+                params.iter().map(|p| RustPattern::Var(p.name.clone())).collect()
+            )
+        } else if is_smart_ctor && params.len() == 1 {
+            RustPattern::Var(params[0].name.clone())
+        } else {
+            RustPattern::Wildcard
+        };
         arms.push(RustMatchArm {
-            pattern: RustPattern::Wildcard,
+            pattern: fallback_pattern,
             guard: None,
-            body: RustExpr::Unreachable,
+            body: fallback_body,
         });
 
         // Build scrutinee
@@ -738,34 +779,44 @@ fn can_reach(
     false
 }
 
-/// Validate that LHS patterns don't contain nested function calls (rewrite heads).
-/// In Von Neumann physics, strict evaluation collapses inner calls to opaque values
-/// before the outer call executes — values don't remember their computational history.
-/// The `is_root` flag allows the outermost head (which IS the function being defined).
+/// Validate that LHS patterns don't nest opaque/effectful morphisms.
+/// In Von Neumann physics, there are two kinds of morphisms:
+///   - Algebraic: pure data constructors (codomain is a standard sort). Even as rewrite
+///     heads, they fall back to building enum variants — safe for nested pattern matching.
+///   - Opaque: morphisms producing Effect, Unit, or linear resources. Their results are
+///     runtime-opaque and cannot be structurally inspected after evaluation.
+///
+/// Only opaque morphisms are rejected when nested in LHS patterns.
 fn validate_lhs_physics(
     sexp: &Sexp,
     rule_name: &str,
-    rewrite_heads: &HashSet<String>,
+    morphism_types: &HashMap<String, (Vec<String>, String)>,
+    opaque_sorts: &HashSet<String>,
     is_root: bool,
 ) -> Result<()> {
     match sexp {
         Sexp::List(items, _) if !items.is_empty() => {
             if let Some(head) = items[0].as_atom() {
-                if !is_root && rewrite_heads.contains(head) {
-                    return Err(HyperionError::ParseError {
-                        block: "kompile".into(),
-                        detail: format!(
-                            "Physics mismatch in rule '{}': substrate uses strict evaluation \
-                             and cannot pattern-match on the history of evaluated function calls \
-                             (found '{}' nested in LHS pattern). Use data constructors for matching, \
-                             or switch to a graph-reduction substrate.",
-                            rule_name, head
-                        ),
-                    });
+                if !is_root {
+                    // Check if this morphism produces an opaque sort
+                    if let Some((_, codomain)) = morphism_types.get(head) {
+                        if opaque_sorts.contains(codomain) {
+                            return Err(HyperionError::ParseError {
+                                block: "kompile".into(),
+                                detail: format!(
+                                    "Physics mismatch in rule '{}': morphism '{}' produces opaque \
+                                     sort '{}' which cannot be pattern-matched after evaluation \
+                                     on a strict substrate. Opaque sorts (Effect, Unit, linear resources) \
+                                     collapse to runtime values with no structural history.",
+                                    rule_name, head, codomain
+                                ),
+                            });
+                        }
+                    }
                 }
             }
             for arg in &items[1..] {
-                validate_lhs_physics(arg, rule_name, rewrite_heads, false)?;
+                validate_lhs_physics(arg, rule_name, morphism_types, opaque_sorts, false)?;
             }
         }
         _ => {}

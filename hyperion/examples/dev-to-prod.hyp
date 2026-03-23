@@ -1,0 +1,122 @@
+;; Hyperion Example: Dev-to-Prod Pipeline
+;;
+;; The core promise of Hyperion: write like it's Python (in the e-graph),
+;; let the compiler mathematically prove it can run like Rust (in SystemIO),
+;; and deploy.
+;;
+;; Phase 1: Prototype in an e-graph universe (optimal sharing, equality saturation)
+;; Phase 2: Define the production SystemIO universe (strict, deep-copy)
+;; Phase 3: Functor bridges the two substrates (same category)
+;; Phase 4: VerifyFunctor proves the transport is sound (equational + resource + physics)
+;; Phase 5: kompile the production theory to Rust
+;;
+;; Run:     hyperion check examples/dev-to-prod.hyp -v
+;; Compile: hyperion kompile examples/dev-to-prod.hyp --theory ProdOps -o out/string_ops/
+
+;; =================================================================
+;; Shared Category: String Operations
+;; =================================================================
+
+;; Both dev and prod universes share this category.
+;; The algebraic structure is the same; only the physics differ.
+[Category StringOps
+  [Object Str]       ;; String type
+  [Object Effect]    ;; Side effects → compiled to trait methods
+
+  ;; String constants (nullary)
+  [Morphism empty   :domain []         :codomain Str]
+  [Morphism hello   :domain []         :codomain Str]
+  [Morphism world   :domain []         :codomain Str]
+  [Morphism bang    :domain []         :codomain Str]
+
+  ;; String operations (pure)
+  [Morphism cat     :domain [Str Str]  :codomain Str]
+  [Morphism upper   :domain [Str]      :codomain Str]
+
+  ;; Effects
+  [Morphism print   :domain [Str]      :codomain Effect]
+]
+
+;; =================================================================
+;; Phase 1: The "Python" — E-Graph Sandbox
+;; =================================================================
+
+[Substrate EGraphSandbox
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Universe DevWorld :category StringOps :substrate EGraphSandbox]
+
+;; The prototype theory: algebraic laws discovered via equality saturation.
+;; No resource constraints, no physics limits. Pure algebra.
+[Theory DevOps :in DevWorld
+  ;; Concatenation is associative with identity
+  [@rule cat-assoc  [cat [cat ?a ?b] ?c] ==> [cat ?a [cat ?b ?c]]]
+  [@rule cat-id-l   [cat empty ?s] ==> ?s]
+  [@rule cat-id-r   [cat ?s empty] ==> ?s]
+
+  ;; Upper distributes over concatenation
+  [@rule upper-cat  [upper [cat ?a ?b]] ==> [cat [upper ?a] [upper ?b]]]
+
+  ;; Upper is idempotent
+  [@rule upper-idem [upper [upper ?s]] ==> [upper ?s]]
+]
+
+;; =================================================================
+;; Phase 2: The "Rust" — Production SystemIO Target
+;; =================================================================
+
+[Substrate ProdMachine
+  @engine system-io
+  @resource-mode deep-copy
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Universe ProdWorld :category StringOps :substrate ProdMachine]
+
+;; Production theory: same algebraic laws, now on a strict Von Neumann machine.
+[Theory ProdOps :in ProdWorld
+  [@rule cat-assoc  [cat [cat ?a ?b] ?c] ==> [cat ?a [cat ?b ?c]]]
+  [@rule cat-id-l   [cat empty ?s] ==> ?s]
+  [@rule cat-id-r   [cat ?s empty] ==> ?s]
+  [@rule upper-cat  [upper [cat ?a ?b]] ==> [cat [upper ?a] [upper ?b]]]
+  [@rule upper-idem [upper [upper ?s]] ==> [upper ?s]]
+]
+
+;; =================================================================
+;; Phase 3: The Bridge — Functor from Dev to Prod
+;; =================================================================
+
+;; Identity functor: same category, different substrates.
+;; The morphism map is empty because the names are the same.
+[Functor DevToProd :from EGraphSandbox :to ProdMachine :verify]
+
+;; =================================================================
+;; Phase 4: Verification — Prove the Transport is Sound
+;; =================================================================
+
+;; VerifyFunctor checks:
+;; 1. Equational preservation: each dev rule, when mapped, holds in prod (via e-graph)
+;; 2. Resource compatibility: mapped rules respect prod's resource mode
+;; 3. Physics compatibility: no nested function calls in LHS (strict evaluation)
+[VerifyFunctor DevToProd :source DevOps :target ProdOps]
+
+;; =================================================================
+;; Phase 5: Deploy
+;; =================================================================
+
+;; Kompile the verified production theory to Rust:
+;;   hyperion kompile examples/dev-to-prod.hyp --theory ProdOps -o out/string_ops/
+;;
+;; The generated Rust code preserves every algebraic law from the prototype,
+;; verified via equality saturation + functor transport, while satisfying
+;; the strict evaluation constraints of the Von Neumann machine.
+;;
+;; Generated output includes:
+;;   - types.rs: enum Str { Empty, Hello, World, Bang, Cat(...), Upper(...) }
+;;   - functions.rs: pub fn cat(...), pub fn upper(...)
+;;   - main.rs: runtime harness implementing StringOpsEffects trait

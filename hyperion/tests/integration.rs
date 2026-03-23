@@ -1063,8 +1063,8 @@ fn analyze_peano() {
     // z (nullary) and s (unary) should be variants
     assert!(nat_enum.variants.iter().any(|v| v.name == "Z"));
     assert!(nat_enum.variants.iter().any(|v| v.name == "S"));
-    // plus should NOT be a variant (it's a rewrite head → function)
-    assert!(!nat_enum.variants.iter().any(|v| v.name == "Plus"));
+    // plus IS also a variant (smart constructor pattern: both variant AND function)
+    assert!(nat_enum.variants.iter().any(|v| v.name == "Plus"));
 
     // Should have functions module with plus function
     let func_mod = krate.modules.iter().find(|m| m.name == "functions").unwrap();
@@ -1130,6 +1130,44 @@ fn system_io_example() {
 }
 
 #[test]
+fn dev_to_prod_example() {
+    run_file("examples/dev-to-prod.hyp");
+}
+
+#[test]
+fn dev_to_prod_kompile_and_cargo_check() {
+    // Full pipeline: parse → VerifyFunctor → kompile → cargo check
+    let mut session = HyperionSession::new();
+    let source = std::fs::read_to_string("examples/dev-to-prod.hyp").unwrap();
+    let sexps = apeiron::parser::parse(&source).unwrap();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+
+    // Verify the functor transport succeeded
+    let verify_msg = session.output.iter().find(|s| s.contains("[VERIFY-FUNCTOR]")).unwrap();
+    assert!(verify_msg.contains("5 rules verified"), "Got: {}", verify_msg);
+
+    // Kompile to Rust
+    let out_dir = std::env::temp_dir().join("hyperion_dev_to_prod_test");
+    let _ = std::fs::remove_dir_all(&out_dir);
+    session.kompile("ProdOps", out_dir.to_str().unwrap()).unwrap();
+
+    // Verify smart constructors are present
+    let funcs = std::fs::read_to_string(out_dir.join("src/functions.rs")).unwrap();
+    assert!(funcs.contains("Str::Cat("), "smart constructor fallback should build Cat variant");
+
+    // Run cargo check with nightly (box_patterns required)
+    let output = std::process::Command::new("rustup")
+        .args(["run", "nightly", "cargo", "check"])
+        .current_dir(&out_dir)
+        .output()
+        .expect("failed to run cargo check");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "cargo check failed:\n{}", stderr);
+}
+
+#[test]
 fn system_io_kompile() {
     let mut session = HyperionSession::new();
     let source = std::fs::read_to_string("examples/system-io.hyp").unwrap();
@@ -1163,22 +1201,22 @@ fn system_io_kompile() {
 }
 
 #[test]
-fn physics_rejects_nested_function_in_lhs() {
+fn physics_rejects_nested_opaque_in_lhs() {
+    // Nesting an opaque morphism (codomain Effect) in a LHS pattern is a physics violation.
+    // You cannot pattern-match on a side-effect.
     let mut session = HyperionSession::new();
     let input = r#"
         [Category IOCat
-            [Object FD] [Object Str] [Object Unit] [Object Path]
-            [Morphism open  :domain [Path]     :codomain FD]
-            [Morphism write :domain [FD Str]   :codomain FD]
-            [Morphism close :domain [FD]       :codomain Unit]
+            [Object Str] [Object Effect] [Object Unit]
+            [Morphism log   :domain [Str]    :codomain Effect]
+            [Morphism after :domain [Effect] :codomain Unit]
         ]
         [Substrate VonNeumannMachine
             @engine von-neumann @resource-mode deep-copy
             @barrier transparent @equality rewrite-equivalence]
         [Universe IOWorld :category IOCat :substrate VonNeumannMachine]
         [Theory BadIO :in IOWorld
-            [@rule write-fd [write [open ?p] ?s] ==> [open ?p]]
-            [@rule bad-close [close [write [open ?p] ?s]] ==> done]
+            [@rule bad-after [after [log ?s]] ==> done]
         ]
     "#;
     process_all(&mut session, input).unwrap();
@@ -1186,7 +1224,34 @@ fn physics_rejects_nested_function_in_lhs() {
     let err = hyperion::codegen::analyze::analyze(theory).unwrap_err();
     let msg = format!("{}", err);
     assert!(msg.contains("Physics mismatch"), "expected physics error, got: {}", msg);
-    assert!(msg.contains("write"), "error should mention 'write': {}", msg);
+    assert!(msg.contains("log"), "error should mention 'log': {}", msg);
+}
+
+#[test]
+fn physics_allows_nested_algebraic_in_lhs() {
+    // Nesting algebraic morphisms (codomain is a standard data sort) is fine.
+    // Smart constructors build enum variants when rules don't match.
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category ArithCat
+            [Object Nat]
+            [Morphism z    :domain []        :codomain Nat]
+            [Morphism s    :domain [Nat]     :codomain Nat]
+            [Morphism plus :domain [Nat Nat] :codomain Nat]
+        ]
+        [Substrate VonNeumannMachine
+            @engine von-neumann @resource-mode deep-copy
+            @barrier transparent @equality rewrite-equivalence]
+        [Universe ArithWorld :category ArithCat :substrate VonNeumannMachine]
+        [Theory ArithOps :in ArithWorld
+            [@rule plus-z [plus z ?n] ==> ?n]
+            [@rule plus-s [plus [s ?n] ?m] ==> [s [plus ?n ?m]]]
+        ]
+    "#;
+    process_all(&mut session, input).unwrap();
+    let theory = &session.vn_theories["ArithOps"];
+    // Should succeed — s and plus are algebraic, nesting is fine
+    hyperion::codegen::analyze::analyze(theory).unwrap();
 }
 
 #[test]

@@ -839,6 +839,29 @@ impl HyperionSession {
                 name: compiled.substrate_name.clone(),
             })?;
 
+        // Store rules for functor verification
+        let rule_pairs: Vec<(Sexp, Sexp)> = rules
+            .iter()
+            .map(|r| (r.lhs.clone(), r.rhs.clone()))
+            .collect();
+        if !rule_pairs.is_empty() {
+            self.theory_rules.insert(theory_name.clone(), rule_pairs);
+        }
+
+        // Also register the theory with Apeiron so VerifyFunctor can run
+        // assert-eq proofs in it. We rewrite the Theory block for Apeiron.
+        let rewritten = self.rewrite_for_apeiron(sexp, Some(universe_name))?;
+        if let Err(e) = self.apeiron.process(&rewritten) {
+            self.drain_apeiron_output();
+            // Non-fatal: VN theories may not parse in Apeiron's format
+            self.output.push(format!(
+                "[THEORY-VN] Note: Apeiron registration skipped for {} ({})",
+                theory_name, e
+            ));
+        } else {
+            self.drain_apeiron_output();
+        }
+
         self.vn_theories.insert(
             theory_name.clone(),
             VonNeumannTheory {
@@ -1927,6 +1950,13 @@ impl HyperionSession {
                     self.check_resource_rules(&mapped_rules, &sub.resource_mode, &format!(
                         "VerifyFunctor({} -> {})", source_theory, target_theory
                     ))?;
+
+                    // Note: Physics validation (nested opaque calls in LHS) is deferred
+                    // to kompile time in analyze.rs. VerifyFunctor operates at the level
+                    // of pure mathematics — all algebraic nesting is valid as trees.
+                    // The opaque/effectful distinction is a codegen concern.
+                    if false {
+                    }
                 }
             }
         }
