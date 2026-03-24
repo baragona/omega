@@ -863,7 +863,9 @@ pub fn plus(nat: Nat, nat_2: Nat) -> Nat {
 }
 ```
 
-Von Neumann and Network RPC substrates are first-order engines that bypass Apeiron. They capture rewrite rules directly as pattern-matching functions. When higher-order features (Exponential, ModalOperator, TensorProduct) are present, compilation passes bridge the gap automatically (Defunctionalization, KripkeWorldThreading, etc.).
+Von Neumann, Network RPC, and Compiler substrates are first-order engines that bypass Apeiron. They capture rewrite rules directly as pattern-matching functions. When higher-order features (Exponential, ModalOperator, TensorProduct) are present, compilation passes bridge the gap automatically (Defunctionalization, KripkeWorldThreading, etc.).
+
+The **Compiler engine** is special: it links generated code against `hyperion-runtime`, giving compiled programs access to opaque runtime types (`TheoryDef`, `Sort`, `CostFn`, etc.) and effect traits. This enables the reflective tower --- Hyperion programs that manipulate Hyperion's own AST, compiled to native Rust.
 
 ## Compatibility & Compilation Passes
 
@@ -1063,12 +1065,103 @@ Hyperion's AST is reified as a first-class category (`MetaCat` in the prelude), 
 [Meta reify-proof :name some-assertion]
 ```
 
-`MetaCat` objects include `Expr`, `Sort`, `RuleDef`, `TheoryDef`, `CatDef`, `SubDef`, `UniDef`, and `PassDef`. Compiler operations (`normalize`, `simplify`, `synthesize`) are morphisms. The `CompilerEngine` substrate uses equality-saturation internally, enabling the compiler to reason about its own transformations.
+`MetaCat` objects include `Expr`, `Sort`, `RuleDef`, `TheoryDef`, `CatDef`, `SubDef`, `UniDef`, `PassDef`, `ProofTerm`, `Goal`, `ProofState`, `CostFn`, `Nat`, `Bool`, and `CompilerEffect` (15 objects, 40 morphisms). Compiler operations (`normalize`, `simplify`, `synthesize`, `apply-tactic`, `check-proof`, `eval-cost`, `analyze-linearity`, `transform-verified`, `optimize-with`) are morphisms. The `CompilerEngine` substrate uses equality-saturation internally, enabling the compiler to reason about its own transformations.
 
 **Safety features:**
 - **Fuel limits**: All Meta commands have configurable e-graph fuel (`:fuel N`, default 5000 nodes). Prevents runaway saturation from hanging the compiler.
 - **Meta-level bounding**: Meta blocks cannot invoke other Meta blocks (depth capped at 1). Prevents infinite meta-meta recursion that would blow the Rust stack.
 - **Proof reification**: Completed proofs (from `assert-eq` blocks) can be extracted as first-class AST objects via `reify-proof`, enabling programmatic proof transformation across substrates.
+
+## Reflective Tower: Self-Hosting Compilation
+
+Hyperion can compile *itself*. A Hyperion theory over MetaCat on the CompilerEngine substrate compiles to native Rust that links against `hyperion-runtime`, giving compiled programs access to the host's equality saturation engine, proof checker, and I/O.
+
+The reflective tower has four pillars:
+
+**1. Programmable Tactics** --- Custom tactics as rewrite rules on `Goal → ProofState`:
+```lisp
+[@rule tac-refl [apply-tactic [goal-eq ?e ?e]]
+  ==> [ps-qed [pf-refl]]]
+```
+Compiles to `fn apply_tactic(goal: Goal) -> ProofState` with pattern matching.
+
+**2. Proof Checking** --- Verify proof terms witness goals:
+```lisp
+[@rule check-refl [check-proof [pf-refl] [goal-eq ?e ?e]]
+  ==> [true]]
+```
+Compiles to `fn check_proof(proofterm: ProofTerm, goal: Goal) -> Bool`.
+
+**3. Custom E-Graph Cost Functions** --- Domain-specific cost models:
+```lisp
+[@rule cost-app [eval-cost ?c [expr-app ?f ?x]]
+  ==> [succ [add [eval-cost ?c ?f] [eval-cost ?c ?x]]]]
+```
+Compiles to `fn eval_cost(costfn: CostFn, expr: Expr) -> Nat`.
+
+**4. Proof-Carrying Compilation Passes** --- Transformations that must produce evidence:
+```lisp
+[@rule lin-app [analyze-linearity [expr-app ?f ?x] ?t]
+  ==> [proof-cong [expr-app ?f ?x]
+        [pf-trans [analyze-linearity ?f ?t]
+                  [analyze-linearity ?x ?t]]]]
+```
+Compiles to `fn analyze_linearity(expr: Expr, theory: TheoryDef) -> ProofTerm`.
+
+The compiled crate automatically gets semantic tests (`tests/semantic.rs`) that exercise all four pillars with concrete values. `cargo test` proves the compiled prover *works*, not just links.
+
+See `examples/reflective-tactics.hyp` for the full 15-rule theory, and `examples/dogfood-disjointness.hyp` for a compiler pass written in the language it compiles.
+
+## hyperion-runtime
+
+The `runtime/` crate bridges compiled Hyperion programs to the host system:
+
+- **Opaque types**: `TheoryDef`, `Sort`, `CostFn`, `RuleDef`, `UniDef`, `CatDef`, `SubDef`, `PassDef` --- runtime handles that compiled code passes through without inspecting
+- **`CompilerEffects` trait**: `ask_egraph`, `read_file`, `write_crate`, `log_diag`, `verify_proof`
+- **`NativeCompilerEffects`**: Real implementation using `egg` for equality saturation and real file I/O
+- **`MockCompilerEffects`**: Pre-programmable results for testing
+- **E-graph utilities**: `check_equal()` and `simplify()` for direct equality saturation queries
+
+### The ask-egraph Round-Trip
+
+The core reflection primitive: compiled code can pause, hand an AST to the host's `egg` equality saturation engine, and get back a result:
+
+```rust
+let theory = TheoryDef::new("Peano")
+    .with_rule("add-zero", "(add zero ?n)", "?n")
+    .with_rule("add-succ", "(add (succ ?m) ?n)", "(succ (add ?m ?n))");
+
+let effects = NativeCompilerEffects::new();
+let result = effects.ask_egraph("(add (succ zero) (succ zero))", "(succ (succ zero))", &theory);
+assert_eq!(result, EGraphResult::Equal);  // 1 + 1 = 2, proved by egg
+```
+
+## Algebraic Effect Handlers
+
+Theories with a `CompilerEffect` sort (or any `Effect` sort) generate a trait. Handlers provide swappable implementations:
+
+```lisp
+[Handle FileOps :with DiskHandler :for FilePipeline
+  [@on read-in [read-file ?path] ==> [disk-read ?path]]
+  [@on write-out [write-file ?path ?data] ==> [disk-write ?path ?data]]
+]
+```
+
+Generates a Rust struct implementing the effect trait. Multiple handlers for the same trait enable test/production swapping:
+
+```rust
+// Generated:
+pub struct DiskHandler;
+impl FileOpsEffects for DiskHandler { ... }
+
+pub struct MockHandler;
+impl FileOpsEffects for MockHandler { ... }
+
+// User code can swap freely:
+fn process(effects: &mut impl FileOpsEffects, data: Data) -> Output { ... }
+```
+
+See `examples/algebraic-handlers.hyp`.
 
 ## Examples
 
@@ -1101,6 +1194,12 @@ Hyperion's AST is reified as a first-class category (`MetaCat` in the prelude), 
 | `compilation-passes.hyp` | All 6 single-machine compilation passes with working theories and proofs |
 | `distributed-actor.hyp` | Network as a substrate: CRDT key-value store, CAP-aware modal consensus, local→distributed functor transport |
 | `meta-demo.hyp` | Compile-time metaprogramming: reify-passes, reify-theory, optimize, splice, fuel limits |
+| `reflective-tactics.hyp` | The reflective tower: 15-rule theory with programmable tactics, proof checking, cost functions, linearity passes --- compiles to native Rust with 15 semantic tests |
+| `dogfood-disjointness.hyp` | Self-hosting: a compiler pass (parallel tensor disjointness check) written in Hyperion, compiled by the compiler it's a pass for |
+| `algebraic-handlers.hyp` | Algebraic effect handlers: DiskHandler and MockHandler implementing FileOpsEffects, swappable at use site |
+| `egraph-roundtrip.hyp` | E-graph round-trip: theory rules fed to egg equality saturation, proves arithmetic identities at runtime |
+| `concurrent-io.hyp` | Concurrent I/O substrate with thread-safe effect dispatch via `&self` traits |
+| `concurrent-verified.hyp` | Verified concurrent computation with proof-carrying parallel tensor decomposition |
 
 ## Architecture
 
@@ -1115,20 +1214,27 @@ hyperion/
     nat_trans.rs     Natural transformation definitions
     adjunction.rs    Adjunction definitions
     laws.rs          Categorical law auto-generation (flat + structural witnesses)
-    session.rs       Main session orchestration (VerifyFunctor, PathType/Preorder/Cubical injection)
+    session.rs       Main session orchestration (VerifyFunctor, PathType/Preorder/Cubical injection, algebraic effect handlers)
     codegen/
       mod.rs         Von Neumann kompile entry point
-      rust_ast.rs    Lightweight Rust AST types
-      analyze.rs     VN theory -> Rust AST (sort analysis, boxing, pattern matching)
-      emit.rs        Rust AST -> source files
+      rust_ast.rs    Lightweight Rust AST types (incl. RustHandler, RustTest)
+      analyze.rs     VN theory -> Rust AST (sort analysis, boxing, pattern matching, effect/handler/test generation)
+      emit.rs        Rust AST -> source files (types, functions, handlers, tests/rules.rs, tests/semantic.rs)
     main.rs          CLI (check + kompile subcommands)
-  prelude.hyp        Standard prelude (categories + substrates)
-  examples/          23 example files
+  runtime/
+    src/
+      lib.rs         Runtime crate re-exports
+      types.rs       Opaque handle types (TheoryDef, Sort, CostFn, RuleDef, etc.)
+      effects.rs     CompilerEffects trait, NativeCompilerEffects (egg), MockCompilerEffects
+      egraph.rs      E-graph utilities (check_equal, simplify, theory_rewrites)
+    Cargo.toml       Depends on egg 0.9
+  prelude.hyp        Standard prelude (categories + substrates + MetaCat with 15 objects/40 morphisms)
+  examples/          32 example files
   tests/
-    integration.rs   139 integration tests
+    integration.rs   173 integration tests
 ```
 
-Hyperion depends on [Apeiron](../apeiron/) for term rewriting, beta reduction, and oracle checking. The Von Neumann and Network RPC backends are first-order paths that bypass Apeiron.
+Hyperion depends on [Apeiron](../apeiron/) for term rewriting, beta reduction, and oracle checking. The Von Neumann, Network RPC, and Compiler backends are first-order paths that bypass Apeiron. The Compiler backend additionally links generated code to `hyperion-runtime` for access to the host's `egg` equality saturation engine.
 
 ## CLI Reference
 
@@ -1149,7 +1255,7 @@ hyperion kompile <file.hyp> --theory <name> -o <output_dir/>
 
 ## Tests
 
-187 tests (48 unit + 139 integration), covering:
+221 tests (48 unit + 173 integration), covering:
 
 - Category/substrate/universe parsing and validation
 - Compilation pass insertion for all 9 bridging strategies (bang modality, nominal abstraction, defunctionalization, tensor serialization, Kripke threading, dependent combinators, RPC serialization, consensus replication, partition tolerance)
@@ -1175,6 +1281,10 @@ hyperion kompile <file.hyp> --theory <name> -o <output_dir/>
 - Nested parameterized theory imports
 - `assert-refuted` negative assertions
 - Forward-chaining refutation strategy
+- Reflective tower: `cargo test` on compiled reflective-tactics crate (15 semantic tests across all four pillars)
+- Algebraic effect handlers: handler generation, trait implementation, swappability
+- E-graph round-trip: `NativeCompilerEffects::ask_egraph` proves equalities via egg (commutativity, identity, nested simplification, 0+1=1, 1+1=2)
+- Dogfood disjointness: compiler pass written in Hyperion, compiled by its own compiler
 - All example files
 
 ```bash
