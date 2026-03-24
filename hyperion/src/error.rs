@@ -26,6 +26,8 @@ pub enum HyperionError {
         rule_name: Option<String>,
         detail: String,
     },
+    /// Proof assertion failure (logic engine)
+    ProofFailure { name: String, detail: String },
     /// Apeiron error pass-through
     ApeironError(apeiron::error::ApeironError),
 }
@@ -94,6 +96,9 @@ impl fmt::Display for HyperionError {
                         theory, detail
                     )
                 }
+            }
+            HyperionError::ProofFailure { name, detail } => {
+                write!(f, "proof '{}' failed: {}", name, detail)
             }
             HyperionError::ApeironError(e) => {
                 write!(f, "Apeiron error: {}", e)

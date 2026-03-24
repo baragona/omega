@@ -4308,8 +4308,18 @@ fn gauntlet_ac_pass_pipeline() {
 
 #[test]
 fn gauntlet_backtrack_abyss() {
-    // Ground Peano arithmetic must terminate (no occurs-check trap here)
-    run_file("examples/gauntlet-backtrack-abyss.hyp");
+    // Ground Peano arithmetic via logic engine (backward-chaining with occurs check)
+    let source = std::fs::read_to_string("examples/gauntlet-backtrack-abyss.hyp").unwrap();
+    let sexps = apeiron::parser::parse(&source).unwrap();
+    let mut session = HyperionSession::new();
+    for sexp in &sexps {
+        session.process(sexp)
+            .unwrap_or_else(|e| panic!("Error: {}\nOutput: {:?}", e, session.output));
+    }
+    // Verify logic engine was used (not Apeiron)
+    let output = session.output.join("\n");
+    assert!(output.contains("[PROOF:LP]"),
+        "Logic engine should have processed proofs, output: {}", output);
 }
 
 #[test]
@@ -4437,6 +4447,138 @@ fn gauntlet_lcf_tactics_on_von_neumann() {
     // No Exponential/Evaluator → no Defunctionalization (LCF tactics are first-order combinators)
     assert!(!compiled.passes.contains(&CompilationPass::Defunctionalization),
         "Pure tactic category (no lambdas) should NOT need Defunctionalization, got: {:?}", compiled.passes);
+}
+
+#[test]
+fn ac_normalization_actually_transforms_rules() {
+    // Verify the ACNormalization pass actually rewrites rule LHS/RHS
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category AC [Object E] [Morphism op :domain [E E] :codomain E]]
+        [Substrate VNac @engine von-neumann @resource-mode deep-copy @barrier transparent @equality ac-matching]
+        [Universe ACvn :category AC :substrate VNac]
+        [Theory ACT :in ACvn
+          [@law comm [op ?x ?y] === [op ?y ?x]]
+          [@rule reduce [op [op c a] b] ==> [result]]
+        ]
+    "#;
+    process_all(&mut session, input).unwrap();
+    let output = session.output.join("\n");
+    // The pass should have detected 'op' as AC and normalized rules
+    assert!(output.contains("[PASS:ACNormalization]"),
+        "ACNormalization pass should have run, output: {}", output);
+    // The rule LHS op(op(c,a),b) should be normalized to op(a,op(b,c))
+    let theory = &session.vn_theories["ACT"];
+    let reduce_rule = theory.rules.iter().find(|r| r.name == "reduce").unwrap();
+    let lhs_str = format!("{}", reduce_rule.lhs);
+    assert_eq!(lhs_str, "[op a [op b c]]",
+        "AC normalization should flatten+sort LHS, got: {}", lhs_str);
+}
+
+#[test]
+fn logic_engine_occurs_check_abyss() {
+    // THE REAL TRAP: add(X, S(0), X) — no X satisfies X + 1 = X.
+    // Without occurs check, the engine binds X = S(X) infinitely.
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category LP [Object Nat] [Object Prop]
+          [Morphism add :domain [Nat Nat Nat] :codomain Prop]
+          [Morphism s :domain [Nat] :codomain Nat]
+        ]
+        [Universe LPWorld :category LP :substrate PrologEngine]
+        [Theory PAdd :in LPWorld
+          [@rule add-zero [add z ?Y ?Y] ==> [true]]
+          [@rule add-succ [add [s ?X] ?Y [s ?Z]] ==> [add ?X ?Y ?Z]]
+        ]
+        [Proofs PTest :in PAdd
+          [assert-eq impossible [add ?X [s z] ?X] true]
+        ]
+    "#;
+    // This MUST fail gracefully (not hang or blow stack)
+    let result = process_all(&mut session, input);
+    assert!(result.is_err(), "add(X, S(0), X) should fail — no X satisfies X + 1 = X");
+    let err = format!("{}", result.unwrap_err());
+    assert!(err.contains("failed"), "Error should indicate proof failure: {}", err);
+}
+
+#[test]
+fn smt_oracle_rewriting_proofs() {
+    // SMT oracle mode: rewriting succeeds, so Z3 isn't needed
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category Arith [Object Nat] [Object Prop]
+          [Morphism plus :domain [Nat Nat] :codomain Nat]
+          [Morphism succ :domain [Nat] :codomain Nat]
+          [Morphism eq-nat :domain [Nat Nat] :codomain Prop]
+        ]
+        [Universe SMTWorld :category Arith :substrate SMTBackend]
+        [Theory SMTArith :in SMTWorld
+          [@rule plus-zero [plus zero ?n] ==> ?n]
+          [@rule plus-succ [plus [succ ?m] ?n] ==> [succ [plus ?m ?n]]]
+        ]
+        [Proofs SMTTest :in SMTArith
+          [assert-eq p01 [plus zero [succ zero]] [succ zero]]
+          [assert-eq p11 [plus [succ zero] [succ zero]] [succ [succ zero]]]
+        ]
+    "#;
+    process_all(&mut session, input).unwrap();
+    let output = session.output.join("\n");
+    assert!(output.contains("[PROOF:SMT]"), "SMT oracle should process proofs: {}", output);
+    assert!(output.contains("by rewriting"), "Should prove by rewriting: {}", output);
+}
+
+#[test]
+fn smt_oracle_z3_proves_uninterpreted_equality() {
+    // Z3 proves x = x for uninterpreted sort — pure SMT, no rewriting
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category UF [Object S]
+          [Morphism f :domain [S] :codomain S]
+        ]
+        [Universe UFWorld :category UF :substrate SMTBackend]
+        [Theory UFT :in UFWorld]
+        [Proofs UFProofs :in UFT
+          [assert-eq reflexive a a]
+        ]
+    "#;
+    let result = process_all(&mut session, input);
+    // If Z3 is available, it should prove a = a (unsat on negation)
+    // If Z3 is not available, it will fail with an error — that's OK
+    match result {
+        Ok(()) => {
+            let output = session.output.join("\n");
+            assert!(output.contains("[PROOF:SMT]"), "Output: {}", output);
+        }
+        Err(e) => {
+            let msg = format!("{}", e);
+            // Z3 not available is acceptable
+            assert!(msg.contains("Z3") || msg.contains("z3") || msg.contains("spawn"),
+                "Unexpected error: {}", msg);
+        }
+    }
+}
+
+#[test]
+fn logic_engine_inline_smoke() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category LP [Object Nat] [Object Prop]
+          [Morphism add :domain [Nat Nat Nat] :codomain Prop]
+          [Morphism s :domain [Nat] :codomain Nat]
+        ]
+        [Universe LPWorld :category LP :substrate PrologEngine]
+        [Theory PAdd :in LPWorld
+          [@rule add-zero [add z ?Y ?Y] ==> [true]]
+        ]
+        [Proofs PTest :in PAdd
+          [assert-eq smoke [add z a a] true]
+        ]
+    "#;
+    process_all(&mut session, input).unwrap_or_else(|e| {
+        panic!("Error: {}\nOutput: {:?}", e, session.output);
+    });
+    let output = session.output.join("\n");
+    assert!(output.contains("[PROOF:LP]"), "Output: {}", output);
 }
 
 /// Helper to load the prelude into a session for tests

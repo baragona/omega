@@ -8,4 +8,5 @@ pub mod nat_trans;
 pub mod adjunction;
 pub mod codegen;
 pub mod laws;
+pub mod passes;
 pub mod session;

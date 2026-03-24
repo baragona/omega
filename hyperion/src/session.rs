@@ -947,6 +947,24 @@ impl HyperionSession {
             }
         }
 
+        // Apply compilation passes to rules
+        if let Some(compiled) = self.universes.get(universe_name) {
+            use crate::universe::CompilationPass;
+
+            // ACNormalization: detect AC operators from @law commutativity patterns,
+            // then flatten+sort all AC operator trees in rules.
+            if compiled.passes.contains(&CompilationPass::ACNormalization) {
+                let ac_ops = crate::passes::ac_normalize::detect_ac_ops(&rules);
+                if !ac_ops.is_empty() {
+                    crate::passes::ac_normalize::ac_normalize_rules(&mut rules, &ac_ops);
+                    self.output.push(format!(
+                        "[PASS:ACNormalization] Normalized AC operators: {:?}",
+                        ac_ops
+                    ));
+                }
+            }
+        }
+
         self.output.push(format!(
             "[THEORY-VN] {} registered ({} sorts, {} operators, {} rules)",
             theory_name,
@@ -1342,10 +1360,209 @@ impl HyperionSession {
             }
         }
 
+        // Check if this theory's universe uses a specialized engine
+        let engine_mode = theory_name.as_deref().and_then(|tn| {
+            let uni_name = self.theory_universes.get(tn)?;
+            let compiled = self.universes.get(uni_name)?;
+            let sub = self.substrates.get(&compiled.substrate_name)?;
+            Some(sub.engine.clone())
+        });
+
+        if matches!(engine_mode, Some(substrate::Engine::LogicProgramming)) {
+            return self.process_proofs_logic_engine(items, theory_name.as_deref());
+        }
+
+        // SMT oracle mode: use Z3 for equality proofs
+        let equality_mode = theory_name.as_deref().and_then(|tn| {
+            let uni_name = self.theory_universes.get(tn)?;
+            let compiled = self.universes.get(uni_name)?;
+            let sub = self.substrates.get(&compiled.substrate_name)?;
+            Some(sub.equality.clone())
+        });
+
+        if matches!(equality_mode, Some(substrate::EqualityMode::SMTOracle)) {
+            return self.process_proofs_smt_oracle(items, theory_name.as_deref());
+        }
+
         let rewritten = self.rewrite_for_apeiron(sexp, universe_name.as_deref())?;
         self.apeiron.process(&rewritten)?;
         self.drain_apeiron_output();
         Ok(())
+    }
+
+    /// Process proofs using the logic programming engine (backward-chaining with occurs check).
+    fn process_proofs_logic_engine(&mut self, items: &[Sexp], theory_name: Option<&str>) -> Result<()> {
+        let theory_name = theory_name.ok_or_else(|| HyperionError::ParseError {
+            block: "Proofs".into(),
+            detail: "missing :in theory for logic engine proofs".into(),
+        })?;
+
+        let theory = self.vn_theories.get(theory_name).ok_or_else(|| HyperionError::Undefined {
+            kind: "Theory".into(),
+            name: theory_name.to_string(),
+        })?.clone();
+
+        let clauses = crate::passes::logic_engine::rules_to_clauses(&theory.rules);
+
+        let proofs_name = items.get(1).and_then(|s| s.as_atom()).unwrap_or("?");
+
+        for item in items {
+            if let Some(inner) = item.as_list() {
+                if inner.first().and_then(|s| s.as_atom()) == Some("assert-eq") && inner.len() >= 4 {
+                    let name = inner[1].as_atom().unwrap_or("?").to_string();
+                    let lhs = &inner[2];
+                    let rhs = &inner[3];
+
+                    // For logic engine: resolve LHS as a query, then check if result matches RHS
+                    // Strategy: try to prove [lhs] reduces to [rhs] via rewriting,
+                    // or try the query directly if LHS is a predicate
+                    let result = self.logic_engine_assert_eq(&clauses, lhs, rhs);
+
+                    match result {
+                        Ok(()) => {
+                            let msg = format!("[PROOF:LP] {} — {} ✓", proofs_name, name);
+                            self.output.push(msg.clone());
+                            self.record_result(&name, "valid", None, Some(msg));
+                        }
+                        Err(detail) => {
+                            return Err(HyperionError::ProofFailure {
+                                name,
+                                detail,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Process proofs using the SMT oracle (Z3 decision procedure).
+    fn process_proofs_smt_oracle(&mut self, items: &[Sexp], theory_name: Option<&str>) -> Result<()> {
+        let theory_name = theory_name.ok_or_else(|| HyperionError::ParseError {
+            block: "Proofs".into(),
+            detail: "missing :in theory for SMT oracle proofs".into(),
+        })?;
+
+        let theory = self.vn_theories.get(theory_name).ok_or_else(|| HyperionError::Undefined {
+            kind: "Theory".into(),
+            name: theory_name.to_string(),
+        })?.clone();
+
+        // Build SMT declarations from theory
+        let (smt_sorts, smt_funcs) = crate::passes::smt_bridge::theory_to_smt_decls(
+            &theory.sorts, &theory.morphism_types,
+        );
+
+        let proofs_name = items.get(1).and_then(|s| s.as_atom()).unwrap_or("?");
+
+        for item in items {
+            if let Some(inner) = item.as_list() {
+                if inner.first().and_then(|s| s.as_atom()) == Some("assert-eq") && inner.len() >= 4 {
+                    let name = inner[1].as_atom().unwrap_or("?").to_string();
+                    let lhs = &inner[2];
+                    let rhs = &inner[3];
+
+                    // First try rewriting (VN rules), then fall back to Z3
+                    let clauses = crate::passes::logic_engine::rules_to_clauses(&theory.rules);
+                    let lhs_norm = self.logic_engine_normalize(lhs, &clauses, 100);
+                    let rhs_norm = self.logic_engine_normalize(rhs, &clauses, 100);
+
+                    if format!("{}", lhs_norm) == format!("{}", rhs_norm) {
+                        let msg = format!("[PROOF:SMT] {} — {} ✓ (by rewriting)", proofs_name, name);
+                        self.output.push(msg.clone());
+                        self.record_result(&name, "valid", None, Some(msg));
+                        continue;
+                    }
+
+                    // Try Z3
+                    match crate::passes::smt_bridge::prove_equality_z3(
+                        &smt_sorts, &smt_funcs, &lhs_norm, &rhs_norm,
+                    ) {
+                        Ok(()) => {
+                            let msg = format!("[PROOF:SMT] {} — {} ✓ (by Z3)", proofs_name, name);
+                            self.output.push(msg.clone());
+                            self.record_result(&name, "valid", None, Some(msg));
+                        }
+                        Err(detail) => {
+                            return Err(HyperionError::ProofFailure {
+                                name,
+                                detail: format!("rewriting failed ({} != {}), Z3: {}",
+                                    lhs_norm, rhs_norm, detail),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Assert equality using the logic engine.
+    /// Tries multiple strategies:
+    /// 1. If LHS is a compound term, resolve it as a query and check if RHS matches the result
+    /// 2. Normalize both sides via rewriting and compare
+    fn logic_engine_assert_eq(
+        &self,
+        clauses: &[crate::passes::logic_engine::Clause],
+        lhs: &Sexp,
+        rhs: &Sexp,
+    ) -> std::result::Result<(), String> {
+        use crate::passes::logic_engine::{resolve, apply_subst};
+
+        // Strategy 1: If RHS is an atom like "true", resolve LHS as a query
+        if rhs.is_atom("true") {
+            match resolve(lhs, clauses, 100) {
+                crate::passes::logic_engine::QueryResult::Success(_) => return Ok(()),
+                crate::passes::logic_engine::QueryResult::Failure => {
+                    return Err(format!("query {} failed to resolve", lhs));
+                }
+            }
+        }
+
+        // Strategy 2: Normalize both sides by repeated rewriting and compare
+        let lhs_norm = self.logic_engine_normalize(lhs, clauses, 100);
+        let rhs_norm = self.logic_engine_normalize(rhs, clauses, 100);
+        let lhs_str = format!("{}", lhs_norm);
+        let rhs_str = format!("{}", rhs_norm);
+
+        if lhs_str == rhs_str {
+            return Ok(());
+        }
+
+        // Strategy 3: Try to resolve an equality query
+        Err(format!("{} != {}", lhs_str, rhs_str))
+    }
+
+    /// Normalize a term by repeatedly applying rewrite rules (forward chaining).
+    fn logic_engine_normalize(&self, term: &Sexp, clauses: &[crate::passes::logic_engine::Clause], fuel: usize) -> Sexp {
+        if fuel == 0 {
+            return term.clone();
+        }
+        // Try to match term against each clause head and rewrite to body
+        for clause in clauses {
+            let mut subst = std::collections::HashMap::new();
+            if crate::passes::logic_engine::try_match(&clause.head, term, &mut subst) {
+                let rewritten = crate::passes::logic_engine::apply_subst(&clause.body, &subst);
+                // Recursively normalize the result
+                return self.logic_engine_normalize(&rewritten, clauses, fuel - 1);
+            }
+        }
+        // No rule matched at head — try normalizing children
+        if let Some(items) = term.as_list() {
+            let normalized: Vec<Sexp> = items.iter()
+                .map(|i| self.logic_engine_normalize(i, clauses, fuel))
+                .collect();
+            let result = Sexp::List(normalized, term.span());
+            // Try head again after normalizing children
+            if format!("{}", result) != format!("{}", term) {
+                return self.logic_engine_normalize(&result, clauses, fuel - 1);
+            }
+            return result;
+        }
+        term.clone()
     }
 
     /// Extract the value after `:in` from a block's top-level items.
