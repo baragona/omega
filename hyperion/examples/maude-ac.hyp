@@ -1,0 +1,28 @@
+;; Hyperion Example: AC-Matching (Maude-style)
+;;
+;; Demonstrates associative-commutative matching: pattern matching
+;; modulo AC properties. The same algorithm handles both Maude-style
+;; term rewriting and K Framework cell multiset matching.
+
+[Category ACAlgebra
+  [Object Elem]
+  [Morphism add :domain [Elem Elem] :codomain Elem]
+  [Morphism mul :domain [Elem Elem] :codomain Elem]
+]
+
+[Universe MaudeWorld :category ACAlgebra :substrate ACRewriting]
+
+[Theory CommRing :in MaudeWorld
+  ;; Additive identity
+  [@rule add-zero [add zero ?x] ==> ?x]
+
+  ;; Multiplicative identity
+  [@rule mul-one [mul one ?x] ==> ?x]
+
+  ;; Multiplicative annihilation
+  [@rule mul-zero [mul zero ?x] ==> zero]
+
+  ;; Distributivity
+  [@rule distrib [mul ?a [add ?b ?c]]
+    ==> [add [mul ?a ?b] [mul ?a ?c]]]
+]

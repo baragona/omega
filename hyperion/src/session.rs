@@ -179,7 +179,7 @@ fn proof_term_to_sexp(proof: &ProofTerm, sp: apeiron::parser::Span) -> Sexp {
 
 impl HyperionSession {
     pub fn new() -> Self {
-        HyperionSession {
+        let mut session = HyperionSession {
             apeiron: apeiron::system::Session::new(),
             categories: HashMap::new(),
             substrates: HashMap::new(),
@@ -201,6 +201,67 @@ impl HyperionSession {
             meta_depth: 0,
             max_meta_depth: 1,
             meta_bindings: HashMap::new(),
+        };
+        session.register_builtin_substrates();
+        session
+    }
+
+    /// Register built-in substrates available without the prelude.
+    fn register_builtin_substrates(&mut self) {
+        use crate::substrate::*;
+        let builtins = vec![
+            SubstrateDef {
+                name: "ApeironStandard".into(),
+                engine: Engine::InteractionGraph,
+                resource_mode: ResourceMode::OptimalSharing,
+                barrier: BarrierMode::Transparent,
+                equality: EqualityMode::RewriteEquivalence,
+            },
+            SubstrateDef {
+                name: "ApeironLinear".into(),
+                engine: Engine::InteractionGraph,
+                resource_mode: ResourceMode::StrictlyLinear,
+                barrier: BarrierMode::Transparent,
+                equality: EqualityMode::RewriteEquivalence,
+            },
+            SubstrateDef {
+                name: "ApeironOracle".into(),
+                engine: Engine::InteractionGraph,
+                resource_mode: ResourceMode::OptimalSharing,
+                barrier: BarrierMode::Transparent,
+                equality: EqualityMode::TopologicalHash,
+            },
+            SubstrateDef {
+                name: "ApeironTree".into(),
+                engine: Engine::TermTree,
+                resource_mode: ResourceMode::DeepCopy,
+                barrier: BarrierMode::Transparent,
+                equality: EqualityMode::RewriteEquivalence,
+            },
+            SubstrateDef {
+                name: "PrologEngine".into(),
+                engine: Engine::LogicProgramming,
+                resource_mode: ResourceMode::OptimalSharing,
+                barrier: BarrierMode::Transparent,
+                equality: EqualityMode::UnificationSearch,
+            },
+            SubstrateDef {
+                name: "ACRewriting".into(),
+                engine: Engine::InteractionGraph,
+                resource_mode: ResourceMode::OptimalSharing,
+                barrier: BarrierMode::Transparent,
+                equality: EqualityMode::ACMatching,
+            },
+            SubstrateDef {
+                name: "SMTBackend".into(),
+                engine: Engine::SMTAssisted,
+                resource_mode: ResourceMode::DeepCopy,
+                barrier: BarrierMode::Transparent,
+                equality: EqualityMode::SMTOracle,
+            },
+        ];
+        for sub in builtins {
+            self.substrates.insert(sub.name.clone(), sub);
         }
     }
 
@@ -382,12 +443,19 @@ impl HyperionSession {
         let sub = substrate::parse_substrate(items)?;
         let name = sub.name.clone();
 
-        if self.substrates.contains_key(&name) {
+        // Built-in substrates can be overridden by prelude/user (idempotent).
+        // Non-built-in duplicates are rejected.
+        static BUILTIN_NAMES: &[&str] = &[
+            "ApeironStandard", "ApeironLinear", "ApeironOracle", "ApeironTree",
+            "PrologEngine", "ACRewriting", "SMTBackend",
+        ];
+        if self.substrates.contains_key(&name) && !BUILTIN_NAMES.contains(&name.as_str()) {
             return Err(HyperionError::DuplicateName {
                 kind: "Substrate".into(),
                 name,
             });
         }
+
 
         let msg = format!(
             "[SUBSTRATE] {} registered (engine={:?}, resource={:?}, barrier={:?}, equality={:?})",

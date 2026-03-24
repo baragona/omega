@@ -31,6 +31,13 @@ pub enum Engine {
     /// disjoint linear resources. The categorical linearity guarantee (no diagonal
     /// map) ensures each FD is consumed by exactly one thread.
     ConcurrentIO,
+    /// Logic programming engine: backward-chaining search with unification and
+    /// backtracking. Rules are Horn clauses, goals are queries. Covers Twelf/λProlog.
+    LogicProgramming,
+    /// SMT-assisted engine: term-tree augmented with Z3 calls for decidable
+    /// fragments (arithmetic, bitvectors, arrays). E-graph can inject Z3-proved
+    /// equalities via one-way cooperative mode.
+    SMTAssisted,
 }
 
 /// Resource management mode.
@@ -79,6 +86,17 @@ pub enum EqualityMode {
     /// Proof-relevant: merging creates labeled edges, not identity collapse.
     /// Preserves path spaces for HoTT.
     ProofRelevant,
+    /// AC-matching: pattern matching modulo associativity and commutativity.
+    /// Flattens associative operators and matches modulo permutation.
+    /// Also handles K Framework cell multiset matching (same algorithm).
+    ACMatching,
+    /// Unification search: unification as the execution mechanism (not just
+    /// equality checking). Covers Prolog-style backward-chaining resolution.
+    UnificationSearch,
+    /// SMT oracle: terminal decision procedure. Z3 replaces the e-graph entirely.
+    /// Goals serialized to SMT-LIB2, sat/unsat comes back. Mutually exclusive
+    /// with EqualitySaturation on the same substrate.
+    SMTOracle,
 }
 
 /// A substrate definition: the physical laws of computation.
@@ -200,10 +218,12 @@ fn parse_engine(val: &str, substrate: &str) -> Result<Engine> {
         "compiler" => Ok(Engine::Compiler),
         "system-io" | "systemio" => Ok(Engine::SystemIO),
         "concurrent-io" | "concurrentio" => Ok(Engine::ConcurrentIO),
+        "logic-programming" | "prolog" => Ok(Engine::LogicProgramming),
+        "smt-assisted" | "smt" => Ok(Engine::SMTAssisted),
         _ => Err(HyperionError::ParseError {
             block: "Substrate".into(),
             detail: format!(
-                "Substrate '{}': unknown engine '{}'. Expected one of: interaction-graph, term-tree, symmetric-monoidal, cellular-automaton, abstract-machine, von-neumann, reversible-graph, concurrent-graph, network-rpc, compiler, system-io, concurrent-io",
+                "Substrate '{}': unknown engine '{}'. Expected one of: interaction-graph, term-tree, symmetric-monoidal, cellular-automaton, abstract-machine, von-neumann, reversible-graph, concurrent-graph, network-rpc, compiler, system-io, concurrent-io, logic-programming, smt-assisted",
                 substrate, val
             ),
         }),
@@ -259,10 +279,13 @@ fn parse_equality_mode(val: &str, substrate: &str) -> Result<EqualityMode> {
         "extensional-equivalence" | "extensional" => Ok(EqualityMode::ExtensionalEquivalence),
         "full-unification" => Ok(EqualityMode::FullUnification),
         "proof-relevant" => Ok(EqualityMode::ProofRelevant),
+        "ac-matching" | "ac" => Ok(EqualityMode::ACMatching),
+        "unification-search" | "backward-chaining" => Ok(EqualityMode::UnificationSearch),
+        "smt-oracle" | "smt-decision" => Ok(EqualityMode::SMTOracle),
         _ => Err(HyperionError::ParseError {
             block: "Substrate".into(),
             detail: format!(
-                "Substrate '{}': unknown equality '{}'. Expected one of: topological-hash, rewrite-equivalence, alpha-equivalence, observational, unification, topological-homotopy, equality-saturation, extensional-equivalence, full-unification, proof-relevant",
+                "Substrate '{}': unknown equality '{}'. Expected one of: topological-hash, rewrite-equivalence, alpha-equivalence, observational, unification, topological-homotopy, equality-saturation, extensional-equivalence, full-unification, proof-relevant, ac-matching, unification-search, smt-oracle",
                 substrate, val
             ),
         }),

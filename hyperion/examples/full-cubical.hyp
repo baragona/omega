@@ -1,0 +1,47 @@
+;; Hyperion Example: Full Cubical Type Theory
+;;
+;; Demonstrates Kan composition, Glue types, and face lattice —
+;; the computational content of univalence. Transport through
+;; type formers computes, not just proves.
+
+[Category CubicalTT
+  [Object Type] [Object Term]
+  [Morphism arrow :domain [Type Type] :codomain Type]
+  [Exponential lam :object Term]
+  [Evaluator app]
+  [IntervalSort :interval I :endpoints [i0 i1]]
+  [PathType :refl refl :concat concat :inv inv :ap ap]
+  [FaceLattice :meet fmeet :join fjoin :neg fneg]
+  [PartialElement :hcomp hcomp :coe coe]
+  [KanOps :comp comp :fill fill :hfill hfill]
+  [GlueType :glue Glue :unglue unglue]
+]
+
+[Substrate CubicalEngine
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Universe CubicalWorld :category CubicalTT :substrate CubicalEngine]
+
+[Theory CubicalProofs :in CubicalWorld
+  ;; Face lattice identities
+  [@rule meet-idem [fmeet ?phi ?phi] ==> ?phi]
+  [@rule join-idem [fjoin ?phi ?phi] ==> ?phi]
+  [@rule neg-neg [fneg [fneg ?phi]] ==> ?phi]
+
+  ;; Transport through constant type family is identity
+  [@rule coe-const [coe ?r ?s [const-fam ?A] ?a] ==> ?a]
+
+  ;; Homogeneous composition: when faces agree, fill the open box
+  [@rule hcomp-base [hcomp ?A i0 ?walls ?base] ==> ?base]
+
+  ;; Glue type: on the face φ, Glue A [φ ↦ (B,f)] computes to B
+  [@rule glue-face [Glue ?A ?phi [pair ?B ?f]]
+    ==> [restrict ?phi ?B ?A]]
+
+  ;; Unglue extracts the underlying A
+  [@rule unglue-glue [unglue [glue ?a ?t]] ==> ?a]
+]

@@ -1,0 +1,28 @@
+;; Hyperion Example: SMT-Verified Arithmetic
+;;
+;; Demonstrates SMT oracle integration: the SMT solver (Z3) acts as
+;; a terminal decision procedure. Goals are serialized to SMT-LIB2,
+;; and sat/unsat comes back. No e-graph — pure decision procedure.
+
+[Category VerifiedArith
+  [Object Nat] [Object Bool] [Object Prop]
+  [Morphism plus :domain [Nat Nat] :codomain Nat]
+  [Morphism times :domain [Nat Nat] :codomain Nat]
+  [Morphism leq :domain [Nat Nat] :codomain Bool]
+  [Morphism eq-nat :domain [Nat Nat] :codomain Prop]
+]
+
+[Universe SMTWorld :category VerifiedArith :substrate SMTBackend]
+
+[Theory LinearArith :in SMTWorld
+  ;; Arithmetic identities (verified by Z3, not by rewriting)
+  [@rule plus-comm [eq-nat [plus ?x ?y] [plus ?y ?x]] ==> [true]]
+  [@rule plus-assoc [eq-nat [plus [plus ?x ?y] ?z] [plus ?x [plus ?y ?z]]] ==> [true]]
+  [@rule plus-zero [eq-nat [plus ?x zero] ?x] ==> [true]]
+  [@rule times-zero [eq-nat [times ?x zero] zero] ==> [true]]
+
+  ;; Order properties
+  [@rule leq-refl [leq ?x ?x] ==> [true]]
+  [@rule leq-trans [implies [and [leq ?x ?y] [leq ?y ?z]] [leq ?x ?z]]
+    ==> [true]]
+]

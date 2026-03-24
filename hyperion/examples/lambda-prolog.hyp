@@ -1,0 +1,32 @@
+;; Hyperion Example: Logic Programming (λProlog-style)
+;;
+;; Demonstrates backward-chaining search with unification.
+;; Rules are Horn clauses, goals are queries. The LogicProgramming
+;; engine resolves goals by backward-chaining through rules.
+
+[Category HornClause
+  [Object Formula] [Object Term]
+  [Morphism implies :domain [Formula Formula] :codomain Formula]
+  [Morphism query :domain [Formula] :codomain Formula]
+  [Exponential lam :object Term]
+  [Evaluator app]
+]
+
+[Universe PrologWorld :category HornClause :substrate PrologEngine]
+
+[Theory FamilyDB :in PrologWorld
+  ;; Facts (Horn clauses with empty body)
+  [@rule parent-1 [parent alice bob] ==> [true]]
+  [@rule parent-2 [parent bob carol] ==> [true]]
+  [@rule parent-3 [parent carol dave] ==> [true]]
+
+  ;; Rules (Horn clauses with body)
+  [@rule grandparent [grandparent ?x ?z]
+    ==> [and [parent ?x ?y] [parent ?y ?z]]]
+
+  [@rule ancestor-base [ancestor ?x ?y]
+    ==> [parent ?x ?y]]
+
+  [@rule ancestor-step [ancestor ?x ?z]
+    ==> [and [parent ?x ?y] [ancestor ?y ?z]]]
+]

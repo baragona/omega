@@ -1,0 +1,26 @@
+;; Hyperion Example: Twelf-Style Logical Framework (HOAS)
+;;
+;; Demonstrates Higher-Order Abstract Syntax: object-language binding
+;; represented via meta-language lambda. Substitution is inherited
+;; from the meta-level — no explicit de Bruijn indices needed.
+;;
+;; This models the simply-typed lambda calculus in LF style.
+
+[Category LF
+  [Object Type] [Object Term]
+  [Morphism arrow :domain [Type Type] :codomain Type]
+  [Morphism app :domain [Term Term] :codomain Term]
+  [HOASBinding lam :object Term]
+  [Evaluator app]
+]
+
+[Universe TwelfWorld :category LF :substrate ApeironStandard]
+
+[Theory STLC :in TwelfWorld
+  ;; Types
+  [@rule base-type [typeof base-tm base-ty] ==> [true]]
+
+  ;; Application typing: if f : A -> B and x : A then (app f x) : B
+  [@rule app-type [typeof [app ?f ?x] ?B]
+    ==> [and [typeof ?f [arrow ?A ?B]] [typeof ?x ?A]]]
+]

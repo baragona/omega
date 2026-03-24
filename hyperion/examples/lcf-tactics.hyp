@@ -1,0 +1,36 @@
+;; Hyperion Example: LCF-Style Tactic Combinators
+;;
+;; Demonstrates goal-directed proof search with explicit tactic
+;; composition. Unlike Prolog-style backward search, LCF tactics
+;; operate on proof state trees with validation functions.
+
+[Category LCF
+  [Object Prop] [Object Proof] [Object Goal] [Object Tactic]
+  [Morphism apply-tac :domain [Tactic Goal] :codomain Goal]
+  [Morphism validate :domain [Proof Goal] :codomain Prop]
+  [TacticCombinators
+    :then seq-tac
+    :orelse alt-tac
+    :repeat rep-tac
+    :try try-tac
+    :focus foc-tac
+  ]
+]
+
+[Universe LCFWorld :category LCF :substrate ApeironStandard]
+
+[Theory PropLogic :in LCFWorld
+  ;; Tactics that transform goals
+  [@rule tac-assumption [apply-tac assumption-tac [goal-proves ?G ?G]]
+    ==> [solved [pf-assumption]]]
+
+  [@rule tac-intro [apply-tac intro-tac [goal-proves ?G [implies ?A ?B]]]
+    ==> [subgoal [goal-proves [extend ?G ?A] ?B]]]
+
+  ;; Tactic combinators
+  [@rule seq-apply [seq-tac ?t1 ?t2 ?g]
+    ==> [apply-tac ?t2 [apply-tac ?t1 ?g]]]
+
+  [@rule alt-first [alt-tac ?t1 ?t2 ?g]
+    ==> [apply-tac ?t1 ?g]]
+]

@@ -1,0 +1,29 @@
+;; Hyperion Example: K Framework State Configurations
+;;
+;; Demonstrates state configuration cells — nested multisets where
+;; rules match into arbitrary cell positions. Under the hood, this
+;; shares the AC-matching algorithm with Maude-style rewriting.
+
+[Category KConfig
+  [Object State] [Object Pgm] [Object Val] [Object Env]
+  [Morphism eval :domain [Pgm Env] :codomain Val]
+  [StateConfiguration :cell State :merge cell-merge]
+]
+
+[Universe KWorld :category KConfig :substrate ACRewriting]
+
+[Theory ImpLang :in KWorld
+  ;; Evaluate a constant
+  [@rule eval-const [eval [const ?n] ?env] ==> ?n]
+
+  ;; Evaluate a variable lookup
+  [@rule eval-var [eval [var ?x] ?env] ==> [lookup ?env ?x]]
+
+  ;; Evaluate addition
+  [@rule eval-add [eval [plus ?e1 ?e2] ?env]
+    ==> [add [eval ?e1 ?env] [eval ?e2 ?env]]]
+
+  ;; Evaluate assignment (state update)
+  [@rule eval-assign [eval [assign ?x ?e] ?env]
+    ==> [update ?env ?x [eval ?e ?env]]]
+]

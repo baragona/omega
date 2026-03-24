@@ -1,0 +1,54 @@
+;; Gauntlet Test 4: The Chimera Matrix
+;;
+;; Full Cubical Type Theory on a Logic Programming engine.
+;; Naively impossible — Prolog has no concept of path evaluation or
+;; Kan composition. But the pass pipeline bridges the gap:
+;;
+;; 1. KanComputation generates transport reduction rules
+;; 2. ClauseCompilation encodes higher-order clauses as first-order
+;; 3. HOASDefunctionalization (if needed) converts lambdas to explicit subst
+;;
+;; The rewrite rules produced by KanComputation are just first-order
+;; rewrites that the Prolog engine can backward-chain through.
+
+[Category CubicalLP
+  [Object Type] [Object Term]
+  [Morphism arrow :domain [Type Type] :codomain Type]
+  [Morphism const-fam :domain [Type] :codomain Type]
+  [Morphism comp :domain [Type Term Term Term] :codomain Term]
+  [Morphism refl :domain [Term Term] :codomain Term]
+  [Morphism concat :domain [Term Term Term] :codomain Term]
+  [Exponential lam :object Term]
+  [Evaluator app]
+  [IntervalSort :interval I :endpoints [i0 i1]]
+  [PathType :refl refl :concat concat :inv inv :ap ap]
+  [KanOps :comp comp :fill fill :hfill hfill]
+]
+
+;; The chimera: Cubical TT on Prolog engine
+;; Pipeline: HOASDefunctionalization → ClauseCompilation → KanComputation
+[Universe CubicalPrologWorld :category CubicalLP :substrate PrologEngine]
+
+[Theory CubicalProlog :in CubicalPrologWorld
+  ;; Face operations (first-order after defunctionalization)
+  [@rule refl-i0 [refl ?a i0] ==> ?a]
+  [@rule refl-i1 [refl ?a i1] ==> ?a]
+
+  ;; Transport through constant type family is identity
+  [@rule transport-const [comp [const-fam ?A] ?r ?s ?a] ==> ?a]
+
+  ;; Path concatenation endpoints
+  [@rule concat-left [concat ?p ?q i0] ==> [p i0]]
+  [@rule concat-right [concat ?p ?q i1] ==> [q i1]]
+]
+
+;; Proofs: ground cubical computations via the compiled Horn clauses
+[Proofs ChimeraProofs :in CubicalProlog
+  ;; Reflexivity at endpoints
+  [assert-eq refl-at-i0 [refl a i0] a]
+  [assert-eq refl-at-i1 [refl a i1] a]
+
+  ;; Transport through constant family — use concrete interval endpoints
+  ;; that match the rule pattern comp(const-fam(A), r, s, a) ==> a
+  [assert-eq transport-id [comp [const-fam nat] i0 i1 zero] zero]
+]

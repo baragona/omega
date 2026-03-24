@@ -50,7 +50,7 @@ pub fn compile_universe(
 /// Check if a substrate uses a first-order engine (VonNeumann, NetworkRpc, SystemIO, or Compiler).
 /// These engines bypass Apeiron and use direct rewrite-rule theories.
 pub fn is_first_order_engine(sub: &SubstrateDef) -> bool {
-    matches!(sub.engine, Engine::VonNeumann | Engine::NetworkRpc | Engine::SystemIO | Engine::ConcurrentGraph | Engine::ConcurrentIO | Engine::Compiler)
+    matches!(sub.engine, Engine::VonNeumann | Engine::NetworkRpc | Engine::SystemIO | Engine::ConcurrentGraph | Engine::ConcurrentIO | Engine::Compiler | Engine::LogicProgramming | Engine::SMTAssisted)
 }
 
 /// Check if a substrate uses the Von Neumann engine.
@@ -157,6 +157,63 @@ fn check_compatibility(cat: &CategoryDef, sub: &SubstrateDef) -> Result<Vec<Comp
         passes.push(CompilationPass::DependentCombinators);
     }
 
+    // --- HOAS bridging (Phase 1) ---
+
+    // HOAS on a first-order engine → explicit substitution calculus
+    if cat.has_hoas() && !supports_lambda {
+        passes.push(CompilationPass::HOASDefunctionalization);
+    }
+
+    // Logic programming engine + Exponential → clause compilation
+    if matches!(sub.engine, Engine::LogicProgramming) && needs_exponential {
+        passes.push(CompilationPass::ClauseCompilation);
+    }
+
+    // LCF tactic combinators on a forward-only engine → goal-directed compilation
+    if cat.has_tactic_combinators() && !matches!(sub.engine, Engine::LogicProgramming) {
+        passes.push(CompilationPass::GoalDirected);
+    }
+
+    // --- AC-matching bridging (Phase 1.5) ---
+
+    // AC-matching or StateConfiguration on non-AC engine → normalization pass
+    if (matches!(sub.equality, EqualityMode::ACMatching) || cat.has_state_configuration())
+        && !matches!(sub.engine, Engine::InteractionGraph | Engine::SymmetricMonoidal)
+    {
+        passes.push(CompilationPass::ACNormalization);
+    }
+
+    // --- Contextual + Cohesive bridging (Phase 2) ---
+
+    // Contextual types on transparent barrier → reify contexts as data
+    if cat.has_contextual_type() && matches!(sub.barrier, BarrierMode::Transparent) {
+        passes.push(CompilationPass::ContextReification);
+    }
+
+    // Cohesive modalities on non-restricting barrier → substitution guards
+    if cat.has_cohesive_modality() && !matches!(sub.barrier, BarrierMode::ContextualMembranes | BarrierMode::Cryptographic) {
+        passes.push(CompilationPass::ModalSubstitutionRestriction);
+    }
+
+    // --- Cubical bridging (Phase 3) ---
+
+    // Kan operations need computation rules on rewriting substrates
+    if cat.has_kan_ops() && matches!(sub.equality, EqualityMode::RewriteEquivalence | EqualityMode::Observational) {
+        passes.push(CompilationPass::KanComputation);
+    }
+
+    // --- SMT bridging (Phase 4) ---
+
+    // SMT oracle → encoding pass (terms must be serialized to SMT-LIB2)
+    if matches!(sub.equality, EqualityMode::SMTOracle) {
+        passes.push(CompilationPass::SMTEncoding);
+    }
+
+    // Effect grading on substrates without native effect tracking → elaboration
+    if cat.has_effect_grading() && matches!(sub.barrier, BarrierMode::Transparent) {
+        passes.push(CompilationPass::EffectElaboration);
+    }
+
     // --- Distributed systems bridging ---
 
     // NetworkPartition barrier → RPC serialization for any data crossing the partition
@@ -181,14 +238,26 @@ fn check_compatibility(cat: &CategoryDef, sub: &SubstrateDef) -> Result<Vec<Comp
 
 /// Determine the Apeiron binding mode from category + substrate + compilation passes.
 fn binding_mode(cat: &CategoryDef, sub: &SubstrateDef, passes: &[CompilationPass]) -> &'static str {
+    // HOAS binding: meta-level substitution handles object-level binding
+    if cat.has_hoas() && !passes.contains(&CompilationPass::HOASDefunctionalization) {
+        return "implicit"; // HOAS uses implicit binding (meta-level substitution)
+    }
+    // Cohesive: variable discreteness tracking (shape/flat/sharp)
+    if cat.has_cohesive_modality() {
+        return "contextual"; // Cohesive modalities restrict variable substitution
+    }
     // Nominal abstraction pass overrides to nominal even if the barrier isn't NominalScoping
     if matches!(sub.barrier, BarrierMode::NominalScoping)
         || passes.contains(&CompilationPass::NominalAbstraction)
     {
         "nominal"
+    } else if cat.has_contextual_type() && matches!(sub.barrier, BarrierMode::ContextualMembranes) {
+        "contextual"
     } else if cat.has_modal_operator() && matches!(sub.barrier, BarrierMode::ContextualMembranes) {
         "contextual"
-    } else if passes.contains(&CompilationPass::Defunctionalization) {
+    } else if passes.contains(&CompilationPass::Defunctionalization)
+        || passes.contains(&CompilationPass::HOASDefunctionalization)
+    {
         // Defunctionalized code is first-order — use exposed binding
         "exposed"
     } else if matches!(sub.resource_mode, ResourceMode::StrictlyLinear) {
@@ -221,6 +290,18 @@ fn check_modes(sub: &SubstrateDef) -> Vec<&'static str> {
         EqualityMode::ProofRelevant => {
             vec!["rewriting", "beta-reduction", "equality-saturation"]
         }
+        EqualityMode::ACMatching => {
+            // AC normalization (flatten+sort) before rewriting; Apeiron sees rewriting
+            vec!["rewriting", "beta-reduction"]
+        }
+        EqualityMode::UnificationSearch => {
+            // Backward-chaining = unification-driven search; Apeiron sees unification
+            vec!["unification", "pattern-unification"]
+        }
+        EqualityMode::SMTOracle => {
+            // Terminal SMT decision procedure; Apeiron sees oracle
+            vec!["oracle"]
+        }
     };
 
     // Engine-driven check modes (appended to equality-driven modes)
@@ -229,6 +310,14 @@ fn check_modes(sub: &SubstrateDef) -> Vec<&'static str> {
     }
     if matches!(sub.engine, Engine::ConcurrentGraph) {
         modes.push("confluent-race");
+    }
+    // LogicProgramming and SMTAssisted add unification/oracle at the Apeiron level;
+    // the actual backward-chaining/SMT-cooperation is handled by Hyperion's compilation passes
+    if matches!(sub.engine, Engine::LogicProgramming) {
+        modes.push("unification");
+    }
+    if matches!(sub.engine, Engine::SMTAssisted) {
+        modes.push("oracle");
     }
 
     modes
@@ -286,6 +375,29 @@ pub fn emit_signature_sexp(cat: &CategoryDef) -> Sexp {
     }
 
     Sexp::List(items, sp)
+}
+
+/// Inject operator declarations for structure-provided names, skipping duplicates.
+fn inject_ops(syntax_items: &mut Vec<Sexp>, names: &[&String], cat: &CategoryDef, sp: Span) {
+    for op_name in names {
+        let already = cat.morphisms.iter().any(|m| m.name == **op_name)
+            || syntax_items.iter().any(|s| {
+                s.as_list()
+                    .and_then(|l| l.get(1))
+                    .and_then(|s| s.as_atom())
+                    .map(|a| a == *op_name)
+                    .unwrap_or(false)
+            });
+        if !already {
+            syntax_items.push(Sexp::List(
+                vec![
+                    Sexp::Atom("op".into(), sp),
+                    Sexp::Atom((*op_name).clone(), sp),
+                ],
+                sp,
+            ));
+        }
+    }
 }
 
 /// Generate the Apeiron [System ...] S-expression for a compiled universe.
@@ -491,25 +603,34 @@ pub fn emit_system_sexp(
                 }
             }
             CategoricalStructure::IntervalSort { interval, i0, i1 } => {
-                // Inject interval sort endpoints as ops
-                for op_name in [interval, i0, i1] {
-                    let already = syntax_items.iter().any(|s| {
-                        s.as_list()
-                            .and_then(|l| l.get(1))
-                            .and_then(|s| s.as_atom())
-                            .map(|a| a == op_name)
-                            .unwrap_or(false)
-                    });
-                    if !already {
-                        syntax_items.push(Sexp::List(
-                            vec![
-                                Sexp::Atom("op".into(), sp),
-                                Sexp::Atom(op_name.clone(), sp),
-                            ],
-                            sp,
-                        ));
-                    }
-                }
+                inject_ops(&mut syntax_items, &[interval, i0, i1], cat, sp);
+            }
+            CategoricalStructure::HOASBinding { binder, .. } => {
+                inject_ops(&mut syntax_items, &[binder], cat, sp);
+            }
+            CategoricalStructure::TacticCombinators { then, orelse, repeat, try_tac, focus } => {
+                inject_ops(&mut syntax_items, &[then, orelse, repeat, try_tac, focus], cat, sp);
+            }
+            CategoricalStructure::StateConfiguration { cell_sort, merge } => {
+                inject_ops(&mut syntax_items, &[cell_sort, merge], cat, sp);
+            }
+            CategoricalStructure::ContextualType { context_sort, term_sort } => {
+                inject_ops(&mut syntax_items, &[context_sort, term_sort], cat, sp);
+            }
+            CategoricalStructure::CohesiveModality { shape, flat, sharp } => {
+                inject_ops(&mut syntax_items, &[shape, flat, sharp], cat, sp);
+            }
+            CategoricalStructure::FaceLattice { meet, join, neg } => {
+                inject_ops(&mut syntax_items, &[meet, join, neg], cat, sp);
+            }
+            CategoricalStructure::GlueType { glue, unglue } => {
+                inject_ops(&mut syntax_items, &[glue, unglue], cat, sp);
+            }
+            CategoricalStructure::KanOps { comp, fill, hfill } => {
+                inject_ops(&mut syntax_items, &[comp, fill, hfill], cat, sp);
+            }
+            CategoricalStructure::EffectGrading { effect_lattice, pure, total } => {
+                inject_ops(&mut syntax_items, &[effect_lattice, pure, total], cat, sp);
             }
         }
     }

@@ -1,0 +1,31 @@
+;; Hyperion Example: Contextual Modal Types (Beluga-style)
+;;
+;; Demonstrates contexts as first-class typed objects.
+;; [Γ ⊢ t : A] is a term, not just a judgment — contexts can be
+;; abstracted over, pattern-matched, and weakened.
+
+[Category ContextualLF
+  [Object Type] [Object Term] [Object Ctx]
+  [Morphism arrow :domain [Type Type] :codomain Type]
+  [Morphism app :domain [Term Term] :codomain Term]
+  [HOASBinding lam :object Term]
+  [Evaluator app]
+  [ContextualType :context Ctx :term Term]
+]
+
+[Universe BelugaWorld :category ContextualLF :substrate ApeironStandard]
+
+[Theory ContextualSTLC :in BelugaWorld
+  ;; Weakening: if Γ ⊢ t : A then (Γ, x:B) ⊢ t : A
+  [@rule weaken [in-ctx [extend ?G ?B] ?t ?A]
+    ==> [in-ctx ?G ?t ?A]]
+
+  ;; Variable rule: (Γ, x:A) ⊢ x : A
+  [@rule ctx-var [in-ctx [extend ?G ?A] [head] ?A]
+    ==> [true]]
+
+  ;; Application in context
+  [@rule ctx-app [in-ctx ?G [app ?f ?x] ?B]
+    ==> [and [in-ctx ?G ?f [arrow ?A ?B]]
+             [in-ctx ?G ?x ?A]]]
+]

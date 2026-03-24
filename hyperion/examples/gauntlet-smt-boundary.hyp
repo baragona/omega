@@ -1,0 +1,42 @@
+;; Gauntlet Test 3: SMT Translation Boundary
+;;
+;; Tests that HOAS + SMTBackend composes correctly via the pass pipeline.
+;; The compiler must insert HOASDefunctionalization BEFORE SMTEncoding,
+;; converting higher-order terms to first-order before Z3 sees them.
+;;
+;; If raw lambdas leak to the SMT oracle, it would crash.
+;; But check_compatibility inserts HOASDefunctionalization for HOAS
+;; on first-order engines (SMTAssisted is first-order), so this should
+;; compile cleanly with both passes in the pipeline.
+
+[Category HOASArith
+  [Object Type] [Object Term] [Object Prop]
+  [Morphism arrow :domain [Type Type] :codomain Type]
+  [HOASBinding lam :object Term]
+  [Morphism apply :domain [Term Term] :codomain Term]
+  [Morphism const :domain [Term] :codomain Term]
+  [Morphism eq-nat :domain [Term Term] :codomain Prop]
+  [Morphism plus :domain [Term Term] :codomain Term]
+  [Morphism succ :domain [Term] :codomain Term]
+]
+
+;; The chimera: HOAS category on an SMT substrate
+;; Pipeline: HOASDefunctionalization (HOAS on first-order engine) → SMTEncoding
+[Universe SMTHOASWorld :category HOASArith :substrate SMTBackend]
+
+[Theory ArithHOAS :in SMTHOASWorld
+  ;; Bare computation rules (not wrapped in eq-nat)
+  [@rule plus-zero [plus zero ?n] ==> ?n]
+  [@rule plus-succ [plus [succ ?m] ?n] ==> [succ [plus ?m ?n]]]
+]
+
+[Proofs SMTBoundary :in ArithHOAS
+  ;; 0 + 1 = 1 (one step)
+  [assert-eq smt-plus-01 [plus zero [succ zero]] [succ zero]]
+
+  ;; 1 + 1 = 2 (two steps: S(0)+S(0) → S(0+S(0)) → S(S(0)))
+  [assert-eq smt-plus-11 [plus [succ zero] [succ zero]] [succ [succ zero]]]
+
+  ;; 2 + 1 = 3 (three steps)
+  [assert-eq smt-plus-21 [plus [succ [succ zero]] [succ zero]] [succ [succ [succ zero]]]]
+]

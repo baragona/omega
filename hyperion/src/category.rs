@@ -67,6 +67,86 @@ pub enum CategoricalStructure {
         i0: String,
         i1: String,
     },
+
+    // === Phase 1: HOAS + Logic Programming + LCF Tactics ===
+
+    /// Higher-Order Abstract Syntax: object-language binding via meta-language lambda.
+    /// Enables LF-style representations where substitution is inherited from the meta-level.
+    /// With StrictlyLinear resource mode, gives Linear LF (LLF).
+    HOASBinding {
+        binder: String,
+        object_sort: String,
+    },
+    /// LCF-style tactic combinators for goal-directed proof search.
+    /// Distinct from logic programming: operates on proof state trees with
+    /// explicit validation functions, not Horn clause resolution.
+    TacticCombinators {
+        then: String,
+        orelse: String,
+        repeat: String,
+        try_tac: String,
+        focus: String,
+    },
+
+    // === Phase 1.5: AC-Matching + State Configurations ===
+
+    /// State configuration cells (K Framework style).
+    /// Nested multiset of named cells; matching is modulo multiset identity.
+    /// Under the hood, shares the AC-matching algorithm with ACMatching equality mode.
+    StateConfiguration {
+        cell_sort: String,
+        merge: String,
+    },
+
+    // === Phase 2: Contextual + Cohesive Modalities ===
+
+    /// Contextual modal types (Beluga-style): contexts as first-class typed objects.
+    /// `[Γ ⊢ t : A]` is a term, not just a judgment.
+    ContextualType {
+        context_sort: String,
+        term_sort: String,
+    },
+    /// Cohesive modalities (Riehl-Shulman): shape ⊣ flat ⊣ sharp adjoint triple.
+    /// These modalities restrict substitution: under flat, only discrete variables;
+    /// under sharp, only codiscrete. For synthetic (∞,1)-category theory.
+    CohesiveModality {
+        shape: String,
+        flat: String,
+        sharp: String,
+    },
+
+    // === Phase 3: Full Cubical Type Theory ===
+
+    /// Face lattice for cubical type theory: meet (∧), join (∨), negation (¬).
+    /// Face formulas like `(i = 0) ∧ (j = 1)` form a distributive lattice.
+    FaceLattice {
+        meet: String,
+        join: String,
+        neg: String,
+    },
+    /// Glue types: the computational content of univalence.
+    /// `Glue A [φ ↦ (B, f)]` looks like A globally but like B on face φ.
+    GlueType {
+        glue: String,
+        unglue: String,
+    },
+    /// Kan operations: the computational heart of cubical type theory.
+    /// comp (composition), fill (filling), hfill (homogeneous filling).
+    KanOps {
+        comp: String,
+        fill: String,
+        hfill: String,
+    },
+
+    // === Phase 4: SMT + Effectful Types ===
+
+    /// Effect grading lattice (F*-style): types carry effect annotations.
+    /// `Tot ≤ Dv ≤ ML ≤ All` — tracks state, exceptions, divergence in types.
+    EffectGrading {
+        effect_lattice: String,
+        pure: String,
+        total: String,
+    },
 }
 
 /// A category definition: pure mathematical structure.
@@ -141,6 +221,60 @@ impl CategoryDef {
         self.structure
             .iter()
             .any(|s| matches!(s, CategoricalStructure::PartialElement { .. }))
+    }
+
+    pub fn has_hoas(&self) -> bool {
+        self.structure
+            .iter()
+            .any(|s| matches!(s, CategoricalStructure::HOASBinding { .. }))
+    }
+
+    pub fn has_tactic_combinators(&self) -> bool {
+        self.structure
+            .iter()
+            .any(|s| matches!(s, CategoricalStructure::TacticCombinators { .. }))
+    }
+
+    pub fn has_state_configuration(&self) -> bool {
+        self.structure
+            .iter()
+            .any(|s| matches!(s, CategoricalStructure::StateConfiguration { .. }))
+    }
+
+    pub fn has_contextual_type(&self) -> bool {
+        self.structure
+            .iter()
+            .any(|s| matches!(s, CategoricalStructure::ContextualType { .. }))
+    }
+
+    pub fn has_cohesive_modality(&self) -> bool {
+        self.structure
+            .iter()
+            .any(|s| matches!(s, CategoricalStructure::CohesiveModality { .. }))
+    }
+
+    pub fn has_face_lattice(&self) -> bool {
+        self.structure
+            .iter()
+            .any(|s| matches!(s, CategoricalStructure::FaceLattice { .. }))
+    }
+
+    pub fn has_glue_type(&self) -> bool {
+        self.structure
+            .iter()
+            .any(|s| matches!(s, CategoricalStructure::GlueType { .. }))
+    }
+
+    pub fn has_kan_ops(&self) -> bool {
+        self.structure
+            .iter()
+            .any(|s| matches!(s, CategoricalStructure::KanOps { .. }))
+    }
+
+    pub fn has_effect_grading(&self) -> bool {
+        self.structure
+            .iter()
+            .any(|s| matches!(s, CategoricalStructure::EffectGrading { .. }))
     }
 }
 
@@ -270,6 +404,60 @@ pub fn parse_category(items: &[Sexp]) -> Result<CategoryDef> {
                     i0,
                     i1,
                 });
+            }
+            "HOASBinding" => {
+                let binder = get_required_atom(inner, 1, "HOASBinding", "binder name")?;
+                let object_sort = get_keyword_atom(inner, ":object", "HOASBinding")?;
+                structure.push(CategoricalStructure::HOASBinding { binder, object_sort });
+            }
+            "TacticCombinators" => {
+                let then = get_keyword_atom(inner, ":then", "TacticCombinators")?;
+                let orelse = get_keyword_atom(inner, ":orelse", "TacticCombinators")?;
+                let repeat = get_keyword_atom(inner, ":repeat", "TacticCombinators")?;
+                let try_tac = get_keyword_atom(inner, ":try", "TacticCombinators")?;
+                let focus = get_keyword_atom(inner, ":focus", "TacticCombinators")?;
+                structure.push(CategoricalStructure::TacticCombinators {
+                    then, orelse, repeat, try_tac, focus,
+                });
+            }
+            "StateConfiguration" => {
+                let cell_sort = get_keyword_atom(inner, ":cell", "StateConfiguration")?;
+                let merge = get_keyword_atom(inner, ":merge", "StateConfiguration")?;
+                structure.push(CategoricalStructure::StateConfiguration { cell_sort, merge });
+            }
+            "ContextualType" => {
+                let context_sort = get_keyword_atom(inner, ":context", "ContextualType")?;
+                let term_sort = get_keyword_atom(inner, ":term", "ContextualType")?;
+                structure.push(CategoricalStructure::ContextualType { context_sort, term_sort });
+            }
+            "CohesiveModality" => {
+                let shape = get_keyword_atom(inner, ":shape", "CohesiveModality")?;
+                let flat = get_keyword_atom(inner, ":flat", "CohesiveModality")?;
+                let sharp = get_keyword_atom(inner, ":sharp", "CohesiveModality")?;
+                structure.push(CategoricalStructure::CohesiveModality { shape, flat, sharp });
+            }
+            "FaceLattice" => {
+                let meet = get_keyword_atom(inner, ":meet", "FaceLattice")?;
+                let join = get_keyword_atom(inner, ":join", "FaceLattice")?;
+                let neg = get_keyword_atom(inner, ":neg", "FaceLattice")?;
+                structure.push(CategoricalStructure::FaceLattice { meet, join, neg });
+            }
+            "GlueType" => {
+                let glue = get_keyword_atom(inner, ":glue", "GlueType")?;
+                let unglue = get_keyword_atom(inner, ":unglue", "GlueType")?;
+                structure.push(CategoricalStructure::GlueType { glue, unglue });
+            }
+            "KanOps" => {
+                let comp = get_keyword_atom(inner, ":comp", "KanOps")?;
+                let fill = get_keyword_atom(inner, ":fill", "KanOps")?;
+                let hfill = get_keyword_atom(inner, ":hfill", "KanOps")?;
+                structure.push(CategoricalStructure::KanOps { comp, fill, hfill });
+            }
+            "EffectGrading" => {
+                let effect_lattice = get_keyword_atom(inner, ":lattice", "EffectGrading")?;
+                let pure = get_keyword_atom(inner, ":pure", "EffectGrading")?;
+                let total = get_keyword_atom(inner, ":total", "EffectGrading")?;
+                structure.push(CategoricalStructure::EffectGrading { effect_lattice, pure, total });
             }
             _ => {
                 return Err(HyperionError::ParseError {

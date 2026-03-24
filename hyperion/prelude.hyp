@@ -175,3 +175,27 @@
   @barrier transparent
   @equality equality-saturation
 ]
+
+;; --- Phase 1: Logic Programming ---
+[Substrate PrologEngine
+  @engine logic-programming
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality unification-search
+]
+
+;; --- Phase 1.5: AC-Matching (Maude/K Framework) ---
+[Substrate ACRewriting
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality ac-matching
+]
+
+;; --- Phase 4: SMT ---
+[Substrate SMTBackend
+  @engine smt-assisted
+  @resource-mode deep-copy
+  @barrier transparent
+  @equality smt-oracle
+]

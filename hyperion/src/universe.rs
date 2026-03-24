@@ -52,6 +52,59 @@ pub enum CompilationPass {
     /// Strictly-linear resource mode forbids the diagonal map (A → A ⊗ A),
     /// guaranteeing data-race freedom at the categorical level.
     ParallelTensorProof,
+
+    // === Phase 1: HOAS + Logic Programming + LCF Tactics ===
+
+    /// HOAS defunctionalization: higher-order binders compiled to first-order
+    /// explicit substitution calculus. Object-language binding becomes ADTs
+    /// with shift/subst operations instead of meta-language lambda.
+    HOASDefunctionalization,
+    /// Clause compilation: higher-order Horn clauses compiled to first-order
+    /// resolution-ready clauses with explicit unification variables.
+    ClauseCompilation,
+    /// Goal-directed proof search: LCF tactic trees compiled to iterative
+    /// proof state manipulation with explicit validation and backtracking.
+    GoalDirected,
+
+    // === Phase 1.5: AC-Matching ===
+
+    /// AC normalization: terms with associative-commutative operators are
+    /// flattened (removing nesting) and sorted (canonical permutation)
+    /// before pattern matching. Also handles K Framework cell multiset matching.
+    ACNormalization,
+
+    // === Phase 2: Contextual + Cohesive ===
+
+    /// Context reification: first-class contexts compiled to explicit data
+    /// structures (context stacks/telescopes) on substrates with transparent barriers.
+    ContextReification,
+    /// Modal substitution restriction: cohesive variable-class guards inserted
+    /// at runtime. Under flat, only discrete variables substitutable; under sharp,
+    /// only codiscrete. Enforces Riehl-Shulman substitution discipline.
+    ModalSubstitutionRestriction,
+
+    // === Phase 3: Full Cubical ===
+
+    /// Kan computation: generates reduction rules for transport through each
+    /// type former (Σ, Π, Glue, Path). Makes cubical operations compute
+    /// instead of being merely provable.
+    KanComputation,
+
+    // === Phase 4: SMT + Effects ===
+
+    /// SMT encoding: categorical terms translated to SMT-LIB2 format for
+    /// external solver dispatch. Theory-specific axioms become SMT assertions.
+    SMTEncoding,
+    /// Effect elaboration: effect grading compiled to monadic encoding or CPS
+    /// on substrates without native effect tracking.
+    EffectElaboration,
+
+    // === Phase 5: Dialectica ===
+
+    /// Dialectica extraction: Gödel's Dialectica interpretation applied to
+    /// classical proofs. Extracts witness functions (realizers) from
+    /// ∀x.∃y.A(x,y) as concrete code: f: X → Y with proof of A(x, f(x)).
+    DialecticaExtraction,
 }
 
 impl CompilationPass {
@@ -68,6 +121,16 @@ impl CompilationPass {
             Self::ConsensusReplication => "consensus-replication",
             Self::PartitionTolerance => "partition-tolerance",
             Self::ParallelTensorProof => "parallel-tensor-proof",
+            Self::HOASDefunctionalization => "hoas-defunctionalization",
+            Self::ClauseCompilation => "clause-compilation",
+            Self::GoalDirected => "goal-directed",
+            Self::ACNormalization => "ac-normalization",
+            Self::ContextReification => "context-reification",
+            Self::ModalSubstitutionRestriction => "modal-substitution-restriction",
+            Self::KanComputation => "kan-computation",
+            Self::SMTEncoding => "smt-encoding",
+            Self::EffectElaboration => "effect-elaboration",
+            Self::DialecticaExtraction => "dialectica-extraction",
         }
     }
 
@@ -84,6 +147,16 @@ impl CompilationPass {
             Self::ConsensusReplication => "consensus replication: operations must be commutative (CRDT) or totally ordered (Raft/Paxos)",
             Self::PartitionTolerance => "partition tolerance: modal operators compiled to AP/CP availability trade-offs",
             Self::ParallelTensorProof => "proof-carrying parallel tensor: disjoint linear resources compiled to rayon::join",
+            Self::HOASDefunctionalization => "HOAS defunctionalization: higher-order binders compiled to explicit substitution calculus",
+            Self::ClauseCompilation => "clause compilation: higher-order clauses compiled to first-order resolution-ready form",
+            Self::GoalDirected => "goal-directed search: LCF tactic trees compiled to iterative proof state manipulation",
+            Self::ACNormalization => "AC normalization: flatten + sort associative-commutative terms before pattern matching",
+            Self::ContextReification => "context reification: first-class contexts compiled to explicit data structures",
+            Self::ModalSubstitutionRestriction => "modal substitution restriction: cohesive variable-class guards (shape/flat/sharp)",
+            Self::KanComputation => "Kan computation: transport reduction rules generated for each type former",
+            Self::SMTEncoding => "SMT encoding: categorical terms translated to SMT-LIB2 for external solver",
+            Self::EffectElaboration => "effect elaboration: effect grading compiled to monadic/CPS encoding",
+            Self::DialecticaExtraction => "Dialectica extraction: classical proofs compiled to witness programs via Gödel's interpretation",
         }
     }
 }

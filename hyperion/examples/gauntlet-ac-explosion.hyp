@@ -1,0 +1,57 @@
+;; Gauntlet Test 1: AC-Combinatorial Explosion
+;;
+;; If AC-matching does naive permutations, this hangs at O(n!).
+;; A correct implementation flattens both sides to sorted multisets
+;; and matches in O(n log n).
+;;
+;; The trap: 6-element AC expressions in different associative groupings
+;; and commuted orderings. The engine must normalize both to the same
+;; canonical form and prove them equal via rewriting.
+
+[Category ACStress
+  [Object Elem]
+  [Morphism op :domain [Elem Elem] :codomain Elem]
+]
+
+;; Use equality-saturation substrate so @law works (bidirectional e-graph rules)
+[Substrate ACEgraph
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality equality-saturation
+]
+
+[Universe ACWorld :category ACStress :substrate ACEgraph]
+
+[Theory ACRing :in ACWorld
+  ;; op is AC — commutativity and associativity as bidirectional laws
+  [@law op-comm [op ?x ?y] === [op ?y ?x]]
+  [@law op-assoc [op [op ?x ?y] ?z] === [op ?x [op ?y ?z]]]
+
+  ;; Identity element (directed rule)
+  [@rule op-id [op e ?x] ==> ?x]
+]
+
+;; Proofs: AC equality via commutativity and associativity laws.
+;; The e-graph must saturate bidirectional AC rules to prove these equal.
+[Proofs ACGauntlet :in ACRing
+  ;; Commutativity: op(a, b) = op(b, a)
+  [assert-eq ac-comm [op a b] [op b a]]
+
+  ;; Associativity regrouping: right-lean vs left-lean
+  [assert-eq ac-assoc [op [op a b] c] [op a [op b c]]]
+
+  ;; 3-element scramble: all groupings equivalent
+  [assert-eq ac-3way
+    [op a [op b c]]
+    [op [op c a] b]]
+
+  ;; 4-element double commutation + reassociation
+  [assert-eq ac-4perm
+    [op [op a b] [op c d]]
+    [op [op d c] [op b a]]]
+
+  ;; Identity absorption across different groupings
+  [assert-eq ac-id-left  [op e [op a b]] [op a b]]
+  [assert-eq ac-id-right [op [op a b] e] [op a b]]
+]

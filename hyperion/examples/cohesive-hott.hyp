@@ -1,0 +1,39 @@
+;; Hyperion Example: Cohesive Modalities (Riehl-Shulman)
+;;
+;; Demonstrates the shape ⊣ flat ⊣ sharp adjoint triple for
+;; synthetic (∞,1)-category theory. These modalities restrict
+;; substitution: under flat, only discrete variables; under sharp,
+;; only codiscrete.
+
+[Category CohesiveHoTT
+  [Object Type] [Object Term]
+  [Morphism arrow :domain [Type Type] :codomain Type]
+  [PathType :refl refl :concat concat :inv inv :ap ap]
+  [CohesiveModality :shape esh :flat flat :sharp sharp]
+  [Exponential lam :object Term]
+  [Evaluator app]
+]
+
+[Substrate CohesiveEngine
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier contextual-membranes
+  @equality topological-homotopy
+]
+
+[Universe CohesiveWorld :category CohesiveHoTT :substrate CohesiveEngine]
+
+[Theory SyntheticCat :in CohesiveWorld
+  ;; flat counit: flat(A) → A (discrete types embed into all types)
+  [@rule flat-counit [counit [flat ?A]] ==> ?A]
+
+  ;; sharp unit: A → sharp(A) (all types embed into codiscrete types)
+  [@rule sharp-unit [unit ?A] ==> [sharp ?A]]
+
+  ;; Shape is left adjoint to flat: shape(A) → B iff A → flat(B)
+  [@rule shape-flat-adj [hom [esh ?A] ?B]
+    ==> [hom ?A [flat ?B]]]
+
+  ;; Discrete types are invariant under flat
+  [@rule flat-discrete [flat [discrete ?A]] ==> [discrete ?A]]
+]

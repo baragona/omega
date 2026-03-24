@@ -1,0 +1,34 @@
+;; Hyperion Example: Effectful Types (F*-style)
+;;
+;; Demonstrates effect grading: types carry effect annotations.
+;; The lattice Tot ≤ Dv ≤ ML ≤ All tracks purity, divergence,
+;; mutable state, and general effects.
+
+[Category EffectfulDep
+  [Object Type] [Object Term] [Object Effect]
+  [Morphism arrow :domain [Type Type] :codomain Type]
+  [Exponential lam :object Term]
+  [Evaluator app]
+  [EffectGrading :lattice Effect :pure Tot :total Dv]
+]
+
+[Universe FStarWorld :category EffectfulDep :substrate ApeironStandard]
+
+[Theory EffectSystem :in FStarWorld
+  ;; Pure functions compose purely
+  [@rule pure-comp [effect [app ?f ?x] Tot]
+    ==> [and [effect ?f Tot] [effect ?x Tot]]]
+
+  ;; Divergent computation absorbs pure
+  [@rule dv-absorb [join-effect Tot Dv] ==> Dv]
+
+  ;; ML absorbs both
+  [@rule ml-absorb-tot [join-effect Tot ML] ==> ML]
+  [@rule ml-absorb-dv [join-effect Dv ML] ==> ML]
+
+  ;; Effect subtyping
+  [@rule sub-tot-dv [sub-effect Tot Dv] ==> [true]]
+  [@rule sub-dv-ml [sub-effect Dv ML] ==> [true]]
+  [@rule sub-ml-all [sub-effect ML All] ==> [true]]
+  [@rule sub-refl [sub-effect ?e ?e] ==> [true]]
+]

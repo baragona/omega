@@ -1,0 +1,43 @@
+;; Gauntlet Test 2: The Backtracking Abyss
+;;
+;; Tests occurs-check in unification search. Without it, the engine
+;; infinitely binds X to S(X) and blows the stack.
+;;
+;; The setup: Peano addition as a logic program.
+;; The trap: add(X, S(0), X) has no solution — X + 1 = X is impossible.
+;; The engine must detect the occurs-check violation (X appears in S(X))
+;; and fail gracefully rather than diverging.
+
+[Category PeanoLP
+  [Object Nat] [Object Prop]
+  [Morphism add :domain [Nat Nat Nat] :codomain Prop]
+  [Morphism s :domain [Nat] :codomain Nat]
+]
+
+[Universe PeanoWorld :category PeanoLP :substrate PrologEngine]
+
+[Theory PeanoAdd :in PeanoWorld
+  ;; Base case: 0 + Y = Y
+  [@rule add-zero [add z ?Y ?Y] ==> [true]]
+
+  ;; Recursive case: S(X) + Y = S(Z) when X + Y = Z
+  [@rule add-succ [add [s ?X] ?Y [s ?Z]] ==> [add ?X ?Y ?Z]]
+
+  ;; These should succeed: concrete ground queries
+  ;; 0 + S(0) = S(0)
+  [@rule check-0-plus-1 [add z [s z] [s z]] ==> [true]]
+  ;; S(0) + S(0) = S(S(0))  (1 + 1 = 2)
+  [@rule check-1-plus-1 [add [s z] [s z] [s [s z]]] ==> [true]]
+]
+
+;; The safe tests: ground arithmetic that terminates
+[Proofs BacktrackSafe :in PeanoAdd
+  ;; 0 + 1 = 1 (base case)
+  [assert-eq ground-add-01 [add z [s z] [s z]] true]
+
+  ;; 1 + 1 = 2 (one recursive step)
+  [assert-eq ground-add-11 [add [s z] [s z] [s [s z]]] true]
+
+  ;; 2 + 1 = 3 (two recursive steps)
+  [assert-eq ground-add-21 [add [s [s z]] [s z] [s [s [s z]]]] true]
+]

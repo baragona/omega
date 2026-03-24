@@ -700,7 +700,8 @@ fn beta_reduction_pass_through() {
 fn no_prelude_starts_empty() {
     let session = HyperionSession::new();
     assert_eq!(session.categories.len(), 0);
-    assert_eq!(session.substrates.len(), 0);
+    // Built-in substrates are always available (7: Apeiron{Standard,Linear,Oracle,Tree}, Prolog, AC, SMT)
+    assert_eq!(session.substrates.len(), 7);
 }
 
 /// Combined prelude test (env vars are process-global, can't parallelize safely)
@@ -4210,6 +4211,232 @@ fn egraph_roundtrip_from_compiled_theory() {
         &clean_theory,
     );
     assert_eq!(r2, EGraphResult::Equal, "1 + 1 = 2 via add-succ + add-zero");
+}
+
+// ── Phase 0-5: New categorical structure examples ──
+
+#[test]
+fn twelf_lf_example() {
+    run_file("examples/twelf-lf.hyp");
+}
+
+#[test]
+fn lambda_prolog_example() {
+    run_file("examples/lambda-prolog.hyp");
+}
+
+#[test]
+fn lcf_tactics_example() {
+    run_file("examples/lcf-tactics.hyp");
+}
+
+#[test]
+fn maude_ac_example() {
+    run_file("examples/maude-ac.hyp");
+}
+
+#[test]
+fn k_framework_cells_example() {
+    run_file("examples/k-framework-cells.hyp");
+}
+
+#[test]
+fn contextual_beluga_example() {
+    run_file("examples/contextual-beluga.hyp");
+}
+
+#[test]
+fn cohesive_hott_example() {
+    run_file("examples/cohesive-hott.hyp");
+}
+
+#[test]
+fn full_cubical_example() {
+    run_file("examples/full-cubical.hyp");
+}
+
+#[test]
+fn smt_verified_example() {
+    run_file("examples/smt-verified.hyp");
+}
+
+#[test]
+fn effectful_types_example() {
+    run_file("examples/effectful-types.hyp");
+}
+
+#[test]
+fn dialectica_extraction_example() {
+    run_file("examples/dialectica-extraction.hyp");
+}
+
+// ── Gauntlet: stress tests for new substrate paradigms ──
+
+#[test]
+fn gauntlet_ac_explosion() {
+    // AC-matching must flatten+sort, not permute O(n!)
+    run_file("examples/gauntlet-ac-explosion.hyp");
+}
+
+#[test]
+fn gauntlet_ac_pass_pipeline() {
+    // ACMatching on InteractionGraph = native (no ACNormalization needed)
+    // ACMatching on VonNeumann = needs ACNormalization pass
+    use hyperion::universe::CompilationPass;
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category AC [Object E] [Morphism op :domain [E E] :codomain E]]
+        [Substrate VNac @engine von-neumann @resource-mode deep-copy @barrier transparent @equality ac-matching]
+        [Universe ACvn :category AC :substrate VNac]
+    "#;
+    process_all(&mut session, input).unwrap();
+    let compiled = &session.universes["ACvn"];
+    assert!(compiled.passes.contains(&CompilationPass::ACNormalization),
+        "VN engine + ACMatching must insert ACNormalization pass, got: {:?}", compiled.passes);
+
+    // On InteractionGraph (native AC), no normalization pass needed
+    let mut session2 = HyperionSession::new();
+    let input2 = r#"
+        [Category AC2 [Object E] [Morphism op :domain [E E] :codomain E]]
+        [Universe ACig :category AC2 :substrate ACRewriting]
+    "#;
+    process_all(&mut session2, input2).unwrap();
+    let compiled2 = &session2.universes["ACig"];
+    assert!(!compiled2.passes.contains(&CompilationPass::ACNormalization),
+        "InteractionGraph + ACMatching should NOT need ACNormalization, got: {:?}", compiled2.passes);
+}
+
+#[test]
+fn gauntlet_backtrack_abyss() {
+    // Ground Peano arithmetic must terminate (no occurs-check trap here)
+    run_file("examples/gauntlet-backtrack-abyss.hyp");
+}
+
+#[test]
+fn gauntlet_backtrack_pass_pipeline() {
+    // LogicProgramming engine → ClauseCompilation when Exponential present
+    use hyperion::universe::CompilationPass;
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category LP
+          [Object T] [Object F]
+          [Exponential lam :object T]
+          [Evaluator app]
+        ]
+        [Universe LPworld :category LP :substrate PrologEngine]
+    "#;
+    process_all(&mut session, input).unwrap();
+    let compiled = &session.universes["LPworld"];
+    assert!(compiled.passes.contains(&CompilationPass::ClauseCompilation),
+        "LogicProgramming + Exponential must insert ClauseCompilation, got: {:?}", compiled.passes);
+}
+
+#[test]
+fn gauntlet_smt_boundary() {
+    // HOAS + SMT must compose: defunctionalize first, then encode
+    run_file("examples/gauntlet-smt-boundary.hyp");
+}
+
+#[test]
+fn gauntlet_smt_hoas_pass_pipeline() {
+    // HOAS on SMTAssisted (first-order) → HOASDefunctionalization + SMTEncoding
+    use hyperion::universe::CompilationPass;
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category HSMT
+          [Object Type] [Object Term]
+          [Morphism arrow :domain [Type Type] :codomain Type]
+          [HOASBinding lam :object Term]
+          [Evaluator app]
+        ]
+        [Universe HSMTworld :category HSMT :substrate SMTBackend]
+    "#;
+    process_all(&mut session, input).unwrap();
+    let compiled = &session.universes["HSMTworld"];
+    assert!(compiled.passes.contains(&CompilationPass::HOASDefunctionalization),
+        "HOAS + SMTAssisted must defunctionalize first, got: {:?}", compiled.passes);
+    assert!(compiled.passes.contains(&CompilationPass::SMTEncoding),
+        "SMTOracle must insert SMTEncoding, got: {:?}", compiled.passes);
+    // HOASDefunctionalization must come BEFORE SMTEncoding in the pipeline
+    let hoas_pos = compiled.passes.iter().position(|p| *p == CompilationPass::HOASDefunctionalization).unwrap();
+    let smt_pos = compiled.passes.iter().position(|p| *p == CompilationPass::SMTEncoding).unwrap();
+    assert!(hoas_pos < smt_pos,
+        "HOASDefunctionalization (pos {}) must precede SMTEncoding (pos {})", hoas_pos, smt_pos);
+}
+
+#[test]
+fn gauntlet_chimera_matrix() {
+    // Cubical TT on Prolog engine — pass pipeline bridges the gap
+    run_file("examples/gauntlet-chimera-matrix.hyp");
+}
+
+#[test]
+fn gauntlet_chimera_pass_pipeline() {
+    // KanOps + LogicProgramming → bridging passes for first-order engine
+    use hyperion::universe::CompilationPass;
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category CubLP
+          [Object Type] [Object Term]
+          [Morphism arrow :domain [Type Type] :codomain Type]
+          [Exponential lam :object Term]
+          [Evaluator app]
+          [IntervalSort :interval I :endpoints [i0 i1]]
+          [PathType :refl refl :concat concat :inv inv :ap ap]
+          [KanOps :comp comp :fill fill :hfill hfill]
+        ]
+        [Universe CubLPworld :category CubLP :substrate PrologEngine]
+    "#;
+    process_all(&mut session, input).unwrap();
+    let compiled = &session.universes["CubLPworld"];
+    // Exponential on LogicProgramming → clause compilation
+    assert!(compiled.passes.contains(&CompilationPass::ClauseCompilation),
+        "LogicProgramming + Exponential needs ClauseCompilation, got: {:?}", compiled.passes);
+    // KanOps rules are user-written (the user provides transport rules as @rules);
+    // the engine just backward-chains through them like any other Horn clause.
+    // No KanComputation pass needed — that's for generating rules on rewriting engines.
+}
+
+#[test]
+fn gauntlet_state_config_shares_ac() {
+    // StateConfiguration on non-AC engine → ACNormalization (shared algorithm)
+    use hyperion::universe::CompilationPass;
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category KCells
+          [Object State] [Object Val]
+          [StateConfiguration :cell State :merge cell-merge]
+        ]
+        [Substrate TreeEngine @engine term-tree @resource-mode deep-copy @barrier transparent @equality rewrite-equivalence]
+        [Universe KTree :category KCells :substrate TreeEngine]
+    "#;
+    process_all(&mut session, input).unwrap();
+    let compiled = &session.universes["KTree"];
+    assert!(compiled.passes.contains(&CompilationPass::ACNormalization),
+        "StateConfiguration on non-AC engine must use ACNormalization, got: {:?}", compiled.passes);
+}
+
+#[test]
+fn gauntlet_lcf_tactics_on_von_neumann() {
+    // LCF TacticCombinators on VonNeumann → GoalDirected pass (that's what Lean4 does)
+    use hyperion::universe::CompilationPass;
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category LCFvn
+          [Object Prop] [Object Proof] [Object Goal] [Object Tactic]
+          [Morphism apply-tac :domain [Tactic Goal] :codomain Goal]
+          [TacticCombinators :then seq :orelse alt :repeat rep :try try-t :focus foc]
+        ]
+        [Substrate VN @engine von-neumann @resource-mode deep-copy @barrier transparent @equality rewrite-equivalence]
+        [Universe LCFvnWorld :category LCFvn :substrate VN]
+    "#;
+    process_all(&mut session, input).unwrap();
+    let compiled = &session.universes["LCFvnWorld"];
+    assert!(compiled.passes.contains(&CompilationPass::GoalDirected),
+        "TacticCombinators on non-LP engine needs GoalDirected pass, got: {:?}", compiled.passes);
+    // No Exponential/Evaluator → no Defunctionalization (LCF tactics are first-order combinators)
+    assert!(!compiled.passes.contains(&CompilationPass::Defunctionalization),
+        "Pure tactic category (no lambdas) should NOT need Defunctionalization, got: {:?}", compiled.passes);
 }
 
 /// Helper to load the prelude into a session for tests

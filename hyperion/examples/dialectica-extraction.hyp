@@ -1,0 +1,39 @@
+;; Hyperion Example: Dialectica Extraction
+;;
+;; Demonstrates Gödel's Dialectica interpretation: extracting
+;; computational witnesses from classical proofs.
+;; ∀x. ∃y. A(x,y) → concrete function f: X → Y with A(x, f(x)).
+
+[Category ClassicalArith
+  [Object Nat] [Object Prop] [Object Witness]
+  [Morphism forall-nat :domain [Prop] :codomain Prop]
+  [Morphism exists-nat :domain [Prop] :codomain Prop]
+  [Morphism succ :domain [Nat] :codomain Nat]
+  [Morphism plus :domain [Nat Nat] :codomain Nat]
+  [Morphism gt :domain [Nat Nat] :codomain Prop]
+]
+
+[Substrate ClassicalEngine
+  @engine von-neumann
+  @resource-mode deep-copy
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Universe DialecticaWorld :category ClassicalArith :substrate ClassicalEngine]
+
+[Theory DialecticaDemo :in DialecticaWorld
+  ;; Classical axiom: double negation elimination
+  [@rule dne [dne [not [not ?P]]] ==> ?P]
+
+  ;; Arithmetic
+  [@rule plus-zero [plus zero ?n] ==> ?n]
+  [@rule plus-succ [plus [succ ?m] ?n] ==> [succ [plus ?m ?n]]]
+
+  ;; Successor is greater
+  [@rule succ-gt [gt [succ ?n] ?n] ==> [true]]
+
+  ;; The Dialectica witness: for ∀n. ∃m. m > n, extract f(n) = n+1
+  [@rule witness-succ [extract-witness [forall-nat [exists-nat [gt ?m ?n]]]]
+    ==> [witness-fn succ]]
+]
