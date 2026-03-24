@@ -28,6 +28,20 @@ pub enum HyperionError {
     },
     /// Proof assertion failure (logic engine)
     ProofFailure { name: String, detail: String },
+    /// Binder safety violation: e-graph rewrite descends into a binder without scoping pass
+    BinderSafety {
+        theory: String,
+        rule_name: Option<String>,
+        detail: String,
+    },
+    /// Theory sealing error
+    SealError { theory: String, detail: String },
+    /// Totality violation: rewrite rule fails structural termination check
+    TotalityViolation {
+        theory: String,
+        rule_name: Option<String>,
+        detail: String,
+    },
     /// Apeiron error pass-through
     ApeironError(apeiron::error::ApeironError),
 }
@@ -99,6 +113,23 @@ impl fmt::Display for HyperionError {
             }
             HyperionError::ProofFailure { name, detail } => {
                 write!(f, "proof '{}' failed: {}", name, detail)
+            }
+            HyperionError::BinderSafety { theory, rule_name, detail } => {
+                if let Some(rn) = rule_name {
+                    write!(f, "binder safety violation in Theory '{}' (rule '{}'): {}", theory, rn, detail)
+                } else {
+                    write!(f, "binder safety violation in Theory '{}': {}", theory, detail)
+                }
+            }
+            HyperionError::SealError { theory, detail } => {
+                write!(f, "seal error for Theory '{}': {}", theory, detail)
+            }
+            HyperionError::TotalityViolation { theory, rule_name, detail } => {
+                if let Some(rn) = rule_name {
+                    write!(f, "totality violation in Theory '{}' (rule '{}'): {}", theory, rn, detail)
+                } else {
+                    write!(f, "totality violation in Theory '{}': {}", theory, detail)
+                }
             }
             HyperionError::ApeironError(e) => {
                 write!(f, "Apeiron error: {}", e)

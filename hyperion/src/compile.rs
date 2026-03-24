@@ -3,7 +3,7 @@ use apeiron::parser::{Sexp, Span};
 use crate::category::{CategoricalStructure, CategoryDef};
 use crate::error::Result;
 use crate::laws;
-use crate::substrate::{BarrierMode, Engine, EqualityMode, ResourceMode, SubstrateDef};
+use crate::substrate::{BarrierMode, Engine, EqualityMode, ResourceMode, SubstrateDef, TotalityMode};
 use crate::universe::{system_name_for, CompilationPass, CompiledUniverse};
 
 /// Compile a Category + Substrate into a CompiledUniverse.
@@ -725,7 +725,7 @@ pub fn emit_morphism_sexp(
 mod tests {
     use super::*;
     use crate::category::{MorphismDecl, ObjectDecl};
-    use crate::substrate::{BarrierMode, Engine, EqualityMode, ResourceMode, SubstrateDef};
+    use crate::substrate::{BarrierMode, Engine, EqualityMode, ResourceMode, SubstrateDef, TotalityMode};
     use crate::universe::CompilationPass;
 
     fn make_ccc() -> CategoryDef {
@@ -771,6 +771,7 @@ mod tests {
             resource_mode: ResourceMode::OptimalSharing,
             barrier: BarrierMode::Transparent,
             equality: EqualityMode::TopologicalHash,
+            totality: TotalityMode::Unspecified,
         }
     }
 
@@ -792,6 +793,7 @@ mod tests {
             resource_mode: ResourceMode::DeepCopy,
             barrier: BarrierMode::Transparent,
             equality: EqualityMode::RewriteEquivalence,
+            totality: TotalityMode::Unspecified,
         };
         let compiled = compile_universe("Defunc", &cat, &sub).unwrap();
         assert!(compiled.passes.contains(&CompilationPass::Defunctionalization));
@@ -806,6 +808,7 @@ mod tests {
             resource_mode: ResourceMode::StrictlyLinear,
             barrier: BarrierMode::Transparent,
             equality: EqualityMode::TopologicalHash,
+            totality: TotalityMode::Unspecified,
         };
         let compiled = compile_universe("LinearCCC", &cat, &sub).unwrap();
         assert!(compiled.passes.contains(&CompilationPass::BangModality));
@@ -908,6 +911,7 @@ mod tests {
             resource_mode: ResourceMode::OptimalSharing,
             barrier: BarrierMode::NominalScoping,
             equality: EqualityMode::TopologicalHash,
+            totality: TotalityMode::Unspecified,
         };
         assert_eq!(binding_mode(&cat, &sub, &[]), "nominal");
     }
@@ -921,6 +925,7 @@ mod tests {
             resource_mode: ResourceMode::OptimalSharing,
             barrier: BarrierMode::NominalScoping,
             equality: EqualityMode::TopologicalHash,
+            totality: TotalityMode::Unspecified,
         };
         let compiled = compile_universe("NomCCC", &cat, &sub).unwrap();
         assert!(compiled.passes.contains(&CompilationPass::NominalAbstraction));
@@ -934,6 +939,7 @@ mod tests {
             resource_mode: ResourceMode::OptimalSharing,
             barrier: BarrierMode::Transparent,
             equality: EqualityMode::RewriteEquivalence,
+            totality: TotalityMode::Unspecified,
         };
         let modes = check_modes(&sub);
         assert!(modes.contains(&"reversible"));
@@ -948,6 +954,7 @@ mod tests {
             resource_mode: ResourceMode::OptimalSharing,
             barrier: BarrierMode::Transparent,
             equality: EqualityMode::RewriteEquivalence,
+            totality: TotalityMode::Unspecified,
         };
         let modes = check_modes(&sub);
         assert!(modes.contains(&"confluent-race"));
@@ -962,6 +969,7 @@ mod tests {
             resource_mode: ResourceMode::OptimalSharing,
             barrier: BarrierMode::Transparent,
             equality: EqualityMode::ExtensionalEquivalence,
+            totality: TotalityMode::Unspecified,
         };
         let modes = check_modes(&sub);
         assert!(modes.contains(&"extensional"));
@@ -977,6 +985,7 @@ mod tests {
             resource_mode: ResourceMode::OptimalSharing,
             barrier: BarrierMode::Transparent,
             equality: EqualityMode::FullUnification,
+            totality: TotalityMode::Unspecified,
         };
         let modes = check_modes(&sub);
         assert_eq!(modes, vec!["unification"]);
@@ -990,6 +999,7 @@ mod tests {
             resource_mode: ResourceMode::OptimalSharing,
             barrier: BarrierMode::Transparent,
             equality: EqualityMode::Unification,
+            totality: TotalityMode::Unspecified,
         };
         let modes = check_modes(&sub);
         assert_eq!(modes, vec!["pattern-unification"]);
@@ -1004,6 +1014,7 @@ mod tests {
             resource_mode: ResourceMode::DeepCopy,
             barrier: BarrierMode::Transparent,
             equality: EqualityMode::RewriteEquivalence,
+            totality: TotalityMode::Unspecified,
         };
         let compiled = compile_universe("VN_CCC", &cat, &sub).unwrap();
         assert!(compiled.passes.contains(&CompilationPass::Defunctionalization));
@@ -1029,6 +1040,7 @@ mod tests {
             resource_mode: ResourceMode::DeepCopy,
             barrier: BarrierMode::Transparent,
             equality: EqualityMode::RewriteEquivalence,
+            totality: TotalityMode::Unspecified,
         };
         let compiled = compile_universe("VN_Modal", &cat, &sub).unwrap();
         assert!(compiled.passes.contains(&CompilationPass::Defunctionalization));
@@ -1053,6 +1065,7 @@ mod tests {
             resource_mode: ResourceMode::OptimalSharing,
             barrier: BarrierMode::Transparent,
             equality: EqualityMode::RewriteEquivalence,
+            totality: TotalityMode::Unspecified,
         };
         let compiled = compile_universe("SerialMonoidal", &cat, &sub).unwrap();
         assert!(compiled.passes.contains(&CompilationPass::TensorSerialization));
@@ -1080,6 +1093,7 @@ mod tests {
             resource_mode: ResourceMode::DeepCopy,
             barrier: BarrierMode::Transparent,
             equality: EqualityMode::TopologicalHomotopy,
+            totality: TotalityMode::Unspecified,
         };
         let compiled = compile_universe("VN_HoTT", &cat, &sub).unwrap();
         assert!(compiled.passes.contains(&CompilationPass::DependentCombinators));
@@ -1095,6 +1109,7 @@ mod tests {
             resource_mode: ResourceMode::StrictlyLinear,
             barrier: BarrierMode::Transparent,
             equality: EqualityMode::TopologicalHash,
+            totality: TotalityMode::Unspecified,
         };
         let compiled = compile_universe("LinearCCC", &cat, &sub).unwrap();
         let sexp = emit_system_sexp(&cat, &sub, &compiled, None);

@@ -1275,13 +1275,36 @@ Universe hierarchies are cumulative: `A : U₀` implies `A : U₁`. If this is m
 
 All Z3 queries include `(set-option :rlimit 1000000)` to prevent quantifier instantiation loops, the Z3 `-T:10` timeout flag, and a Rust-side deadline with `child.kill()` as a safety net.
 
+### E-Graph Binder Safety
+
+When a universe uses `@equality equality-saturation` (e-graph) without `@barrier nominal-scoping`, rewrite rules are statically validated at theory load time. Any rule whose LHS pattern-matches inside a binder body (`lam`, `Pi`, `HOASBinding`) is rejected — the e-graph cannot safely rewrite under binders without scope tracking. Use `@barrier nominal-scoping` or lower binders via `HOASDefunctionalization` first.
+
+### TCB Transparency
+
+When a universe requires compilation passes (e.g., `BangModality`, `Defunctionalization`), the proof output includes a `[TCB]` annotation listing which trusted bridges the proof depends on. These passes are hardcoded Rust implementations of well-known theoretical constructions — their soundness is inherited from the literature, not mechanically verified by Hyperion.
+
+### Theory Sealing (`[Seal]`)
+
+The `[Seal TheoryName]` directive closes a theory after verification:
+1. Extracts all verified `assert-eq` results as directed `@rule` exports
+2. Prevents further `[Proofs]` blocks from targeting the sealed theory
+3. Sealed exports can be imported into downstream theories without inheriting the combinatorial explosion of bidirectional e-graph exploration
+
+### Structural Totality (`@totality`)
+
+Substrates can declare `@totality total` to enforce structural termination on all rewrite rules. In total mode, every rule's RHS must have no more AST nodes than its LHS — a conservative check that prevents non-terminating rewrites. Default is `@totality partial` (or unspecified), where fuel limits are the backstop.
+
+### Universe Level Graph
+
+Universe level constraints are resolved via a side-channel DAG (`level_graph.rs`) before e-graph invocation, rather than via explicit `lift`/`cumul` rewrite rules. The graph uses topological sort to detect cycles and propagate concrete level assignments. This prevents the infinite expansion loop `A = lift(A) = lift(lift(A)) = ...` that occurs when cumulativity is modeled as e-graph rewrite rules.
+
 ### E-Graph Fuel
 
 Apeiron's `EGraphFuel` (30 iterations, 10k nodes) bounds all equality saturation, preventing OOM from exponential e-class growth (e.g., SKI combinator reduction).
 
 ## Tests
 
-365 tests (142 unit + 223 integration), covering:
+383 tests (148 unit + 235 integration), covering:
 
 - Category/substrate/universe parsing and validation
 - Compilation pass insertion for all 9 bridging strategies (bang modality, nominal abstraction, defunctionalization, tensor serialization, Kripke threading, dependent combinators, RPC serialization, consensus replication, partition tolerance)
@@ -1316,6 +1339,7 @@ Apeiron's `EGraphFuel` (30 iterations, 10k nodes) bounds all equality saturation
 - **Tartarus Tier**: AC-bound variable scramble, Dialectica continuation trap, SMT matching loop hang (8 tests)
 - **Apollyon Tier**: Pass-ordering cycles, Miller pattern violations, e-graph memory avalanche (8 tests)
 - **Gödel Tier**: Axiom K truncation boundary (HoTT × SMT), universe lift cycle detection (6 tests)
+- **Architectural hardening**: E-graph binder safety (3 tests), TCB transparency (1 test), theory sealing (2 tests), structural totality (3 tests), level graph (3 tests)
 
 ```bash
 cargo test

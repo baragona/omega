@@ -131,6 +131,10 @@ pub struct HyperionSession {
     pub max_meta_depth: u32,
     /// Meta splice bindings: name → result Sexp from optimize/synthesize
     pub meta_bindings: HashMap<String, Sexp>,
+    /// Sealed theories: verified assertions exported as directed rules
+    pub sealed_theories: HashSet<String>,
+    /// Sealed exports: theory name → list of (LHS, RHS) directed rules
+    pub sealed_exports: HashMap<String, Vec<(Sexp, Sexp)>>,
 }
 
 /// Convert a ProofTerm into an S-expression for meta-level manipulation.
@@ -201,6 +205,8 @@ impl HyperionSession {
             meta_depth: 0,
             max_meta_depth: 1,
             meta_bindings: HashMap::new(),
+            sealed_theories: HashSet::new(),
+            sealed_exports: HashMap::new(),
         };
         session.register_builtin_substrates();
         session
@@ -216,6 +222,7 @@ impl HyperionSession {
                 resource_mode: ResourceMode::OptimalSharing,
                 barrier: BarrierMode::Transparent,
                 equality: EqualityMode::RewriteEquivalence,
+                totality: TotalityMode::Unspecified,
             },
             SubstrateDef {
                 name: "ApeironLinear".into(),
@@ -223,6 +230,7 @@ impl HyperionSession {
                 resource_mode: ResourceMode::StrictlyLinear,
                 barrier: BarrierMode::Transparent,
                 equality: EqualityMode::RewriteEquivalence,
+                totality: TotalityMode::Unspecified,
             },
             SubstrateDef {
                 name: "ApeironOracle".into(),
@@ -230,6 +238,7 @@ impl HyperionSession {
                 resource_mode: ResourceMode::OptimalSharing,
                 barrier: BarrierMode::Transparent,
                 equality: EqualityMode::TopologicalHash,
+                totality: TotalityMode::Unspecified,
             },
             SubstrateDef {
                 name: "ApeironTree".into(),
@@ -237,6 +246,7 @@ impl HyperionSession {
                 resource_mode: ResourceMode::DeepCopy,
                 barrier: BarrierMode::Transparent,
                 equality: EqualityMode::RewriteEquivalence,
+                totality: TotalityMode::Unspecified,
             },
             SubstrateDef {
                 name: "PrologEngine".into(),
@@ -244,6 +254,7 @@ impl HyperionSession {
                 resource_mode: ResourceMode::OptimalSharing,
                 barrier: BarrierMode::Transparent,
                 equality: EqualityMode::UnificationSearch,
+                totality: TotalityMode::Unspecified,
             },
             SubstrateDef {
                 name: "ACRewriting".into(),
@@ -251,6 +262,7 @@ impl HyperionSession {
                 resource_mode: ResourceMode::OptimalSharing,
                 barrier: BarrierMode::Transparent,
                 equality: EqualityMode::ACMatching,
+                totality: TotalityMode::Unspecified,
             },
             SubstrateDef {
                 name: "SMTBackend".into(),
@@ -258,6 +270,7 @@ impl HyperionSession {
                 resource_mode: ResourceMode::DeepCopy,
                 barrier: BarrierMode::Transparent,
                 equality: EqualityMode::SMTOracle,
+                totality: TotalityMode::Unspecified,
             },
         ];
         for sub in builtins {
@@ -409,6 +422,7 @@ impl HyperionSession {
             "WeakEquivalence" => self.process_weak_equivalence(items),
             "Meta" => self.process_meta(items),
             "Handle" => self.process_handle(items),
+            "Seal" => self.process_seal(items),
             _ => Err(HyperionError::UnknownBlock {
                 name: head.to_string(),
             }),
@@ -1052,6 +1066,14 @@ impl HyperionSession {
             });
         }
 
+        // Totality enforcement for VN theories
+        if matches!(sub.totality, substrate::TotalityMode::Total) {
+            let named: Vec<(Option<String>, Sexp, Sexp)> = rules.iter()
+                .map(|r| (Some(r.name.clone()), r.lhs.clone(), r.rhs.clone()))
+                .collect();
+            check_structural_termination(&named, &theory_name)?;
+        }
+
         self.vn_theories.insert(
             theory_name.clone(),
             VonNeumannTheory {
@@ -1176,6 +1198,55 @@ impl HyperionSession {
         codegen::kompile(self, theory_name, output_dir)
     }
 
+    /// Process a `[Seal TheoryName]` directive.
+    /// Seals a theory: extracts verified assert-eq results as directed @rule exports,
+    /// then prevents further Proofs blocks from targeting this theory.
+    fn process_seal(&mut self, items: &[Sexp]) -> Result<()> {
+        let theory_name = items.get(1).and_then(|s| s.as_atom()).ok_or_else(|| {
+            HyperionError::SealError {
+                theory: "?".into(),
+                detail: "expected [Seal TheoryName]".into(),
+            }
+        })?;
+
+        if self.sealed_theories.contains(theory_name) {
+            return Err(HyperionError::SealError {
+                theory: theory_name.into(),
+                detail: "theory is already sealed".into(),
+            });
+        }
+
+        // Collect all verified results for this theory from structured_output
+        let mut exports = Vec::new();
+        let sp = apeiron::parser::Span::default();
+        for result in &self.structured_output {
+            if result.status == "valid" {
+                // Check if this result corresponds to an assert-eq from this theory
+                if let Some((lhs_str, rhs_str)) = self.pending_assertions.get(&result.name) {
+                    // Parse back to Sexp for the export
+                    if let (Ok(lhs_sexps), Ok(rhs_sexps)) = (
+                        apeiron::parser::parse(lhs_str),
+                        apeiron::parser::parse(rhs_str),
+                    ) {
+                        if let (Some(lhs), Some(rhs)) = (lhs_sexps.first(), rhs_sexps.first()) {
+                            exports.push((lhs.clone(), rhs.clone()));
+                        }
+                    }
+                }
+            }
+        }
+
+        let export_count = exports.len();
+        self.sealed_exports.insert(theory_name.to_string(), exports);
+        self.sealed_theories.insert(theory_name.to_string());
+
+        let msg = format!("[SEAL] Theory '{}' sealed — {} verified equalities exported as directed rules",
+            theory_name, export_count);
+        self.output.push(msg);
+
+        Ok(())
+    }
+
     fn process_theory(&mut self, sexp: &Sexp) -> Result<()> {
         // Extract theory name and universe name for tracking
         let items = sexp.as_list().ok_or_else(|| HyperionError::ParseError {
@@ -1201,6 +1272,39 @@ impl HyperionSession {
         // Capture user-declared @rule and @law declarations for functor verification + resource checking
         let named_rules = extract_rule_declarations(&items[2..]);
 
+        // E-graph binder safety: if the substrate uses equality-saturation and has no
+        // nominal/scoping barrier, reject rules that pattern-match inside binders.
+        // Without this, the e-graph can unsoundly capture variables during rewriting.
+        if let Some(uni_name) = &universe_name {
+            if let Some(compiled) = self.universes.get(uni_name) {
+                if let Some(sub) = self.substrates.get(&compiled.substrate_name) {
+                    if matches!(sub.equality, substrate::EqualityMode::EqualitySaturation)
+                        && !matches!(sub.barrier, substrate::BarrierMode::NominalScoping)
+                    {
+                        if let Some(cat) = self.categories.get(&compiled.category_name) {
+                            let binder_names = collect_binder_names(cat);
+                            if !binder_names.is_empty() {
+                                for (rule_name, lhs, _rhs) in &named_rules {
+                                    if contains_binder_descent(lhs, &binder_names) {
+                                        return Err(HyperionError::BinderSafety {
+                                            theory: theory_name.to_string(),
+                                            rule_name: rule_name.clone(),
+                                            detail: format!(
+                                                "rule matches inside a binder ({}) under equality-saturation \
+                                                 without a nominal-scoping barrier — e-graph may capture variables. \
+                                                 Use @barrier nominal-scoping or lower binders via HOASDefunctionalization first.",
+                                                binder_names.iter().cloned().collect::<Vec<_>>().join(", ")
+                                            ),
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Resource enforcement: check user-declared rules against substrate's resource mode.
         // Note: auto-injected rules (PathType, Preorder) are framework infrastructure and are
         // exempt from resource checking — PathType unit laws inherently drop variables
@@ -1209,6 +1313,17 @@ impl HyperionSession {
             if let Some(compiled) = self.universes.get(uni_name) {
                 if let Some(sub) = self.substrates.get(&compiled.substrate_name) {
                     self.check_resource_rules(&named_rules, &sub.resource_mode, theory_name)?;
+                }
+            }
+        }
+
+        // Totality enforcement: in @totality total mode, rules must be structurally non-expanding
+        if let Some(uni_name) = &universe_name {
+            if let Some(compiled) = self.universes.get(uni_name) {
+                if let Some(sub) = self.substrates.get(&compiled.substrate_name) {
+                    if matches!(sub.totality, substrate::TotalityMode::Total) {
+                        check_structural_termination(&named_rules, theory_name)?;
+                    }
                 }
             }
         }
@@ -1380,6 +1495,17 @@ impl HyperionSession {
             detail: "expected list".into(),
         })?;
         let theory_name = self.extract_in_target(items);
+
+        // Reject proofs for sealed theories
+        if let Some(ref tn) = theory_name {
+            if self.sealed_theories.contains(tn.as_str()) {
+                return Err(HyperionError::SealError {
+                    theory: tn.clone(),
+                    detail: "theory is sealed — no further proofs allowed. \
+                             Use sealed exports via import instead.".into(),
+                });
+            }
+        }
         let universe_name = theory_name
             .as_deref()
             .and_then(|t| self.theory_universes.get(t))
@@ -1433,6 +1559,21 @@ impl HyperionSession {
         let rewritten = self.rewrite_for_apeiron(sexp, universe_name.as_deref())?;
         self.apeiron.process(&rewritten)?;
         self.drain_apeiron_output();
+
+        // TCB transparency: if the universe has compilation passes, annotate the output
+        // so the user knows which trusted bridges their proof depends on.
+        if let Some(uni_name) = &universe_name {
+            if let Some(compiled) = self.universes.get(uni_name) {
+                if !compiled.passes.is_empty() {
+                    let pass_list: Vec<String> = compiled.passes.iter()
+                        .map(|p| format!("[Trust: {:?}]", p))
+                        .collect();
+                    let msg = format!("[TCB] Proof depends on: {}", pass_list.join(", "));
+                    self.output.push(msg);
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -3067,6 +3208,89 @@ fn extract_rule_declarations(items: &[Sexp]) -> Vec<(Option<String>, Sexp, Sexp)
         }
     }
     rules
+}
+
+/// Collect binder names from a category definition.
+/// Includes: `lam` from Exponential, HOASBinding names, and common binder keywords.
+fn collect_binder_names(cat: &crate::category::CategoryDef) -> HashSet<String> {
+    use crate::category::CategoricalStructure;
+    let mut names = HashSet::new();
+    for s in &cat.structure {
+        match s {
+            CategoricalStructure::Exponential { name, .. } => { names.insert(name.clone()); }
+            CategoricalStructure::HOASBinding { binder, .. } => { names.insert(binder.clone()); }
+            _ => {}
+        }
+    }
+    // Always treat Pi as a binder if present as a morphism
+    for obj in &cat.objects {
+        if obj.name == "Pi" || obj.name == "Π" { names.insert(obj.name.clone()); }
+    }
+    names
+}
+
+/// Check if an Sexp pattern descends into a binder body (matching inside the binder).
+/// A binder descent is: [binder_name ... [body containing ?meta ...]]
+/// where a meta-variable appears in the body position of a known binder.
+fn contains_binder_descent(sexp: &Sexp, binder_names: &HashSet<String>) -> bool {
+    match sexp {
+        Sexp::Atom(_, _) => false,
+        Sexp::List(items, _) => {
+            if let Some(head) = items.first().and_then(|i| i.as_atom()) {
+                if binder_names.contains(head) && items.len() >= 2 {
+                    // Check if any non-head position contains a meta-variable
+                    // (meaning the rule is matching inside the binder's body)
+                    for arg in &items[1..] {
+                        if sexp_contains_meta(arg) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            // Recurse into subterms
+            items.iter().any(|i| contains_binder_descent(i, binder_names))
+        }
+    }
+}
+
+/// Check if a Sexp contains any ?meta variable.
+fn sexp_contains_meta(sexp: &Sexp) -> bool {
+    match sexp {
+        Sexp::Atom(name, _) => name.starts_with('?'),
+        Sexp::List(items, _) => items.iter().any(|i| sexp_contains_meta(i)),
+    }
+}
+
+/// Count the number of Sexp nodes (for structural termination checking).
+fn sexp_size(sexp: &Sexp) -> usize {
+    match sexp {
+        Sexp::Atom(_, _) => 1,
+        Sexp::List(items, _) => 1 + items.iter().map(sexp_size).sum::<usize>(),
+    }
+}
+
+/// Check structural termination: RHS must not be strictly larger than LHS.
+fn check_structural_termination(
+    rules: &[(Option<String>, Sexp, Sexp)],
+    theory_name: &str,
+) -> crate::error::Result<()> {
+    for (rule_name, lhs, rhs) in rules {
+        let lhs_size = sexp_size(lhs);
+        let rhs_size = sexp_size(rhs);
+        if rhs_size > lhs_size {
+            return Err(crate::error::HyperionError::TotalityViolation {
+                theory: theory_name.to_string(),
+                rule_name: rule_name.clone(),
+                detail: format!(
+                    "RHS is strictly larger than LHS ({} > {} nodes) — \
+                     rewrite may not terminate. In @totality total mode, \
+                     every rule must be structurally non-expanding.",
+                    rhs_size, lhs_size,
+                ),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Collect all ?meta variable names from a Sexp tree.

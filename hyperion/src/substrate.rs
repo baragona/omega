@@ -99,6 +99,17 @@ pub enum EqualityMode {
     SMTOracle,
 }
 
+/// Totality mode for a substrate's rewrite system.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TotalityMode {
+    /// No totality checking (default).
+    Unspecified,
+    /// Explicitly partial: fuel limits are the backstop.
+    Partial,
+    /// Total: rules must pass structural termination checks.
+    Total,
+}
+
 /// A substrate definition: the physical laws of computation.
 #[derive(Debug, Clone)]
 pub struct SubstrateDef {
@@ -107,6 +118,7 @@ pub struct SubstrateDef {
     pub resource_mode: ResourceMode,
     pub barrier: BarrierMode,
     pub equality: EqualityMode,
+    pub totality: TotalityMode,
 }
 
 /// Parse a `[Substrate Name @engine ... @resource-mode ... @barrier ... @equality ...]` S-expression.
@@ -130,6 +142,7 @@ pub fn parse_substrate(items: &[Sexp]) -> Result<SubstrateDef> {
     let mut resource_mode: Option<ResourceMode> = None;
     let mut barrier: Option<BarrierMode> = None;
     let mut equality: Option<EqualityMode> = None;
+    let mut totality = TotalityMode::Unspecified;
 
     let mut i = 2;
     while i < items.len() {
@@ -164,6 +177,18 @@ pub fn parse_substrate(items: &[Sexp]) -> Result<SubstrateDef> {
             "@equality" => {
                 equality = Some(parse_equality_mode(val, &name)?);
             }
+            "@totality" => {
+                totality = match val {
+                    "partial" => TotalityMode::Partial,
+                    "total" => TotalityMode::Total,
+                    _ => {
+                        return Err(HyperionError::ParseError {
+                            block: "Substrate".into(),
+                            detail: format!("unknown totality mode '{}' (expected partial or total)", val),
+                        });
+                    }
+                };
+            }
             _ => {
                 return Err(HyperionError::ParseError {
                     block: "Substrate".into(),
@@ -197,6 +222,7 @@ pub fn parse_substrate(items: &[Sexp]) -> Result<SubstrateDef> {
 
     Ok(SubstrateDef {
         name,
+        totality,
         engine,
         resource_mode,
         barrier,
