@@ -1,0 +1,75 @@
+;; Hyperion Example: Concurrent System I/O — The Multiplexer
+;;
+;; Two independent file descriptors composed via tensor product.
+;; Categorical linearity proves they are disjoint resources →
+;; compiled to rayon::join for parallel I/O — data-race free by construction.
+;;
+;; The Effect trait uses &self + Send + Sync (not &mut self), enabling
+;; the effects object to be shared across rayon threads.
+;;
+;; Run:     hyperion check examples/concurrent-io.hyp -v
+;; Compile: hyperion kompile examples/concurrent-io.hyp --theory ConcIO -o out/concurrent_io/
+
+;; =================================================================
+;; Category: Parallel Pipeline with Tensor + Effects
+;; =================================================================
+
+[Category PipeOps
+  [Object Val]       ;; Pipeline values (pure data)
+  [Object Effect]    ;; Side effects (I/O, logging)
+
+  ;; Value constructors
+  [Morphism zero    :domain []          :codomain Val]
+  [Morphism one     :domain []          :codomain Val]
+
+  ;; Pure pipeline stages (each uses every input exactly once)
+  [Morphism inc     :domain [Val]       :codomain Val]
+  [Morphism dec     :domain [Val]       :codomain Val]
+  [Morphism negate  :domain [Val]       :codomain Val]
+
+  ;; Parallel dispatch: takes two independent values, runs stages in parallel
+  [Morphism dispatch :domain [Val Val]  :codomain Val]
+
+  ;; Tensor product: categorical parallel composition
+  [SymmetricMonoidal tensor unit-val]
+
+  ;; Effectful operations (I/O via trait)
+  [Morphism log     :domain [Val]       :codomain Effect]
+  [Morphism emit    :domain [Val Val]   :codomain Effect]
+]
+
+;; =================================================================
+;; Concurrent I/O Substrate
+;; =================================================================
+
+[Substrate ConcurrentMachine
+  @engine concurrent-io
+  @resource-mode strictly-linear
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Universe IOWorld :category PipeOps :substrate ConcurrentMachine]
+
+;; =================================================================
+;; Theory: Parallel Pipeline with Effectful Logging
+;; =================================================================
+
+[Theory ConcIO :in IOWorld
+  ;; Inverse pairs cancel (linear-safe: every var used exactly once)
+  [@rule inc-dec    [inc [dec ?x]]       ==> ?x]
+  [@rule dec-inc    [dec [inc ?x]]       ==> ?x]
+  [@rule neg-neg    [negate [negate ?x]] ==> ?x]
+
+  ;; THE KEY RULE: dispatch runs two independent stages in parallel.
+  ;; ?x and ?y are disjoint linear resources (strictly-linear forbids sharing).
+  ;; The codegen verifies disjointness and emits:
+  ;;   rayon::join(|| inc(x), || dec(y))
+  [@rule par-dispatch [dispatch ?x ?y]
+    ==> [tensor [inc ?x] [dec ?y]]]
+
+  ;; Monoidal laws (required by SymmetricMonoidal structure)
+  [@rule tensor-assoc  [tensor [tensor ?a ?b] ?c] ==> [tensor ?a [tensor ?b ?c]]]
+  [@rule tensor-unit-l [tensor unit-val ?a]       ==> ?a]
+  [@rule tensor-unit-r [tensor ?a unit-val]       ==> ?a]
+]

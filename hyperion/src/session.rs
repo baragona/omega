@@ -54,6 +54,35 @@ pub struct VonNeumannTheory {
     pub morphism_types: HashMap<String, (Vec<String>, String)>,
     pub resource_mode: crate::substrate::ResourceMode,
     pub engine: crate::substrate::Engine,
+    /// Tensor product morphism name (from SymmetricMonoidal category structure).
+    /// When present on a concurrent-graph + strictly-linear substrate, tensor
+    /// expressions compile to `rayon::join` after disjointness verification.
+    pub tensor_op: Option<String>,
+    /// Effect handlers: named handler implementations for effect sorts.
+    /// Each handler maps effect method names to implementation rules.
+    /// When present, codegen generates a handler struct implementing the trait.
+    pub handlers: Vec<EffectHandler>,
+}
+
+/// An algebraic effect handler: a named set of method implementations
+/// that reduce effect operations to concrete computations.
+#[derive(Debug, Clone)]
+pub struct EffectHandler {
+    pub name: String,
+    /// The effect sort this handles (e.g., "CompilerEffect", "Effect").
+    pub effect_sort: String,
+    /// Per-method implementations: effect method → (params, body rule).
+    pub methods: Vec<HandlerMethod>,
+}
+
+/// A single method implementation in an effect handler.
+#[derive(Debug, Clone)]
+pub struct HandlerMethod {
+    pub name: String,
+    /// The LHS pattern (after the method name).
+    pub pattern: Sexp,
+    /// The body expression to execute.
+    pub body: Sexp,
 }
 
 /// A single rewrite rule in a Von Neumann theory.
@@ -318,6 +347,7 @@ impl HyperionSession {
             "VerifyFunctor" => self.process_verify_functor(items),
             "WeakEquivalence" => self.process_weak_equivalence(items),
             "Meta" => self.process_meta(items),
+            "Handle" => self.process_handle(items),
             _ => Err(HyperionError::UnknownBlock {
                 name: head.to_string(),
             }),
@@ -792,10 +822,38 @@ impl HyperionSession {
             })?;
 
         let sorts: Vec<String> = cat.objects.iter().map(|o| o.name.clone()).collect();
-        let operators: Vec<String> = cat.morphisms.iter().map(|m| m.name.clone()).collect();
+        let mut operators: Vec<String> = cat.morphisms.iter().map(|m| m.name.clone()).collect();
         let mut morphism_types: HashMap<String, (Vec<String>, String)> = HashMap::new();
         for m in &cat.morphisms {
             morphism_types.insert(m.name.clone(), (m.domain.clone(), m.codomain.clone()));
+        }
+
+        // Inject tensor/unit structure ops into morphism_types.
+        // Tensor: binary product on the first non-Effect object type.
+        // Unit: nullary constructor for the same type.
+        let primary_sort = cat.objects.iter()
+            .find(|o| o.name != "Effect" && o.name != "Unit")
+            .map(|o| o.name.clone());
+        for s in &cat.structure {
+            match s {
+                crate::category::CategoricalStructure::TensorProduct { name } => {
+                    if let Some(ref sort) = primary_sort {
+                        morphism_types.entry(name.clone()).or_insert_with(|| {
+                            (vec![sort.clone(), sort.clone()], sort.clone())
+                        });
+                        operators.push(name.clone());
+                    }
+                }
+                crate::category::CategoricalStructure::Unit { name } => {
+                    if let Some(ref sort) = primary_sort {
+                        morphism_types.entry(name.clone()).or_insert_with(|| {
+                            (vec![], sort.clone())
+                        });
+                        operators.push(name.clone());
+                    }
+                }
+                _ => {}
+            }
         }
 
         // Parse @rule and @law declarations from the theory body
@@ -862,6 +920,15 @@ impl HyperionSession {
             self.drain_apeiron_output();
         }
 
+        // Extract tensor op name from category structure (if any)
+        let tensor_op = cat.structure.iter().find_map(|s| {
+            if let crate::category::CategoricalStructure::TensorProduct { name } = s {
+                Some(name.clone())
+            } else {
+                None
+            }
+        });
+
         self.vn_theories.insert(
             theory_name.clone(),
             VonNeumannTheory {
@@ -873,8 +940,110 @@ impl HyperionSession {
                 morphism_types,
                 resource_mode: sub.resource_mode.clone(),
                 engine: sub.engine.clone(),
+                tensor_op,
+                handlers: Vec::new(),
             },
         );
+
+        Ok(())
+    }
+
+    /// Process a `[Handle EffectSort :with HandlerName :for TheoryName ...]` block.
+    /// Registers an algebraic effect handler that can be swapped at compile/runtime.
+    fn process_handle(&mut self, items: &[Sexp]) -> Result<()> {
+        if items.len() < 6 {
+            return Err(HyperionError::ParseError {
+                block: "Handle".into(),
+                detail: "expected [Handle EffectSort :with HandlerName :for TheoryName ...]".into(),
+            });
+        }
+
+        let effect_sort = items[1]
+            .as_atom()
+            .ok_or_else(|| HyperionError::ParseError {
+                block: "Handle".into(),
+                detail: "effect sort must be an atom".into(),
+            })?
+            .to_string();
+
+        // Parse :with and :for keywords
+        let mut handler_name: Option<String> = None;
+        let mut theory_name: Option<String> = None;
+        let mut method_start = 2;
+
+        let mut i = 2;
+        while i < items.len() {
+            if let Some(kw) = items[i].as_atom() {
+                match kw {
+                    ":with" => {
+                        handler_name = items.get(i + 1).and_then(|s| s.as_atom()).map(|s| s.to_string());
+                        i += 2;
+                        method_start = i;
+                        continue;
+                    }
+                    ":for" => {
+                        theory_name = items.get(i + 1).and_then(|s| s.as_atom()).map(|s| s.to_string());
+                        i += 2;
+                        method_start = i;
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+            i += 1;
+        }
+
+        let handler_name = handler_name.ok_or_else(|| HyperionError::ParseError {
+            block: "Handle".into(),
+            detail: "missing :with HandlerName".into(),
+        })?;
+        let theory_name = theory_name.ok_or_else(|| HyperionError::ParseError {
+            block: "Handle".into(),
+            detail: "missing :for TheoryName".into(),
+        })?;
+
+        // Parse [@on method-name pattern ==> body] declarations
+        let mut methods = Vec::new();
+        for item in &items[method_start..] {
+            if let Some(inner) = item.as_list() {
+                if inner.len() >= 5 {
+                    let head = inner[0].as_atom().unwrap_or("");
+                    if head == "@on" {
+                        let method_name = inner[1].as_atom().unwrap_or("").to_string();
+                        let pattern = inner[2].clone();
+                        // inner[3] should be "==>"
+                        let body = inner[4].clone();
+                        methods.push(HandlerMethod {
+                            name: method_name,
+                            pattern,
+                            body,
+                        });
+                    }
+                }
+            }
+        }
+
+        let handler = EffectHandler {
+            name: handler_name.clone(),
+            effect_sort,
+            methods,
+        };
+
+        // Attach to the theory
+        let theory = self.vn_theories.get_mut(&theory_name).ok_or_else(|| {
+            HyperionError::Undefined {
+                kind: "Theory".into(),
+                name: theory_name.clone(),
+            }
+        })?;
+
+        let method_count = handler.methods.len();
+        theory.handlers.push(handler);
+
+        self.output.push(format!(
+            "[HANDLE] {} registered for {} ({} methods)",
+            handler_name, theory_name, method_count
+        ));
 
         Ok(())
     }

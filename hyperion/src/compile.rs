@@ -47,10 +47,10 @@ pub fn compile_universe(
     })
 }
 
-/// Check if a substrate uses a first-order engine (VonNeumann, NetworkRpc, or SystemIO).
+/// Check if a substrate uses a first-order engine (VonNeumann, NetworkRpc, SystemIO, or Compiler).
 /// These engines bypass Apeiron and use direct rewrite-rule theories.
 pub fn is_first_order_engine(sub: &SubstrateDef) -> bool {
-    matches!(sub.engine, Engine::VonNeumann | Engine::NetworkRpc | Engine::SystemIO)
+    matches!(sub.engine, Engine::VonNeumann | Engine::NetworkRpc | Engine::SystemIO | Engine::ConcurrentGraph | Engine::ConcurrentIO | Engine::Compiler)
 }
 
 /// Check if a substrate uses the Von Neumann engine.
@@ -60,7 +60,7 @@ pub fn is_von_neumann(sub: &SubstrateDef) -> bool {
 
 /// Check if a substrate uses the SystemIO engine.
 pub fn is_system_io(sub: &SubstrateDef) -> bool {
-    sub.engine == Engine::SystemIO
+    matches!(sub.engine, Engine::SystemIO | Engine::ConcurrentIO)
 }
 
 /// Analyze compatibility between category and substrate, returning any
@@ -90,7 +90,7 @@ fn check_compatibility(cat: &CategoryDef, sub: &SubstrateDef) -> Result<Vec<Comp
     let supports_tensor = matches!(
         sub.engine,
         Engine::InteractionGraph | Engine::SymmetricMonoidal
-        | Engine::ReversibleGraph | Engine::ConcurrentGraph
+        | Engine::ReversibleGraph | Engine::ConcurrentGraph | Engine::ConcurrentIO
     );
 
     let supports_scopes = matches!(
@@ -120,7 +120,18 @@ fn check_compatibility(cat: &CategoryDef, sub: &SubstrateDef) -> Result<Vec<Comp
 
     // --- TensorProduct bridging ---
 
-    // Sequential engine + TensorProduct → Serialization
+    // Concurrent engine + TensorProduct + StrictlyLinear → Parallel tensor (proof-carrying)
+    // The strictly-linear resource mode forbids the diagonal map (A → A ⊗ A),
+    // so tensor factors are guaranteed to have disjoint free variables.
+    // This is verified at kompile time via AST-level variable partitioning.
+    if cat.has_tensor() && supports_tensor
+        && matches!(sub.engine, Engine::ConcurrentGraph | Engine::ConcurrentIO)
+        && matches!(sub.resource_mode, ResourceMode::StrictlyLinear)
+    {
+        passes.push(CompilationPass::ParallelTensorProof);
+    }
+
+    // Sequential engine + TensorProduct → Serialization (fallback for non-parallel)
     if cat.has_tensor() && !supports_tensor {
         passes.push(CompilationPass::TensorSerialization);
     }

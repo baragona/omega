@@ -47,6 +47,11 @@ pub enum CompilationPass {
     /// to "A is available at all non-partitioned replicas" (AP) or
     /// "A is consistent across all replicas before proceeding" (CP).
     PartitionTolerance,
+    /// Proof-carrying parallel tensor: tensor products compiled to parallel
+    /// execution (rayon::join) after verifying free-variable disjointness.
+    /// Strictly-linear resource mode forbids the diagonal map (A → A ⊗ A),
+    /// guaranteeing data-race freedom at the categorical level.
+    ParallelTensorProof,
 }
 
 impl CompilationPass {
@@ -62,6 +67,7 @@ impl CompilationPass {
             Self::RpcSerialization => "rpc-serialization",
             Self::ConsensusReplication => "consensus-replication",
             Self::PartitionTolerance => "partition-tolerance",
+            Self::ParallelTensorProof => "parallel-tensor-proof",
         }
     }
 
@@ -77,6 +83,7 @@ impl CompilationPass {
             Self::RpcSerialization => "RPC serialization: cross-partition data must be wire-serializable",
             Self::ConsensusReplication => "consensus replication: operations must be commutative (CRDT) or totally ordered (Raft/Paxos)",
             Self::PartitionTolerance => "partition tolerance: modal operators compiled to AP/CP availability trade-offs",
+            Self::ParallelTensorProof => "proof-carrying parallel tensor: disjoint linear resources compiled to rayon::join",
         }
     }
 }

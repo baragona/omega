@@ -12,6 +12,46 @@ pub struct RustCrate {
     pub has_box_patterns: bool,
     /// If set, emit a main.rs with a runtime harness implementing this trait.
     pub runtime_trait: Option<String>,
+    /// Whether any expression uses `rayon::join` for parallel tensor execution.
+    pub has_parallel: bool,
+    /// Generated tests: each rewrite rule becomes an assert_eq! test.
+    pub tests: Vec<RustTest>,
+    /// Extra Cargo.toml dependencies: `(name, version)` pairs.
+    /// e.g., `("hyperion-runtime", "0.1")` for compiler-engine theories.
+    pub extra_deps: Vec<(String, String)>,
+    /// Algebraic effect handlers: named implementations of effect traits.
+    pub handlers: Vec<RustHandler>,
+}
+
+/// An algebraic effect handler: a struct implementing an effect trait.
+#[derive(Debug)]
+pub struct RustHandler {
+    /// The handler struct name (e.g., "DiskHandler").
+    pub name: String,
+    /// The trait it implements (e.g., "ReflTacticsEffects").
+    pub trait_name: String,
+    /// Whether the trait is concurrent (uses `&self` vs `&mut self`).
+    pub is_concurrent: bool,
+    /// Method implementations: each has a name and a body expression.
+    pub methods: Vec<RustHandlerMethod>,
+}
+
+/// A method implementation in an effect handler.
+#[derive(Debug)]
+pub struct RustHandlerMethod {
+    pub name: String,
+    pub params: Vec<RustParam>,
+    pub body: RustExpr,
+}
+
+/// A generated test case from a rewrite rule.
+#[derive(Debug)]
+pub struct RustTest {
+    pub name: String,
+    /// The LHS expression (function call with witness values).
+    pub lhs: RustExpr,
+    /// The expected RHS expression (constructor/value with witness values).
+    pub rhs: RustExpr,
 }
 
 /// A module within the crate (maps to a file).
@@ -68,8 +108,10 @@ pub struct RustFunction {
     pub params: Vec<RustParam>,
     pub ret: RustType,
     pub body: RustExpr,
-    /// If Some, this function takes `&mut impl Trait` as first param
+    /// If Some, this function takes `&mut impl Trait` (or `&impl Trait + Sync` for concurrent) as first param
     pub effects_trait: Option<String>,
+    /// If true, effects param uses `&(impl Trait + Sync)` for thread-safe parallel I/O.
+    pub effects_concurrent: bool,
 }
 
 /// A function parameter.
@@ -84,6 +126,9 @@ pub struct RustParam {
 pub struct RustTrait {
     pub name: String,
     pub methods: Vec<RustTraitMethod>,
+    /// If true, trait uses `&self` (not `&mut self`) and requires `Send + Sync`.
+    /// Enables parallel effect calls via rayon::join on disjoint linear resources.
+    pub is_concurrent: bool,
 }
 
 /// A method in a trait definition.
@@ -128,6 +173,20 @@ pub enum RustExpr {
     Clone(Box<RustExpr>),
     /// unreachable!().
     Unreachable,
+    /// Parallel execution via `rayon::join(|| left, || right)`.
+    /// Results are wrapped in the tensor constructor: `{ let (l, r) = rayon::join(...); Enum::Tensor(Box::new(l), Box::new(r)) }`.
+    /// Only emitted when the proof-carrying parallel tensor pass verifies
+    /// free-variable disjointness (strictly-linear guarantees no sharing).
+    Parallel {
+        left: Box<RustExpr>,
+        right: Box<RustExpr>,
+        /// The enum name to wrap the result (e.g., "Val")
+        result_enum: String,
+        /// The tensor variant name (e.g., "Tensor")
+        result_variant: String,
+        /// Whether the result sort is recursive (needs Box::new wrapping)
+        result_boxed: bool,
+    },
 }
 
 /// A match arm.

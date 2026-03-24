@@ -1,0 +1,8 @@
+[package]
+name = "hyperion-runtime"
+version = "0.1.0"
+edition = "2021"
+description = "Runtime support for compiled Hyperion programs"
+
+[dependencies]
+egg = "0.9"

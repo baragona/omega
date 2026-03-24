@@ -25,6 +25,12 @@ pub enum Engine {
     /// resource mode, enforces that file descriptors, sockets, and handles are
     /// opened exactly once and closed exactly once.
     SystemIO,
+    /// Concurrent I/O engine: combines SystemIO (Effect → trait) with
+    /// ConcurrentGraph (tensor → rayon::join). Effect trait methods use `&self`
+    /// (not `&mut self`) and require `Send + Sync`, enabling parallel I/O on
+    /// disjoint linear resources. The categorical linearity guarantee (no diagonal
+    /// map) ensures each FD is consumed by exactly one thread.
+    ConcurrentIO,
 }
 
 /// Resource management mode.
@@ -193,10 +199,11 @@ fn parse_engine(val: &str, substrate: &str) -> Result<Engine> {
         "network-rpc" => Ok(Engine::NetworkRpc),
         "compiler" => Ok(Engine::Compiler),
         "system-io" | "systemio" => Ok(Engine::SystemIO),
+        "concurrent-io" | "concurrentio" => Ok(Engine::ConcurrentIO),
         _ => Err(HyperionError::ParseError {
             block: "Substrate".into(),
             detail: format!(
-                "Substrate '{}': unknown engine '{}'. Expected one of: interaction-graph, term-tree, symmetric-monoidal, cellular-automaton, abstract-machine, von-neumann, reversible-graph, concurrent-graph, network-rpc, compiler, system-io",
+                "Substrate '{}': unknown engine '{}'. Expected one of: interaction-graph, term-tree, symmetric-monoidal, cellular-automaton, abstract-machine, von-neumann, reversible-graph, concurrent-graph, network-rpc, compiler, system-io, concurrent-io",
                 substrate, val
             ),
         }),

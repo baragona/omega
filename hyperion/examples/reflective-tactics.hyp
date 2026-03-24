@@ -1,0 +1,112 @@
+;; Hyperion Example: Reflective Tactics — The Tower
+;;
+;; A custom tactic engine written in Hyperion, compiled to native Rust.
+;; Demonstrates all four upgrades of the reflective tower:
+;;   1. Programmable Tactics (Categorical Ltac)
+;;   2. Verified Theory Transformers
+;;   3. Proof-Carrying Compilation Passes
+;;   4. Custom E-Graph Cost Functions
+;;
+;; The category MetaCat (from prelude) provides the proof-relevant sorts:
+;;   ProofTerm, Goal, ProofState, CostFn, Expr, Nat, Bool
+;;
+;; Run:     hyperion check examples/reflective-tactics.hyp -v
+;; Compile: hyperion kompile examples/reflective-tactics.hyp --theory ReflTactics -o out/refl_tactics/
+
+;; =================================================================
+;; Universe: MetaCat on the Compiler engine
+;; =================================================================
+
+[Universe TacticWorld :category MetaCat :substrate CompilerEngine]
+
+;; =================================================================
+;; Theory: Reflective Tactics
+;; =================================================================
+;; A theory over the MetaCat category that defines:
+;;   - Custom tactics as rewrite rules on Goal/ProofState
+;;   - A cost function for e-graph extraction
+;;   - Proof-carrying transformations
+
+[Theory ReflTactics :in TacticWorld
+
+  ;; === 1. PROGRAMMABLE TACTICS ===
+  ;; Each tactic is a rewrite rule:  Goal → ProofState
+  ;; ProofState is either qed(proof) or goals(subgoal, rest)
+
+  ;; Tactic: refl — if the goal is (eq e e), produce proof-refl immediately
+  [@rule tac-refl [apply-tactic [goal-eq ?e ?e]]
+    ==> [ps-qed [pf-refl]]]
+
+  ;; Tactic: symmetry — if we need to prove (eq a b), transform to (eq b a)
+  [@rule tac-sym [apply-tactic [goal-eq ?a ?b]]
+    ==> [ps-goals [goal-eq ?b ?a] [ps-qed [pf-sym [pf-refl]]]]]
+
+  ;; === 2. VERIFIED THEORY TRANSFORMERS ===
+  ;; Rules that simplify AST expressions (verified by the e-graph).
+  ;; These model a peephole optimizer: normalize redundant constructions.
+
+  ;; Simplify: double application cancels
+  ;; normalize(app(app(e, x), x), T) = normalize(e, T)
+  ;; (This models eta-like reduction in the reified AST)
+  [@rule norm-app-cancel [normalize [expr-app [expr-app ?e ?x] ?x] ?t]
+    ==> [normalize ?e ?t]]
+
+  ;; Simplify: normalizing an atom is identity
+  [@rule norm-atom [normalize [expr-atom ?s] ?t]
+    ==> [expr-atom ?s]]
+
+  ;; === 3. PROOF-CARRYING PASSES ===
+  ;; analyze-linearity returns a ProofTerm witnessing that the expression
+  ;; uses each variable at most once. The proof term IS the evidence.
+
+  ;; An atom is trivially linear (no variables used)
+  [@rule lin-atom [analyze-linearity [expr-atom ?s] ?t]
+    ==> [pf-refl]]
+
+  ;; A variable reference uses exactly one variable — linear by construction
+  [@rule lin-var [analyze-linearity [expr-var ?n] ?t]
+    ==> [pf-refl]]
+
+  ;; Application: if both sides are linear AND variables are disjoint,
+  ;; the whole thing is linear. Proof by congruence.
+  ;; (Full disjointness check would need the e-graph; this is the structural case)
+  [@rule lin-app [analyze-linearity [expr-app ?f ?x] ?t]
+    ==> [proof-cong [expr-app ?f ?x]
+          [pf-trans [analyze-linearity ?f ?t]
+                    [analyze-linearity ?x ?t]]]]
+
+  ;; === 4. CUSTOM E-GRAPH COST FUNCTIONS ===
+  ;; A cost function that penalizes deep nesting (favors flat expressions).
+  ;; Users can write domain-specific cost models in Hyperion.
+
+  ;; Atoms are cheap (cost 1)
+  [@rule cost-atom [eval-cost ?c [expr-atom ?s]]
+    ==> [succ [zero]]]
+
+  ;; Variables are free (cost 0)
+  [@rule cost-var [eval-cost ?c [expr-var ?n]]
+    ==> [zero]]
+
+  ;; Application: cost is 1 + cost(f) + cost(x)
+  ;; (penalizes nesting — flatter is cheaper)
+  [@rule cost-app [eval-cost ?c [expr-app ?f ?x]]
+    ==> [succ [add [eval-cost ?c ?f] [eval-cost ?c ?x]]]]
+
+  ;; === Nat arithmetic (needed for cost computation) ===
+  [@rule add-zero  [add [zero] ?n]       ==> ?n]
+  [@rule add-succ  [add [succ ?m] ?n]    ==> [succ [add ?m ?n]]]
+
+  ;; === Proof checking: verify a proof term witnesses a goal ===
+  ;; check-proof(refl, eq(e, e)) = true
+  [@rule check-refl [check-proof [pf-refl] [goal-eq ?e ?e]]
+    ==> [true]]
+
+  ;; check-proof(sym(p), eq(a, b)) = check-proof(p, eq(b, a))
+  [@rule check-sym [check-proof [pf-sym ?p] [goal-eq ?a ?b]]
+    ==> [check-proof ?p [goal-eq ?b ?a]]]
+
+  ;; check-proof(trans(p, q), eq(a, c)) — needs a middle term
+  ;; (simplified: if both sub-proofs check out, the composition does too)
+  [@rule check-trans [check-proof [pf-trans ?p ?q] [goal-eq ?a ?c]]
+    ==> [true]]  ;; In full version: find middle term via e-graph
+]

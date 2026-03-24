@@ -1,0 +1,123 @@
+;; Hyperion Example: Proof-Carrying Parallel Tensor Concurrency
+;;
+;; The categorical guarantee: strictly-linear resource mode forbids the diagonal
+;; map (A -> A tensor A), so tensor factors are provably disjoint. This means
+;; [tensor A B] can safely compile to rayon::join(|| A, || B) — the Rust borrow
+;; checker and the categorical linearity checker agree at the type level.
+;;
+;; Phase 1: Category with symmetric monoidal tensor product
+;; Phase 2: E-graph sandbox for prototyping algebraic laws
+;; Phase 3: Concurrent strictly-linear substrate for parallel execution
+;; Phase 4: VerifyFunctor proves laws transport across substrates
+;; Phase 5: kompile to parallel Rust (rayon::join)
+;;
+;; Run:     hyperion check examples/concurrent-verified.hyp -v
+;; Compile: hyperion kompile examples/concurrent-verified.hyp --theory ProdPar -o out/parallel_ops/
+
+;; =================================================================
+;; Category: Parallel Pipeline with Tensor Products
+;; =================================================================
+
+;; A pipeline category where independent stages run in parallel via tensor.
+;; All operations preserve their inputs (no drops) — strictly linear safe.
+
+[Category ParOps
+  [Object Val]       ;; Pipeline values
+  [Object Effect]    ;; Side effects (logging)
+
+  ;; Value constructors (nullary)
+  [Morphism zero    :domain []          :codomain Val]
+  [Morphism one     :domain []          :codomain Val]
+
+  ;; Pipeline stages (each uses every input exactly once)
+  [Morphism inc     :domain [Val]       :codomain Val]
+  [Morphism dec     :domain [Val]       :codomain Val]
+  [Morphism negate  :domain [Val]       :codomain Val]
+  [Morphism wrap    :domain [Val]       :codomain Val]
+  [Morphism unwrap  :domain [Val]       :codomain Val]
+
+  ;; Parallel pipeline: dispatch two independent stages
+  [Morphism dispatch :domain [Val Val]  :codomain Val]
+
+  ;; Tensor product: categorical parallel composition
+  [SymmetricMonoidal tensor unit]
+
+  ;; Effects (opaque, sequential)
+  [Morphism log     :domain [Val]       :codomain Effect]
+]
+
+;; =================================================================
+;; Phase 1: E-Graph Sandbox (optimal sharing, no resource constraints)
+;; =================================================================
+
+[Substrate DevSandbox
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Universe DevWorld :category ParOps :substrate DevSandbox]
+
+;; Prototype theory: algebraic laws (all linear-safe: every var used exactly once)
+[Theory DevPar :in DevWorld
+  ;; Inverse pairs: inc/dec and wrap/unwrap cancel
+  [@rule inc-dec    [inc [dec ?x]]      ==> ?x]
+  [@rule dec-inc    [dec [inc ?x]]      ==> ?x]
+  [@rule wrap-unwrap [wrap [unwrap ?x]] ==> ?x]
+  [@rule unwrap-wrap [unwrap [wrap ?x]] ==> ?x]
+
+  ;; Double negation cancels
+  [@rule neg-neg    [negate [negate ?x]] ==> ?x]
+
+  ;; Dispatch dispatches two independent computations via tensor.
+  ;; In the parallel target, this becomes rayon::join.
+  [@rule par-dispatch [dispatch ?x ?y]  ==> [tensor [inc ?x] [dec ?y]]]
+
+  ;; Monoidal laws (required by SymmetricMonoidal structure)
+  [@rule tensor-assoc  [tensor [tensor ?a ?b] ?c] ==> [tensor ?a [tensor ?b ?c]]]
+  [@rule tensor-unit-l [tensor unit ?a]           ==> ?a]
+  [@rule tensor-unit-r [tensor ?a unit]           ==> ?a]
+]
+
+;; =================================================================
+;; Phase 2: Production Parallel Target (concurrent + strictly linear)
+;; =================================================================
+
+[Substrate ParMachine
+  @engine concurrent-graph
+  @resource-mode strictly-linear
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Universe ParWorld :category ParOps :substrate ParMachine]
+
+;; Production theory: same algebraic laws on a parallel-capable substrate.
+;; The strictly-linear resource mode forbids the diagonal map, ensuring
+;; tensor factors cannot share variables — data-race freedom by construction.
+[Theory ProdPar :in ParWorld
+  [@rule inc-dec    [inc [dec ?x]]      ==> ?x]
+  [@rule dec-inc    [dec [inc ?x]]      ==> ?x]
+  [@rule wrap-unwrap [wrap [unwrap ?x]] ==> ?x]
+  [@rule unwrap-wrap [unwrap [wrap ?x]] ==> ?x]
+  [@rule neg-neg    [negate [negate ?x]] ==> ?x]
+
+  ;; This is the key rule: dispatch compiles to rayon::join because
+  ;; ?x and ?y are in disjoint tensor factors (linearity forbids sharing).
+  [@rule par-dispatch [dispatch ?x ?y]  ==> [tensor [inc ?x] [dec ?y]]]
+
+  ;; Monoidal laws
+  [@rule tensor-assoc  [tensor [tensor ?a ?b] ?c] ==> [tensor ?a [tensor ?b ?c]]]
+  [@rule tensor-unit-l [tensor unit ?a]           ==> ?a]
+  [@rule tensor-unit-r [tensor ?a unit]           ==> ?a]
+]
+
+;; =================================================================
+;; Phase 3: Functor Transport + Verification
+;; =================================================================
+
+[Functor DevToPar :from DevSandbox :to ParMachine :verify]
+
+;; Verify all algebraic laws transport correctly
+[VerifyFunctor DevToPar :source DevPar :target ProdPar]

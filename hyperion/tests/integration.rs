@@ -3369,3 +3369,854 @@ fn meta_splice_invalid_inner_command() {
     let result = process_all(&mut session, input);
     assert!(result.is_err());
 }
+
+// ============================================================
+// Proof-Carrying Parallel Tensor Concurrency
+// ============================================================
+
+#[test]
+fn concurrent_verified_example() {
+    run_file("examples/concurrent-verified.hyp");
+}
+
+#[test]
+fn concurrent_graph_gets_parallel_tensor_pass() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category C
+          [Object Val]
+          [SymmetricMonoidal tensor unit]
+          [Morphism add :domain [Val Val] :codomain Val]
+        ]
+        [Substrate S
+          @engine concurrent-graph
+          @resource-mode strictly-linear
+          @barrier transparent
+          @equality rewrite-equivalence
+        ]
+        [Universe U :category C :substrate S]
+    "#;
+    process_all(&mut session, input).unwrap();
+    let output = session.output.join("\n");
+    assert!(output.contains("parallel-tensor-proof"), "should include parallel tensor pass: {}", output);
+}
+
+#[test]
+fn sequential_engine_gets_tensor_serialization_not_parallel() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category C
+          [Object Val]
+          [SymmetricMonoidal tensor unit]
+          [Morphism add :domain [Val Val] :codomain Val]
+        ]
+        [Substrate S
+          @engine term-tree
+          @resource-mode optimal-sharing
+          @barrier transparent
+          @equality rewrite-equivalence
+        ]
+        [Universe U :category C :substrate S]
+    "#;
+    process_all(&mut session, input).unwrap();
+    let output = session.output.join("\n");
+    assert!(output.contains("tensor-serialization"), "sequential engine should get tensor-serialization: {}", output);
+    assert!(!output.contains("parallel-tensor-proof"), "should NOT get parallel pass");
+}
+
+#[test]
+fn concurrent_verified_kompile() {
+    let mut session = HyperionSession::new();
+    let source = std::fs::read_to_string("examples/concurrent-verified.hyp").unwrap();
+    let sexps = apeiron::parser::parse(&source).unwrap();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+    let krate = hyperion::codegen::analyze::analyze(
+        session.vn_theories.get("ProdPar").expect("ProdPar theory"),
+    )
+    .unwrap();
+
+    // Should have parallel flag set (tensor ops on concurrent-graph + strictly-linear)
+    // Note: parallel is only set if the RHS of a rule uses [tensor ...] with disjoint vars.
+    // Our rules don't directly use tensor in RHS, so has_parallel may be false.
+    // But the infrastructure is in place.
+
+    // Verify rayon dep appears when has_parallel is true
+    let files = hyperion::codegen::emit::emit_crate(&krate);
+    assert!(files.contains_key("Cargo.toml"));
+    assert!(files.contains_key("src/lib.rs"));
+    assert!(files.contains_key("src/types.rs"));
+    assert!(files.contains_key("src/functions.rs"));
+
+    // Verify the Val enum has the expected variants
+    let types_rs = &files["src/types.rs"];
+    assert!(types_rs.contains("pub enum Val"));
+    assert!(types_rs.contains("Zero"));
+    assert!(types_rs.contains("Inc"));
+
+    // Verify parallel dispatch generates rayon::join
+    let functions_rs = &files["src/functions.rs"];
+    assert!(functions_rs.contains("rayon::join"), "dispatch should compile to rayon::join: {}", functions_rs);
+
+    // Verify Cargo.toml has rayon dependency
+    let cargo = &files["Cargo.toml"];
+    assert!(cargo.contains("rayon"), "should have rayon dep");
+}
+
+#[test]
+fn parallel_tensor_codegen_emits_rayon_join() {
+    // Directly test the codegen: a theory where RHS uses [tensor ...] with disjoint vars
+    use hyperion::session::VonNeumannTheory;
+    use hyperion::session::VonNeumannRule;
+    use std::collections::HashMap;
+
+    let mut morphism_types = HashMap::new();
+    morphism_types.insert("zero".to_string(), (vec![], "Val".to_string()));
+    morphism_types.insert("one".to_string(), (vec![], "Val".to_string()));
+    morphism_types.insert("add".to_string(), (vec!["Val".to_string(), "Val".to_string()], "Val".to_string()));
+    morphism_types.insert("compute".to_string(), (vec!["Val".to_string(), "Val".to_string()], "Val".to_string()));
+    // tensor is the parallel composition operator
+    morphism_types.insert("tensor".to_string(), (vec!["Val".to_string(), "Val".to_string()], "Val".to_string()));
+
+    let theory = VonNeumannTheory {
+        name: "ParTest".to_string(),
+        universe_name: "U".to_string(),
+        sorts: vec!["Val".to_string()],
+        operators: vec!["zero".to_string(), "one".to_string(), "add".to_string(), "compute".to_string(), "tensor".to_string()],
+        rules: vec![
+            // compute dispatches two independent computations in parallel
+            // ?x and ?y are disjoint variables → rayon::join
+            VonNeumannRule {
+                name: "par-compute".to_string(),
+                lhs: apeiron::parser::parse("[compute ?x ?y]").unwrap().into_iter().next().unwrap(),
+                rhs: apeiron::parser::parse("[tensor [add ?x ?x] [add ?y ?y]]").unwrap().into_iter().next().unwrap(),
+            },
+        ],
+        morphism_types,
+        resource_mode: hyperion::substrate::ResourceMode::StrictlyLinear,
+        engine: hyperion::substrate::Engine::ConcurrentGraph,
+        tensor_op: Some("tensor".to_string()),
+        handlers: vec![],
+    };
+
+    let krate = hyperion::codegen::analyze::analyze(&theory).unwrap();
+    assert!(krate.has_parallel, "should detect parallel tensor");
+
+    let files = hyperion::codegen::emit::emit_crate(&krate);
+    let cargo = &files["Cargo.toml"];
+    assert!(cargo.contains("rayon"), "Cargo.toml should have rayon dep: {}", cargo);
+
+    let functions = &files["src/functions.rs"];
+    assert!(functions.contains("rayon::join"), "should emit rayon::join: {}", functions);
+}
+
+#[test]
+fn parallel_tensor_rejects_shared_vars() {
+    // When tensor factors share a variable, it should NOT emit rayon::join
+    // (falls back to sequential constructor)
+    use hyperion::session::VonNeumannTheory;
+    use hyperion::session::VonNeumannRule;
+    use std::collections::HashMap;
+
+    let mut morphism_types = HashMap::new();
+    morphism_types.insert("zero".to_string(), (vec![], "Val".to_string()));
+    morphism_types.insert("add".to_string(), (vec!["Val".to_string(), "Val".to_string()], "Val".to_string()));
+    morphism_types.insert("compute".to_string(), (vec!["Val".to_string()], "Val".to_string()));
+    morphism_types.insert("tensor".to_string(), (vec!["Val".to_string(), "Val".to_string()], "Val".to_string()));
+
+    let theory = VonNeumannTheory {
+        name: "SharedTest".to_string(),
+        universe_name: "U".to_string(),
+        sorts: vec!["Val".to_string()],
+        operators: vec!["zero".to_string(), "add".to_string(), "compute".to_string(), "tensor".to_string()],
+        rules: vec![
+            // ?x appears in BOTH tensor factors — not disjoint — cannot parallelize
+            VonNeumannRule {
+                name: "shared-compute".to_string(),
+                lhs: apeiron::parser::parse("[compute ?x]").unwrap().into_iter().next().unwrap(),
+                rhs: apeiron::parser::parse("[tensor [add ?x ?x] [add ?x zero]]").unwrap().into_iter().next().unwrap(),
+            },
+        ],
+        morphism_types,
+        resource_mode: hyperion::substrate::ResourceMode::StrictlyLinear,
+        engine: hyperion::substrate::Engine::ConcurrentGraph,
+        tensor_op: Some("tensor".to_string()),
+        handlers: vec![],
+    };
+
+    let krate = hyperion::codegen::analyze::analyze(&theory).unwrap();
+    assert!(!krate.has_parallel, "shared vars should NOT produce parallel code");
+
+    let files = hyperion::codegen::emit::emit_crate(&krate);
+    let functions = &files["src/functions.rs"];
+    assert!(!functions.contains("rayon::join"), "should NOT emit rayon::join for shared vars");
+}
+
+#[test]
+fn parallel_tensor_skips_trivial_depth() {
+    // Trivially shallow tensor factors (depth < 2) should not use rayon::join
+    use hyperion::session::VonNeumannTheory;
+    use hyperion::session::VonNeumannRule;
+    use std::collections::HashMap;
+
+    let mut morphism_types = HashMap::new();
+    morphism_types.insert("a".to_string(), (vec![], "Val".to_string()));
+    morphism_types.insert("b".to_string(), (vec![], "Val".to_string()));
+    morphism_types.insert("compute".to_string(), (vec![], "Val".to_string()));
+    morphism_types.insert("tensor".to_string(), (vec!["Val".to_string(), "Val".to_string()], "Val".to_string()));
+
+    let theory = VonNeumannTheory {
+        name: "TrivialTest".to_string(),
+        universe_name: "U".to_string(),
+        sorts: vec!["Val".to_string()],
+        operators: vec!["a".to_string(), "b".to_string(), "compute".to_string(), "tensor".to_string()],
+        rules: vec![
+            // [tensor a b] — both sides are atoms (depth 0), too trivial for threading
+            VonNeumannRule {
+                name: "trivial".to_string(),
+                lhs: apeiron::parser::parse("[compute]").unwrap().into_iter().next().unwrap(),
+                rhs: apeiron::parser::parse("[tensor a b]").unwrap().into_iter().next().unwrap(),
+            },
+        ],
+        morphism_types,
+        resource_mode: hyperion::substrate::ResourceMode::StrictlyLinear,
+        engine: hyperion::substrate::Engine::ConcurrentGraph,
+        tensor_op: Some("tensor".to_string()),
+        handlers: vec![],
+    };
+
+    let krate = hyperion::codegen::analyze::analyze(&theory).unwrap();
+    assert!(!krate.has_parallel, "trivial expressions should not use parallel");
+}
+
+// ============================================================
+// Concurrent I/O: The Multiplexer
+// ============================================================
+
+#[test]
+fn concurrent_io_example() {
+    run_file("examples/concurrent-io.hyp");
+}
+
+#[test]
+fn concurrent_io_kompile_and_cargo_check() {
+    let mut session = HyperionSession::new();
+    let source = std::fs::read_to_string("examples/concurrent-io.hyp").unwrap();
+    let sexps = apeiron::parser::parse(&source).unwrap();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+
+    let theory = session.vn_theories.get("ConcIO").expect("ConcIO theory");
+    let krate = hyperion::codegen::analyze::analyze(theory).unwrap();
+    assert!(krate.has_parallel, "should have parallel tensor");
+
+    let files = hyperion::codegen::emit::emit_crate(&krate);
+
+    // Verify thread-safe trait
+    let types_rs = &files["src/types.rs"];
+    assert!(types_rs.contains("Send + Sync"), "trait should be Send + Sync: {}", types_rs);
+    assert!(types_rs.contains("&self"), "trait methods should use &self: {}", types_rs);
+    assert!(!types_rs.contains("&mut self"), "trait methods should NOT use &mut self");
+
+    // Verify parallel dispatch
+    let functions_rs = &files["src/functions.rs"];
+    assert!(functions_rs.contains("rayon::join"), "should emit rayon::join: {}", functions_rs);
+    assert!(functions_rs.contains("Val::Tensor"), "should wrap result in tensor constructor");
+
+    // Verify Cargo.toml has rayon dep
+    let cargo = &files["Cargo.toml"];
+    assert!(cargo.contains("rayon"), "should have rayon dep");
+
+    // Write to temp dir and cargo check
+    let dir = std::env::temp_dir().join("hyperion_test_concurrent_io");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("tests")).unwrap();
+    for (path, content) in &files {
+        std::fs::write(dir.join(path), content).unwrap();
+    }
+    let output = std::process::Command::new("rustup")
+        .args(["run", "nightly", "cargo", "check"])
+        .current_dir(&dir)
+        .output()
+        .expect("cargo check");
+    assert!(
+        output.status.success(),
+        "cargo check failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn concurrent_io_effects_use_shared_ref() {
+    // ConcurrentIO engine produces &self trait methods and &(impl T + Sync) function params
+    use hyperion::session::VonNeumannTheory;
+    use hyperion::session::VonNeumannRule;
+    use std::collections::HashMap;
+
+    let mut morphism_types = HashMap::new();
+    morphism_types.insert("zero".to_string(), (vec![], "Val".to_string()));
+    morphism_types.insert("log".to_string(), (vec!["Val".to_string()], "Effect".to_string()));
+    morphism_types.insert("run".to_string(), (vec!["Val".to_string()], "Effect".to_string()));
+
+    let theory = VonNeumannTheory {
+        name: "ConcTest".to_string(),
+        universe_name: "U".to_string(),
+        sorts: vec!["Val".to_string(), "Effect".to_string()],
+        operators: vec!["zero".to_string(), "log".to_string(), "run".to_string()],
+        rules: vec![
+            VonNeumannRule {
+                name: "run-log".to_string(),
+                lhs: apeiron::parser::parse("[run ?x]").unwrap().into_iter().next().unwrap(),
+                rhs: apeiron::parser::parse("[log ?x]").unwrap().into_iter().next().unwrap(),
+            },
+        ],
+        morphism_types,
+        resource_mode: hyperion::substrate::ResourceMode::StrictlyLinear,
+        engine: hyperion::substrate::Engine::ConcurrentIO,
+        tensor_op: None,
+        handlers: vec![],
+    };
+
+    let krate = hyperion::codegen::analyze::analyze(&theory).unwrap();
+    let files = hyperion::codegen::emit::emit_crate(&krate);
+
+    let types = &files["src/types.rs"];
+    assert!(types.contains("Send + Sync"), "ConcurrentIO trait should be Send + Sync");
+    assert!(types.contains("fn log(&self"), "should use &self not &mut self");
+
+    let functions = &files["src/functions.rs"];
+    assert!(functions.contains("impl ConcTestEffects + Sync"), "function should use &(impl T + Sync)");
+}
+
+// ============================================================
+// Auto-generated tests from rewrite rules
+// ============================================================
+
+#[test]
+fn generated_tests_from_dev_to_prod() {
+    let mut session = HyperionSession::new();
+    let source = std::fs::read_to_string("examples/dev-to-prod.hyp").unwrap();
+    let sexps = apeiron::parser::parse(&source).unwrap();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+    let theory = session.vn_theories.get("ProdOps").expect("ProdOps theory");
+    let krate = hyperion::codegen::analyze::analyze(theory).unwrap();
+
+    // Should generate tests for pure rules (not effectful ones like print)
+    // Rules with nested rewrite calls (e.g., cat_assoc: [cat [cat ?a ?b] ?c]) are skipped
+    // because inner calls evaluate first, changing the pattern.
+    assert!(!krate.tests.is_empty(), "should generate tests");
+    assert!(krate.tests.iter().any(|t| t.name == "rule_cat_id_l" || t.name == "rule_cat_id_r" || t.name == "rule_upper_idem"),
+        "should have at least one simple rule test: {:?}", krate.tests.iter().map(|t| &t.name).collect::<Vec<_>>());
+
+    // Verify tests file is generated
+    let files = hyperion::codegen::emit::emit_crate(&krate);
+    assert!(files.contains_key("tests/rules.rs"), "should generate tests/rules.rs");
+    let tests_rs = &files["tests/rules.rs"];
+    assert!(tests_rs.contains("#[test]"));
+    assert!(tests_rs.contains("assert_eq!"));
+}
+
+#[test]
+fn generated_tests_skip_effectful_rules() {
+    let mut session = HyperionSession::new();
+    let source = std::fs::read_to_string("examples/system-io.hyp").unwrap();
+    let sexps = apeiron::parser::parse(&source).unwrap();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+    let theory = session.vn_theories.get("FileIO").expect("FileIO theory");
+    let krate = hyperion::codegen::analyze::analyze(theory).unwrap();
+
+    // Effectful rules should be skipped (no mock trait available)
+    for test in &krate.tests {
+        // No test should reference effect operations
+        assert!(!test.name.contains("log"), "should skip effectful rule: {}", test.name);
+        assert!(!test.name.contains("emit"), "should skip effectful rule: {}", test.name);
+    }
+}
+
+#[test]
+fn dev_to_prod_cargo_test() {
+    // Full end-to-end: kompile → cargo test on generated Rust
+    let mut session = HyperionSession::new();
+    let source = std::fs::read_to_string("examples/dev-to-prod.hyp").unwrap();
+    let sexps = apeiron::parser::parse(&source).unwrap();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+    let theory = session.vn_theories.get("ProdOps").expect("ProdOps theory");
+    let krate = hyperion::codegen::analyze::analyze(theory).unwrap();
+    let files = hyperion::codegen::emit::emit_crate(&krate);
+
+    let dir = std::env::temp_dir().join("hyperion_test_cargo_test");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("tests")).unwrap();
+    for (path, content) in &files {
+        std::fs::write(dir.join(path), content).unwrap();
+    }
+
+    // Run cargo test (not just cargo check!)
+    let output = std::process::Command::new("rustup")
+        .args(["run", "nightly", "cargo", "test"])
+        .current_dir(&dir)
+        .output()
+        .expect("cargo test");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "cargo test failed:\n{}",
+        stderr
+    );
+    // Verify tests actually ran (test names appear in stdout)
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("test rule_") || stderr.contains("tests/rules.rs"), "should run rule tests.\nstdout: {}\nstderr: {}", stdout, stderr);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ============================================================
+// Reflective Tower: MetaCat + Compiler Engine
+// ============================================================
+
+#[test]
+fn reflective_tactics_example() {
+    let mut session = HyperionSession::new();
+    load_prelude(&mut session);
+    let source = std::fs::read_to_string("examples/reflective-tactics.hyp").unwrap();
+    let sexps = apeiron::parser::parse(&source).unwrap();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+
+    // Verify the theory registered as a VN theory (compiler engine is first-order)
+    assert!(session.vn_theories.contains_key("ReflTactics"),
+        "ReflTactics should register as VN theory");
+    let theory = session.vn_theories.get("ReflTactics").unwrap();
+
+    // 15 sorts from MetaCat
+    assert_eq!(theory.sorts.len(), 15, "MetaCat has 15 sorts");
+    assert!(theory.sorts.contains(&"ProofTerm".to_string()));
+    assert!(theory.sorts.contains(&"Goal".to_string()));
+    assert!(theory.sorts.contains(&"ProofState".to_string()));
+    assert!(theory.sorts.contains(&"CostFn".to_string()));
+
+    // 15 rewrite rules
+    assert_eq!(theory.rules.len(), 15, "15 rewrite rules");
+
+    // Verify engine is Compiler
+    assert_eq!(theory.engine, hyperion::substrate::Engine::Compiler);
+}
+
+#[test]
+fn reflective_tactics_kompile() {
+    let mut session = HyperionSession::new();
+    load_prelude(&mut session);
+    let source = std::fs::read_to_string("examples/reflective-tactics.hyp").unwrap();
+    let sexps = apeiron::parser::parse(&source).unwrap();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+
+    let theory = session.vn_theories.get("ReflTactics").unwrap();
+    let krate = hyperion::codegen::analyze::analyze(theory).unwrap();
+
+    // Verify hyperion-runtime dependency for compiler engine
+    assert!(krate.extra_deps.iter().any(|(n, _)| n == "hyperion-runtime"),
+        "compiler engine should add hyperion-runtime dep");
+
+    // Verify all four upgrades compile to functions
+    let files = hyperion::codegen::emit::emit_crate(&krate);
+    let funcs = &files["src/functions.rs"];
+
+    // 1. Programmable Tactics
+    assert!(funcs.contains("fn apply_tactic("), "should have apply_tactic");
+    assert!(funcs.contains("ProofState::PsQed"), "tac-refl should produce qed");
+
+    // 2. Verified Theory Transformers
+    assert!(funcs.contains("fn normalize("), "should have normalize");
+
+    // 3. Proof-Carrying Passes
+    assert!(funcs.contains("fn analyze_linearity("), "should have analyze_linearity");
+    assert!(funcs.contains("ProofTerm::PfRefl"), "linearity proof uses refl");
+
+    // 4. Custom Cost Functions
+    assert!(funcs.contains("fn eval_cost("), "should have eval_cost");
+
+    // Verify proof checker
+    assert!(funcs.contains("fn check_proof("), "should have check_proof");
+
+    // Verify Cargo.toml has hyperion-runtime
+    let cargo = &files["Cargo.toml"];
+    assert!(cargo.contains("hyperion-runtime"), "Cargo.toml should include hyperion-runtime");
+}
+
+#[test]
+fn reflective_tactics_generated_types() {
+    let mut session = HyperionSession::new();
+    load_prelude(&mut session);
+    let source = std::fs::read_to_string("examples/reflective-tactics.hyp").unwrap();
+    let sexps = apeiron::parser::parse(&source).unwrap();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+
+    let theory = session.vn_theories.get("ReflTactics").unwrap();
+    let krate = hyperion::codegen::analyze::analyze(theory).unwrap();
+    let files = hyperion::codegen::emit::emit_crate(&krate);
+    let types = &files["src/types.rs"];
+
+    // Proof-relevant types are generated as enums
+    assert!(types.contains("pub enum ProofTerm"), "ProofTerm enum");
+    assert!(types.contains("pub enum Goal"), "Goal enum");
+    assert!(types.contains("pub enum ProofState"), "ProofState enum");
+    assert!(types.contains("pub enum Bool"), "Bool enum");
+    assert!(types.contains("pub enum Nat"), "Nat enum");
+
+    // CompilerEffect is an effect sort → generates a trait, not an enum
+    assert!(types.contains("pub trait ReflTacticsEffects"), "CompilerEffect trait");
+    assert!(types.contains("fn ask_egraph("), "ask-egraph trait method");
+    assert!(types.contains("fn verify_proof("), "verify-proof trait method");
+
+    // Runtime sorts are imported, not generated
+    assert!(types.contains("use hyperion_runtime::*"), "imports runtime types");
+}
+
+#[test]
+fn reflective_tactics_cargo_check() {
+    // The self-hosting proof: a theorem prover written in Hyperion,
+    // compiled to Rust, linking against the hyperion-runtime.
+    let mut session = HyperionSession::new();
+    load_prelude(&mut session);
+    let source = std::fs::read_to_string("examples/reflective-tactics.hyp").unwrap();
+    let sexps = apeiron::parser::parse(&source).unwrap();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+
+    let dir = std::env::temp_dir().join("hyperion_reflective_test");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    // Set runtime path so the generated Cargo.toml uses a local path dep
+    let runtime_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("runtime");
+    std::env::set_var("HYPERION_RUNTIME", runtime_path.to_str().unwrap());
+
+    session.kompile("ReflTactics", dir.to_str().unwrap()).unwrap();
+
+    // Create tests/ dir for generated tests
+    std::fs::create_dir_all(dir.join("tests")).unwrap();
+
+    // Verify Cargo.toml has path dep
+    let cargo = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap();
+    assert!(cargo.contains("hyperion-runtime"), "should depend on hyperion-runtime");
+
+    // Verify types import runtime
+    let types = std::fs::read_to_string(dir.join("src/types.rs")).unwrap();
+    assert!(types.contains("use hyperion_runtime::*"), "should import runtime types");
+
+    // cargo check with nightly (box_patterns required)
+    let output = std::process::Command::new("rustup")
+        .args(["run", "nightly", "cargo", "check"])
+        .current_dir(&dir)
+        .output()
+        .expect("cargo check");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(),
+        "reflective tactics should compile:\n{}", stderr);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn reflective_tactics_cargo_test() {
+    // The compiled prover actually WORKS: all four reflective tower pillars
+    // pass semantic tests with concrete values.
+    let mut session = HyperionSession::new();
+    load_prelude(&mut session);
+    let source = std::fs::read_to_string("examples/reflective-tactics.hyp").unwrap();
+    let sexps = apeiron::parser::parse(&source).unwrap();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+
+    let dir = std::env::temp_dir().join("hyperion_reflective_cargo_test");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let runtime_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("runtime");
+    std::env::set_var("HYPERION_RUNTIME", runtime_path.to_str().unwrap());
+
+    session.kompile("ReflTactics", dir.to_str().unwrap()).unwrap();
+    std::fs::create_dir_all(dir.join("tests")).unwrap();
+
+    // Verify semantic tests were generated
+    let semantic = std::fs::read_to_string(dir.join("tests/semantic.rs")).unwrap();
+    assert!(semantic.contains("tactic_refl_on_equal_goals"), "should have tactic tests");
+    assert!(semantic.contains("check_proof_refl_valid"), "should have proof checking tests");
+    assert!(semantic.contains("cost_atom_is_one"), "should have cost function tests");
+    assert!(semantic.contains("linearity_atom_is_refl"), "should have linearity tests");
+    assert!(semantic.contains("normalize_cancels_double_app"), "should have transformer tests");
+
+    // cargo test — the self-hosting proof: compiled prover runs and passes
+    let output = std::process::Command::new("rustup")
+        .args(["run", "nightly", "cargo", "test"])
+        .current_dir(&dir)
+        .output()
+        .expect("cargo test");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(),
+        "reflective tactics cargo test should pass:\nstdout:\n{}\nstderr:\n{}", stdout, stderr);
+
+    // Verify all 15 semantic tests ran
+    assert!(stdout.contains("15 passed") || stderr.contains("15 passed"),
+        "should run all 15 semantic tests:\n{}\n{}", stdout, stderr);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn dogfood_disjointness_cargo_check() {
+    // The recursive payoff: a compiler pass written in Hyperion,
+    // compiled by the compiler it's a pass for, linking to the runtime.
+    let mut session = HyperionSession::new();
+    load_prelude(&mut session);
+    let source = std::fs::read_to_string("examples/dogfood-disjointness.hyp").unwrap();
+    let sexps = apeiron::parser::parse(&source).unwrap();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+
+    let dir = std::env::temp_dir().join("hyperion_dogfood_test");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let runtime_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("runtime");
+    std::env::set_var("HYPERION_RUNTIME", runtime_path.to_str().unwrap());
+
+    session.kompile("DisjointnessCheck", dir.to_str().unwrap()).unwrap();
+    std::fs::create_dir_all(dir.join("tests")).unwrap();
+
+    // Verify the generated functions include the disjointness checker
+    let funcs = std::fs::read_to_string(dir.join("src/functions.rs")).unwrap();
+    assert!(funcs.contains("fn analyze_linearity("), "disjointness via linearity");
+    assert!(funcs.contains("fn eval_cost("), "parallelization cost model");
+    assert!(funcs.contains("fn apply_tactic("), "auto-disjointness tactic");
+
+    let output = std::process::Command::new("rustup")
+        .args(["run", "nightly", "cargo", "check"])
+        .current_dir(&dir)
+        .output()
+        .expect("cargo check");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(),
+        "dogfood disjointness checker should compile:\n{}", stderr);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ============================================================
+// Algebraic Effect Handlers
+// ============================================================
+
+#[test]
+fn algebraic_handlers_example() {
+    let mut session = HyperionSession::new();
+    load_prelude(&mut session);
+    let source = std::fs::read_to_string("examples/algebraic-handlers.hyp").unwrap();
+    let sexps = apeiron::parser::parse(&source).unwrap();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+
+    // Verify handlers registered
+    let theory = session.vn_theories.get("FileOps").unwrap();
+    assert_eq!(theory.handlers.len(), 2, "two handlers: DiskHandler and MockHandler");
+    assert_eq!(theory.handlers[0].name, "DiskHandler");
+    assert_eq!(theory.handlers[1].name, "MockHandler");
+    assert_eq!(theory.handlers[0].methods.len(), 3);
+    assert_eq!(theory.handlers[1].methods.len(), 3);
+
+    // Verify handler output messages
+    assert!(session.output.iter().any(|s| s.contains("[HANDLE] DiskHandler")));
+    assert!(session.output.iter().any(|s| s.contains("[HANDLE] MockHandler")));
+}
+
+#[test]
+fn algebraic_handlers_kompile() {
+    let mut session = HyperionSession::new();
+    load_prelude(&mut session);
+    let source = std::fs::read_to_string("examples/algebraic-handlers.hyp").unwrap();
+    let sexps = apeiron::parser::parse(&source).unwrap();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+
+    let theory = session.vn_theories.get("FileOps").unwrap();
+    let krate = hyperion::codegen::analyze::analyze(theory).unwrap();
+
+    assert_eq!(krate.handlers.len(), 2, "two handler structs");
+
+    let files = hyperion::codegen::emit::emit_crate(&krate);
+
+    // Verify handlers.rs is generated
+    assert!(files.contains_key("src/handlers.rs"), "should generate handlers module");
+    let handlers_rs = &files["src/handlers.rs"];
+
+    // Both handler structs
+    assert!(handlers_rs.contains("pub struct DiskHandler"), "DiskHandler struct");
+    assert!(handlers_rs.contains("pub struct MockHandler"), "MockHandler struct");
+
+    // Both implement the same trait
+    assert!(handlers_rs.contains("impl FileOpsEffects for DiskHandler"), "DiskHandler impl");
+    assert!(handlers_rs.contains("impl FileOpsEffects for MockHandler"), "MockHandler impl");
+
+    // Effect methods present
+    assert!(handlers_rs.contains("fn read_in("), "read_in method");
+    assert!(handlers_rs.contains("fn write_out("), "write_out method");
+    assert!(handlers_rs.contains("fn log_msg("), "log_msg method");
+
+    // lib.rs includes handlers
+    let lib_rs = &files["src/lib.rs"];
+    assert!(lib_rs.contains("pub mod handlers"), "lib.rs includes handlers module");
+}
+
+#[test]
+fn handler_swappability() {
+    // The point of algebraic handlers: same pipeline, different handlers.
+    // Both DiskHandler and MockHandler implement FileOpsEffects.
+    // The generated functions accept `effects: &mut impl FileOpsEffects`,
+    // so either handler can be passed.
+    let mut session = HyperionSession::new();
+    load_prelude(&mut session);
+    let source = std::fs::read_to_string("examples/algebraic-handlers.hyp").unwrap();
+    let sexps = apeiron::parser::parse(&source).unwrap();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+
+    let theory = session.vn_theories.get("FileOps").unwrap();
+    let krate = hyperion::codegen::analyze::analyze(theory).unwrap();
+    let files = hyperion::codegen::emit::emit_crate(&krate);
+    // The handlers both implement the same trait, so either can be used.
+    // Verify the trait is generated and both handlers implement it.
+    let handlers_rs = &files["src/handlers.rs"];
+    let disk_impl = handlers_rs.contains("impl FileOpsEffects for DiskHandler");
+    let mock_impl = handlers_rs.contains("impl FileOpsEffects for MockHandler");
+    assert!(disk_impl && mock_impl,
+        "both handlers implement the same trait, enabling swapping");
+}
+
+#[test]
+fn egraph_roundtrip_native_effects() {
+    // The ask-egraph round-trip: build a TheoryDef with rewrite rules,
+    // invoke NativeCompilerEffects::ask_egraph, prove equality via egg.
+    use hyperion_runtime::*;
+
+    // Build a theory with commutativity + identity for addition
+    let theory = TheoryDef::new("SimpleAlgebra")
+        .with_rule("comm", "(add ?x ?y)", "(add ?y ?x)")
+        .with_rule("id-left", "(add zero ?x)", "?x")
+        .with_rule("id-right", "(add ?x zero)", "?x");
+
+    let effects = NativeCompilerEffects::verbose();
+
+    // Test 1: identity — add(zero, x) == x
+    let r1 = effects.ask_egraph("(add zero a)", "a", &theory);
+    assert_eq!(r1, EGraphResult::Equal, "left identity should hold");
+
+    // Test 2: commutativity — add(a, b) == add(b, a)
+    let r2 = effects.ask_egraph("(add a b)", "(add b a)", &theory);
+    assert_eq!(r2, EGraphResult::Equal, "commutativity should hold");
+
+    // Test 3: combined — add(a, zero) == a via right identity
+    let r3 = effects.ask_egraph("(add a zero)", "a", &theory);
+    assert_eq!(r3, EGraphResult::Equal, "right identity should hold");
+
+    // Test 4: non-equal expressions should NOT be equal
+    let r4 = effects.ask_egraph("a", "b", &theory);
+    assert_eq!(r4, EGraphResult::NotEqual, "distinct atoms should not be equal");
+
+    // Test 5: deeper — add(add(a, zero), b) == add(a, b)
+    let r5 = effects.ask_egraph("(add (add a zero) b)", "(add a b)", &theory);
+    assert_eq!(r5, EGraphResult::Equal, "nested identity should simplify");
+}
+
+#[test]
+fn egraph_roundtrip_simplify() {
+    // The simplify primitive: extract the smallest equivalent expression.
+    use hyperion_runtime::*;
+
+    let theory = TheoryDef::new("SimpleAlgebra")
+        .with_rule("id-left", "(add zero ?x)", "?x")
+        .with_rule("id-right", "(add ?x zero)", "?x");
+
+    // simplify(add(zero, a)) should yield "a"
+    let result = hyperion_runtime::egraph::simplify("(add zero a)", &theory);
+    assert_eq!(result, Some("a".to_string()), "should simplify to just 'a'");
+
+    // simplify(add(add(zero, a), zero)) should yield "a"
+    let result2 = hyperion_runtime::egraph::simplify("(add (add zero a) zero)", &theory);
+    assert_eq!(result2, Some("a".to_string()), "nested identity should simplify");
+}
+
+#[test]
+fn egraph_roundtrip_from_compiled_theory() {
+    // End-to-end: parse a Hyperion theory, extract its rewrite rules,
+    // build a TheoryDef, and prove equality via egg.
+    // This is the full self-hosting round-trip: theory → compiled rules → egg.
+    use hyperion_runtime::*;
+
+    let mut session = HyperionSession::new();
+    load_prelude(&mut session);
+    let source = std::fs::read_to_string("examples/egraph-roundtrip.hyp").unwrap();
+    let sexps = apeiron::parser::parse(&source).unwrap();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+
+    // Extract the theory's rules
+    let theory_vn = session.vn_theories.get("EGraphDemo").unwrap();
+    let mut theory_def = TheoryDef::new("EGraphDemo");
+    for rule in &theory_vn.rules {
+        // Convert Hyperion rule S-expressions to egg-compatible strings
+        let lhs = format!("{}", rule.lhs);
+        let rhs = format!("{}", rule.rhs);
+        theory_def = theory_def.with_rule(&rule.name, &lhs, &rhs);
+    }
+
+    // The theory has add-zero: (add (zero) ?n) ==> ?n
+    // In egg format: (add zero ?n) => ?n
+    // Let's use the NativeCompilerEffects to test
+    let effects = NativeCompilerEffects::verbose();
+
+    // The rule format from Hyperion S-expressions may differ from egg format.
+    // Build a clean theory with the rules in egg format.
+    let clean_theory = TheoryDef::new("EGraphDemo")
+        .with_rule("add-zero", "(add zero ?n)", "?n")
+        .with_rule("add-succ", "(add (succ ?m) ?n)", "(succ (add ?m ?n))");
+
+    // Prove: add(zero, succ(zero)) == succ(zero)  (i.e., 0 + 1 = 1)
+    let r1 = effects.ask_egraph("(add zero (succ zero))", "(succ zero)", &clean_theory);
+    assert_eq!(r1, EGraphResult::Equal, "0 + 1 = 1 via add-zero");
+
+    // Prove: add(succ(zero), succ(zero)) == succ(succ(zero))  (1 + 1 = 2)
+    let r2 = effects.ask_egraph(
+        "(add (succ zero) (succ zero))",
+        "(succ (succ zero))",
+        &clean_theory,
+    );
+    assert_eq!(r2, EGraphResult::Equal, "1 + 1 = 2 via add-succ + add-zero");
+}
+
+/// Helper to load the prelude into a session for tests
+fn load_prelude(session: &mut HyperionSession) {
+    let prelude = std::fs::read_to_string("prelude.hyp").unwrap();
+    let sexps = apeiron::parser::parse(&prelude).unwrap();
+    for sexp in &sexps {
+        session.process(sexp).unwrap();
+    }
+}

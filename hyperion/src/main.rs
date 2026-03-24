@@ -187,7 +187,10 @@ fn cmd_kompile(args: &[String]) {
         process::exit(1);
     });
 
-    let mut session = hyperion::session::HyperionSession::new();
+    let mut session = match hyperion::session::HyperionSession::with_prelude() {
+        Ok(s) => s,
+        Err(_) => hyperion::session::HyperionSession::new(),
+    };
 
     for sexp in &sexps {
         match session.process(sexp) {

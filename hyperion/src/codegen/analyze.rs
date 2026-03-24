@@ -6,25 +6,67 @@ use apeiron::parser::Sexp;
 use super::rust_ast::*;
 use crate::error::{HyperionError, Result};
 use crate::session::VonNeumannTheory;
-use crate::substrate::ResourceMode;
+use crate::substrate::{Engine, ResourceMode};
 
 /// Sorts that are handled specially and should not generate enums.
 const SKIP_SORTS: &[&str] = &["Effect", "Prop", "String", "Unit"];
+
+/// Find the hyperion-runtime crate path. Checks:
+/// 1. HYPERION_RUNTIME env var
+/// 2. runtime/ directory next to the binary
+/// 3. Falls back to version "0.1"
+fn find_runtime_path() -> String {
+    // 1. Env var
+    if let Ok(path) = std::env::var("HYPERION_RUNTIME") {
+        if std::path::Path::new(&path).exists() {
+            return path;
+        }
+    }
+
+    // 2. Next to binary
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            // Check ../../runtime (binary is in target/debug/)
+            let runtime = dir.join("../../runtime");
+            if runtime.join("Cargo.toml").exists() {
+                return runtime.canonicalize()
+                    .unwrap_or(runtime)
+                    .to_string_lossy()
+                    .into_owned();
+            }
+        }
+    }
+
+    // 3. Fallback to version
+    "0.1".to_string()
+}
+
+/// Sorts provided by the `hyperion-runtime` crate. When the theory uses
+/// the Compiler engine, these sorts are imported rather than generated.
+const RUNTIME_SORTS: &[&str] = &[
+    "TheoryDef", "Sort", "CostFn", "UniDef", "CatDef", "SubDef", "PassDef", "RuleDef",
+];
 
 /// Analyze a VN theory and produce a RustCrate.
 pub fn analyze(theory: &VonNeumannTheory) -> Result<RustCrate> {
     let crate_name = to_snake_case(&theory.name);
 
-    // Detect Effect sort and its constructors
-    let has_effect_sort = theory.sorts.contains(&"Effect".to_string());
+    // Detect whether this is a compiler-engine theory (uses hyperion-runtime)
+    let is_compiler_engine = matches!(theory.engine, Engine::Compiler);
 
-    // Collect effect constructors: operators whose codomain is Effect
+    // Detect Effect sort and its constructors.
+    // For compiler-engine theories, CompilerEffect is also an effect sort.
+    let has_effect_sort = theory.sorts.contains(&"Effect".to_string());
+    let has_compiler_effect = is_compiler_engine && theory.sorts.contains(&"CompilerEffect".to_string());
+
+    // Collect effect constructors: operators whose codomain is an effect sort
     let mut effect_ops: HashSet<String> = HashSet::new();
-    if has_effect_sort {
-        for (op_name, (_, codomain)) in &theory.morphism_types {
-            if codomain == "Effect" {
-                effect_ops.insert(op_name.clone());
-            }
+    for (op_name, (_, codomain)) in &theory.morphism_types {
+        if codomain == "Effect" && has_effect_sort {
+            effect_ops.insert(op_name.clone());
+        }
+        if codomain == "CompilerEffect" && has_compiler_effect {
+            effect_ops.insert(op_name.clone());
         }
     }
 
@@ -41,6 +83,21 @@ pub fn analyze(theory: &VonNeumannTheory) -> Result<RustCrate> {
         vec![]
     };
 
+    // Detect parallel tensor mode: concurrent engine + strictly-linear + tensor op
+    let is_concurrent_engine = matches!(theory.engine, Engine::ConcurrentGraph | Engine::ConcurrentIO);
+    let parallel_tensor = if is_concurrent_engine
+        && theory.resource_mode == ResourceMode::StrictlyLinear
+        && theory.tensor_op.is_some()
+    {
+        theory.tensor_op.clone()
+    } else {
+        None
+    };
+    let mut has_parallel = false;
+
+    // ConcurrentIO: effect traits use &self + Send + Sync for thread-safe parallel I/O
+    let is_concurrent_io = theory.engine == Engine::ConcurrentIO;
+
     // Step 1: Detect rewrite heads — these become functions, not enum variants
     let mut rewrite_heads: HashSet<String> = HashSet::new();
     for rule in &theory.rules {
@@ -53,9 +110,20 @@ pub fn analyze(theory: &VonNeumannTheory) -> Result<RustCrate> {
     let recursive_sorts = find_recursive_sorts(&theory.morphism_types);
 
     // Step 3: Group operators by codomain → each sort becomes an enum
+    // Build the set of sorts to skip for enum generation
+    let mut skip_sorts: HashSet<&str> = SKIP_SORTS.iter().copied().collect();
+    if is_compiler_engine {
+        // Runtime sorts are imported from hyperion-runtime, not generated
+        for s in RUNTIME_SORTS {
+            skip_sorts.insert(s);
+        }
+        // CompilerEffect is an effect sort — generates a trait, not an enum
+        skip_sorts.insert("CompilerEffect");
+    }
+
     let mut sort_variants: HashMap<String, Vec<(String, Vec<String>)>> = HashMap::new();
     for sort in &theory.sorts {
-        if !SKIP_SORTS.contains(&sort.as_str()) && !(has_tuple_sort && sort == "Tuple") {
+        if !skip_sorts.contains(sort.as_str()) && !(has_tuple_sort && sort == "Tuple") {
             sort_variants.entry(sort.clone()).or_default();
         }
     }
@@ -64,7 +132,7 @@ pub fn analyze(theory: &VonNeumannTheory) -> Result<RustCrate> {
         if effect_ops.contains(op_name) {
             continue; // effect methods are trait methods, not variants
         }
-        if SKIP_SORTS.contains(&codomain.as_str()) {
+        if skip_sorts.contains(codomain.as_str()) {
             continue;
         }
         // For Tuple constructors, skip — they'll be handled as native tuples
@@ -117,13 +185,14 @@ pub fn analyze(theory: &VonNeumannTheory) -> Result<RustCrate> {
     }
 
     // Step 5: Build trait from Effect sort (if present)
-    let trait_name = if has_effect_sort {
+    // For compiler-engine theories, CompilerEffect also generates a trait.
+    let trait_name = if has_effect_sort || has_compiler_effect {
         Some(format!("{}Effects", to_pascal_case(&theory.name)))
     } else {
         None
     };
 
-    if has_effect_sort {
+    if has_effect_sort || has_compiler_effect {
         let mut methods = Vec::new();
         for op_name in &effect_ops {
             if let Some((domain, _)) = theory.morphism_types.get(op_name) {
@@ -146,6 +215,7 @@ pub fn analyze(theory: &VonNeumannTheory) -> Result<RustCrate> {
         type_items.push(RustItem::Trait(RustTrait {
             name: trait_name.clone().unwrap(),
             methods,
+            is_concurrent: is_concurrent_io,
         }));
     }
 
@@ -161,6 +231,9 @@ pub fn analyze(theory: &VonNeumannTheory) -> Result<RustCrate> {
     let mut opaque_sorts: HashSet<String> = HashSet::new();
     opaque_sorts.insert("Effect".to_string());
     opaque_sorts.insert("Unit".to_string());
+    if has_compiler_effect {
+        opaque_sorts.insert("CompilerEffect".to_string());
+    }
 
     for rule in &theory.rules {
         validate_lhs_physics(&rule.lhs, &rule.name, &theory.morphism_types, &opaque_sorts, true)?;
@@ -279,6 +352,8 @@ pub fn analyze(theory: &VonNeumannTheory) -> Result<RustCrate> {
                 &rhs_meta_counts,
                 &mut rhs_meta_used,
                 has_tuple_sort,
+                &parallel_tensor,
+                &mut has_parallel,
             );
 
             // Build the scrutinee pattern
@@ -359,26 +434,41 @@ pub fn analyze(theory: &VonNeumannTheory) -> Result<RustCrate> {
             ret: if is_effectful { RustType::Unit } else { ret_type },
             body,
             effects_trait: if is_effectful { trait_name.clone() } else { None },
+            effects_concurrent: is_effectful && is_concurrent_io,
         }));
     }
 
     // Build modules
     let mut modules = Vec::new();
 
+    // For compiler-engine theories, types module imports runtime sorts
+    let runtime_use = if is_compiler_engine {
+        Some("hyperion_runtime::*".to_string())
+    } else {
+        None
+    };
+
     if !type_items.is_empty() {
+        let mut uses = vec![];
+        if let Some(ref ru) = runtime_use {
+            uses.push(ru.clone());
+        }
         modules.push(RustModule {
             name: "types".into(),
             items: type_items,
-            uses: vec![],
+            uses,
         });
     }
 
     if !func_items.is_empty() {
-        let uses = if modules.iter().any(|m| m.name == "types") {
+        let mut uses = if modules.iter().any(|m| m.name == "types") {
             vec!["super::types::*".into()]
         } else {
             vec![]
         };
+        if let Some(ref ru) = runtime_use {
+            uses.push(ru.clone());
+        }
         modules.push(RustModule {
             name: "functions".into(),
             items: func_items,
@@ -386,18 +476,58 @@ pub fn analyze(theory: &VonNeumannTheory) -> Result<RustCrate> {
         });
     }
 
-    // Generate runtime harness for SystemIO engine
-    let runtime_trait = if theory.engine == crate::substrate::Engine::SystemIO {
+    // Generate runtime harness for SystemIO / ConcurrentIO engines
+    let runtime_trait = if matches!(theory.engine, Engine::SystemIO | Engine::ConcurrentIO) {
         trait_name.clone()
     } else {
         None
     };
+
+    // Step 7: Generate tests from rewrite rules.
+    // For each non-effectful rule, pick nullary witness values for meta-variables,
+    // substitute into LHS (as function call) and RHS (as expected value),
+    // and generate assert_eq! tests.
+    let tests = generate_tests(
+        &theory.rules,
+        &theory.morphism_types,
+        &recursive_sorts,
+        &rewrite_heads,
+        &effect_ops,
+        has_tuple_sort,
+        &parallel_tensor,
+    );
+
+    // Compiler-engine theories depend on hyperion-runtime for reflective tower.
+    // Try to find the runtime crate locally (next to binary or via env var),
+    // falling back to a version-based dependency.
+    let mut extra_deps = Vec::new();
+    if is_compiler_engine {
+        let runtime_path = find_runtime_path();
+        extra_deps.push(("hyperion-runtime".to_string(), runtime_path));
+    }
+
+    // Generate handler structs from algebraic effect handlers
+    let handlers = generate_handlers(
+        &theory.handlers,
+        &theory.morphism_types,
+        &recursive_sorts,
+        &rewrite_heads,
+        &effect_ops,
+        has_tuple_sort,
+        &parallel_tensor,
+        is_concurrent_io,
+        &trait_name,
+    );
 
     Ok(RustCrate {
         name: crate_name,
         modules,
         has_box_patterns,
         runtime_trait,
+        has_parallel,
+        tests,
+        extra_deps,
+        handlers,
     })
 }
 
@@ -547,6 +677,8 @@ fn sexp_to_expr(
     rhs_meta_counts: &HashMap<String, usize>,
     rhs_meta_used: &mut HashMap<String, usize>,
     has_tuple_sort: bool,
+    parallel_tensor: &Option<String>,
+    has_parallel: &mut bool,
 ) -> RustExpr {
     match sexp {
         Sexp::Atom(name, _) => {
@@ -559,8 +691,8 @@ fn sexp_to_expr(
                 } else {
                     RustExpr::Var(meta.to_string())
                 }
-            } else if name == "unit" || name == "done" {
-                // Unit value
+            } else if (name == "unit" || name == "done") && !morphism_types.contains_key(name.as_str()) {
+                // Unit value (only if not a known morphism — otherwise it's a constructor)
                 RustExpr::TupleExpr(vec![])
             } else {
                 // Nullary constructor — need to figure out which enum
@@ -584,7 +716,7 @@ fn sexp_to_expr(
                 let args: Vec<RustExpr> = items[1..]
                     .iter()
                     .map(|arg| {
-                        sexp_to_expr(arg, morphism_types, recursive_sorts, rewrite_heads, effect_ops, rhs_meta_counts, rhs_meta_used, has_tuple_sort)
+                        sexp_to_expr(arg, morphism_types, recursive_sorts, rewrite_heads, effect_ops, rhs_meta_counts, rhs_meta_used, has_tuple_sort, parallel_tensor, has_parallel)
                     })
                     .collect();
                 return RustExpr::EffectCall {
@@ -598,38 +730,47 @@ fn sexp_to_expr(
                 let elems: Vec<RustExpr> = items[1..]
                     .iter()
                     .map(|arg| {
-                        sexp_to_expr(arg, morphism_types, recursive_sorts, rewrite_heads, effect_ops, rhs_meta_counts, rhs_meta_used, has_tuple_sort)
+                        sexp_to_expr(arg, morphism_types, recursive_sorts, rewrite_heads, effect_ops, rhs_meta_counts, rhs_meta_used, has_tuple_sort, parallel_tensor, has_parallel)
                     })
                     .collect();
                 return RustExpr::TupleExpr(elems);
             }
 
-            let args: Vec<RustExpr> = items[1..]
-                .iter()
-                .enumerate()
-                .map(|(i, arg)| {
-                    let child_sort = morphism_types
-                        .get(head)
-                        .and_then(|(d, _)| d.get(i))
-                        .map(|s| s.as_str())
-                        .unwrap_or("");
-                    let inner = sexp_to_expr(
-                        arg,
-                        morphism_types,
-                        recursive_sorts,
-                        rewrite_heads,
-                        effect_ops,
-                        rhs_meta_counts,
-                        rhs_meta_used,
-                        has_tuple_sort,
-                    );
-                    if recursive_sorts.contains(child_sort) {
-                        RustExpr::BoxNew(Box::new(inner))
-                    } else {
-                        inner
+            // Parallel tensor: [tensor A B] → rayon::join(|| A, || B)
+            // Only when proof-carrying parallel pass is active AND branches have disjoint variables.
+            if let Some(ref tensor_name) = parallel_tensor {
+                if head == tensor_name && items.len() == 3 {
+                    let left_vars = collect_free_vars(&items[1]);
+                    let right_vars = collect_free_vars(&items[2]);
+                    let disjoint = left_vars.is_disjoint(&right_vars);
+                    // Depth heuristic: skip rayon::join for trivially shallow expressions
+                    let left_depth = sexp_depth(&items[1]);
+                    let right_depth = sexp_depth(&items[2]);
+                    if disjoint && (left_depth >= 1 || right_depth >= 1) {
+                        let left = sexp_to_expr(&items[1], morphism_types, recursive_sorts, rewrite_heads, effect_ops, rhs_meta_counts, rhs_meta_used, has_tuple_sort, parallel_tensor, has_parallel);
+                        let right = sexp_to_expr(&items[2], morphism_types, recursive_sorts, rewrite_heads, effect_ops, rhs_meta_counts, rhs_meta_used, has_tuple_sort, parallel_tensor, has_parallel);
+                        *has_parallel = true;
+                        // Determine the result type for wrapping
+                        let (result_enum, result_variant, result_boxed) = morphism_types
+                            .get(tensor_name.as_str())
+                            .map(|(_, codomain)| {
+                                let e = to_pascal_case(codomain);
+                                let v = to_pascal_case(tensor_name);
+                                let b = recursive_sorts.contains(codomain);
+                                (e, v, b)
+                            })
+                            .unwrap_or(("Unknown".into(), "Tensor".into(), false));
+                        return RustExpr::Parallel {
+                            left: Box::new(left),
+                            right: Box::new(right),
+                            result_enum,
+                            result_variant,
+                            result_boxed,
+                        };
                     }
-                })
-                .collect();
+                    // Fallback: non-disjoint or trivial → sequential tuple
+                }
+            }
 
             if rewrite_heads.contains(head) {
                 // Function call — args are NOT boxed (function params are the sort type directly)
@@ -645,6 +786,8 @@ fn sexp_to_expr(
                             rhs_meta_counts,
                             rhs_meta_used,
                             has_tuple_sort,
+                            parallel_tensor,
+                            has_parallel,
                         )
                     })
                     .collect();
@@ -653,6 +796,35 @@ fn sexp_to_expr(
                     args: func_args,
                 }
             } else {
+                // Constructor — args may need boxing for recursive sorts
+                let args: Vec<RustExpr> = items[1..]
+                    .iter()
+                    .enumerate()
+                    .map(|(i, arg)| {
+                        let child_sort = morphism_types
+                            .get(head)
+                            .and_then(|(d, _)| d.get(i))
+                            .map(|s| s.as_str())
+                            .unwrap_or("");
+                        let inner = sexp_to_expr(
+                            arg,
+                            morphism_types,
+                            recursive_sorts,
+                            rewrite_heads,
+                            effect_ops,
+                            rhs_meta_counts,
+                            rhs_meta_used,
+                            has_tuple_sort,
+                            parallel_tensor,
+                            has_parallel,
+                        );
+                        if recursive_sorts.contains(child_sort) {
+                            RustExpr::BoxNew(Box::new(inner))
+                        } else {
+                            inner
+                        }
+                    })
+                    .collect();
                 // Constructor
                 let enum_name = morphism_types
                     .get(head)
@@ -870,6 +1042,39 @@ fn collect_meta_sorts(
     }
 }
 
+/// Collect free (meta) variables from an S-expression for disjointness checking.
+fn collect_free_vars(sexp: &Sexp) -> HashSet<String> {
+    let mut vars = HashSet::new();
+    collect_free_vars_inner(sexp, &mut vars);
+    vars
+}
+
+fn collect_free_vars_inner(sexp: &Sexp, vars: &mut HashSet<String>) {
+    match sexp {
+        Sexp::Atom(name, _) => {
+            if let Some(meta) = name.strip_prefix('?') {
+                vars.insert(meta.to_string());
+            }
+        }
+        Sexp::List(items, _) => {
+            for item in items {
+                collect_free_vars_inner(item, vars);
+            }
+        }
+    }
+}
+
+/// Compute the depth of an S-expression AST (for the parallel granularity heuristic).
+/// Depth < 2 means the expression is trivially cheap — not worth spawning a thread.
+fn sexp_depth(sexp: &Sexp) -> usize {
+    match sexp {
+        Sexp::Atom(_, _) => 0,
+        Sexp::List(items, _) => {
+            1 + items.iter().map(sexp_depth).max().unwrap_or(0)
+        }
+    }
+}
+
 /// Validate that linear-sort variables from LHS appear exactly once in RHS.
 fn validate_rhs_linearity(
     lhs: &Sexp,
@@ -927,6 +1132,252 @@ fn validate_rhs_linearity(
     }
 
     Ok(())
+}
+
+/// Generate test cases from rewrite rules.
+///
+/// For each non-effectful rule, we:
+/// 1. Infer the sort of each meta-variable from its LHS position
+/// 2. Pick a nullary constructor of that sort as a witness value
+/// 3. Substitute witnesses into LHS (function call) and RHS (expected value)
+/// 4. Generate `assert_eq!(lhs_call, rhs_expr)` tests
+///
+/// Effectful rules (returning Effect/Unit) are skipped — they need mock traits.
+fn generate_tests(
+    rules: &[crate::session::VonNeumannRule],
+    morphism_types: &HashMap<String, (Vec<String>, String)>,
+    recursive_sorts: &HashSet<String>,
+    rewrite_heads: &HashSet<String>,
+    effect_ops: &HashSet<String>,
+    has_tuple_sort: bool,
+    _parallel_tensor: &Option<String>,
+) -> Vec<RustTest> {
+    // Build witness map: sort → first nullary constructor found
+    let mut witnesses: HashMap<String, String> = HashMap::new();
+    for (op_name, (domain, codomain)) in morphism_types {
+        if domain.is_empty() && !effect_ops.contains(op_name) {
+            witnesses.entry(codomain.clone()).or_insert_with(|| op_name.clone());
+        }
+    }
+
+    let mut tests = Vec::new();
+
+    for rule in rules {
+        let head = match sexp_head(&rule.lhs) {
+            Some(h) => h,
+            None => continue,
+        };
+
+        // Skip effectful rules (need mock trait)
+        if let Some((_, codomain)) = morphism_types.get(head) {
+            if codomain == "Effect" || codomain == "Unit" {
+                continue;
+            }
+        }
+
+        // Collect meta-variable sorts from LHS
+        let mut meta_sorts: HashMap<String, String> = HashMap::new();
+        if let Sexp::List(items, _) = &rule.lhs {
+            if let Some(h) = items.first().and_then(|s| s.as_atom()) {
+                let child_sorts: Vec<String> = morphism_types
+                    .get(h)
+                    .map(|(d, _)| d.clone())
+                    .unwrap_or_default();
+                for (i, arg) in items[1..].iter().enumerate() {
+                    let sort = child_sorts.get(i).map(|s| s.as_str()).unwrap_or("_");
+                    collect_meta_sorts(arg, sort, Some(i), morphism_types, &mut meta_sorts);
+                }
+            }
+        }
+
+        // Check that we have witnesses for all metas
+        let all_have_witnesses = meta_sorts.values().all(|sort| witnesses.contains_key(sort));
+        if !all_have_witnesses {
+            continue; // Skip rules with sorts that have no nullary constructors
+        }
+
+        // Build witness substitution: meta_name → nullary constructor name
+        let witness_map: HashMap<String, String> = meta_sorts.iter()
+            .filter_map(|(meta, sort)| {
+                witnesses.get(sort).map(|w| (meta.clone(), w.clone()))
+            })
+            .collect();
+
+        // Substitute witnesses into LHS and RHS
+        let lhs_subst = subst_witnesses(&rule.lhs, &witness_map);
+        let rhs_subst = subst_witnesses(&rule.rhs, &witness_map);
+
+        // Skip rules where LHS args contain nested function calls (rewrite heads).
+        // These would evaluate inner calls first, changing the pattern before the
+        // outer function sees it, causing test mismatches.
+        if has_nested_rewrite_calls(&lhs_subst, rewrite_heads) {
+            continue;
+        }
+
+        // Convert to RustExpr — tests always use sequential execution (no parallel),
+        // because we want to verify the function's rewrite behavior, not short-circuit it.
+        let no_parallel = None;
+        let mut has_par = false;
+        let mut dummy_counts = HashMap::new();
+        let mut dummy_used = HashMap::new();
+
+        // For the LHS, we call the head function with the substituted args
+        let lhs_expr = sexp_to_expr(
+            &lhs_subst,
+            morphism_types,
+            recursive_sorts,
+            rewrite_heads,
+            effect_ops,
+            &dummy_counts,
+            &mut dummy_used,
+            has_tuple_sort,
+            &no_parallel,
+            &mut has_par,
+        );
+
+        // For the RHS, build the expected value (also no parallel — we want the constructor form)
+        dummy_counts.clear();
+        dummy_used.clear();
+        let rhs_expr = sexp_to_expr(
+            &rhs_subst,
+            morphism_types,
+            recursive_sorts,
+            rewrite_heads,
+            effect_ops,
+            &dummy_counts,
+            &mut dummy_used,
+            has_tuple_sort,
+            &no_parallel,
+            &mut has_par,
+        );
+
+        let test_name = format!("rule_{}", to_snake_case(&rule.name));
+        tests.push(RustTest {
+            name: test_name,
+            lhs: lhs_expr,
+            rhs: rhs_expr,
+        });
+    }
+
+    tests
+}
+
+/// Substitute witness values for meta-variables in an S-expression.
+fn subst_witnesses(sexp: &Sexp, witness_map: &HashMap<String, String>) -> Sexp {
+    match sexp {
+        Sexp::Atom(name, sp) => {
+            if let Some(meta) = name.strip_prefix('?') {
+                if let Some(witness) = witness_map.get(meta) {
+                    Sexp::Atom(witness.clone(), *sp)
+                } else {
+                    sexp.clone()
+                }
+            } else {
+                sexp.clone()
+            }
+        }
+        Sexp::List(items, sp) => {
+            let subst_items: Vec<Sexp> = items.iter()
+                .map(|item| subst_witnesses(item, witness_map))
+                .collect();
+            Sexp::List(subst_items, *sp)
+        }
+    }
+}
+
+/// Check if an LHS sexp has nested rewrite-head calls in its arguments.
+/// E.g., `[upper [cat ?x ?y]]` — `cat` is a rewrite head nested inside `upper`.
+fn has_nested_rewrite_calls(sexp: &Sexp, rewrite_heads: &HashSet<String>) -> bool {
+    if let Sexp::List(items, _) = sexp {
+        // Check arguments (skip the head) for any rewrite-head calls
+        for arg in items.iter().skip(1) {
+            if contains_rewrite_call(arg, rewrite_heads) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn contains_rewrite_call(sexp: &Sexp, rewrite_heads: &HashSet<String>) -> bool {
+    match sexp {
+        Sexp::Atom(_, _) => false,
+        Sexp::List(items, _) => {
+            if let Some(head) = items.first().and_then(|s| s.as_atom()) {
+                if rewrite_heads.contains(head) {
+                    return true;
+                }
+            }
+            items.iter().any(|item| contains_rewrite_call(item, rewrite_heads))
+        }
+    }
+}
+
+/// Generate Rust handler structs from algebraic effect handlers.
+fn generate_handlers(
+    handlers: &[crate::session::EffectHandler],
+    morphism_types: &HashMap<String, (Vec<String>, String)>,
+    recursive_sorts: &HashSet<String>,
+    rewrite_heads: &HashSet<String>,
+    effect_ops: &HashSet<String>,
+    has_tuple_sort: bool,
+    parallel_tensor: &Option<String>,
+    is_concurrent: bool,
+    trait_name: &Option<String>,
+) -> Vec<RustHandler> {
+    let trait_name = match trait_name {
+        Some(t) => t.clone(),
+        None => return Vec::new(),
+    };
+
+    handlers.iter().map(|handler| {
+        let methods: Vec<RustHandlerMethod> = handler.methods.iter().map(|method| {
+            let func_name = to_snake_case(&method.name);
+
+            // Get parameter types from the morphism definition
+            let params: Vec<RustParam> = if let Some((domain, _)) = morphism_types.get(method.name.as_str()) {
+                domain.iter().enumerate().map(|(i, sort)| {
+                    let ty = sort_to_type(sort, has_tuple_sort, &[]);
+                    RustParam {
+                        name: format!("arg{}", i),
+                        ty,
+                    }
+                }).collect()
+            } else {
+                Vec::new()
+            };
+
+            // Convert body expression
+            let dummy_counts = HashMap::new();
+            let mut dummy_used = HashMap::new();
+            let mut has_par = false;
+            let body = sexp_to_expr(
+                &method.body,
+                morphism_types,
+                recursive_sorts,
+                rewrite_heads,
+                effect_ops,
+                &dummy_counts,
+                &mut dummy_used,
+                has_tuple_sort,
+                parallel_tensor,
+                &mut has_par,
+            );
+
+            RustHandlerMethod {
+                name: func_name,
+                params,
+                body,
+            }
+        }).collect();
+
+        RustHandler {
+            name: to_pascal_case(&handler.name),
+            trait_name: trait_name.clone(),
+            is_concurrent,
+            methods,
+        }
+    }).collect()
 }
 
 #[cfg(test)]

@@ -1,0 +1,28 @@
+;; Hyperion Example: E-Graph Round-Trip
+;;
+;; A compiled Hyperion program that uses the host's equality saturation
+;; engine via CompilerEffect. The theory defines rewrite rules for a
+;; simple algebra, and the compiled code exercises them via eval-cost
+;; and add (pure functions — no effects needed for the demo).
+;;
+;; The ask-egraph round-trip is tested in an external test that
+;; creates NativeCompilerEffects and calls the egg engine directly
+;; with this theory's rules.
+;;
+;; Run:     hyperion check examples/egraph-roundtrip.hyp -v
+;; Compile: hyperion kompile examples/egraph-roundtrip.hyp --theory EGraphDemo -o out/egraph_demo/
+
+[Universe EGraphWorld :category MetaCat :substrate CompilerEngine]
+
+[Theory EGraphDemo :in EGraphWorld
+
+  ;; === Cost function: prefer smaller expressions ===
+  [@rule cost-atom [eval-cost ?c [expr-atom ?s]] ==> [succ [zero]]]
+  [@rule cost-var  [eval-cost ?c [expr-var ?n]]  ==> [zero]]
+  [@rule cost-app  [eval-cost ?c [expr-app ?f ?x]]
+    ==> [succ [add [eval-cost ?c ?f] [eval-cost ?c ?x]]]]
+
+  ;; === Nat arithmetic ===
+  [@rule add-zero [add [zero] ?n] ==> ?n]
+  [@rule add-succ [add [succ ?m] ?n] ==> [succ [add ?m ?n]]]
+]

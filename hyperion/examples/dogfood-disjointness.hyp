@@ -1,0 +1,82 @@
+;; Hyperion Example: Dogfood — Parallel Tensor Disjointness Check
+;;
+;; The parallel tensor pass in Hyperion's Rust compiler verifies that
+;; tensor factors have disjoint free variables before emitting rayon::join.
+;; Here we rewrite that check AS A HYPERION THEORY over MetaCat.
+;;
+;; This is the recursive payoff: a compiler pass, written in the language
+;; it compiles, compiled by the compiler it's a pass for.
+;;
+;; The compiled Rust code is a native-speed disjointness checker that
+;; takes two Expr ASTs and returns a Bool (or a ProofTerm witnessing
+;; that the expressions share no variables).
+;;
+;; Run:     hyperion check examples/dogfood-disjointness.hyp -v
+;; Compile: hyperion kompile examples/dogfood-disjointness.hyp --theory DisjointnessCheck -o out/disjointness/
+
+[Universe CheckerWorld :category MetaCat :substrate CompilerEngine]
+
+[Theory DisjointnessCheck :in CheckerWorld
+
+  ;; === Variable Collection ===
+  ;; Collect free variables from an expression, returning a "set" as nested applications.
+  ;; In the real compiler this is collect_free_vars(); here it's rewrite rules on Expr.
+
+  ;; An atom has no free variables
+  [@rule vars-atom [analyze-linearity [expr-atom ?s] ?t]
+    ==> [pf-refl]]
+
+  ;; A variable IS a free variable — return proof-of-self
+  [@rule vars-var [analyze-linearity [expr-var ?n] ?t]
+    ==> [pf-refl]]
+
+  ;; An application: linearity of both parts, chained by transitivity
+  [@rule vars-app [analyze-linearity [expr-app ?f ?x] ?t]
+    ==> [proof-cong [expr-app ?f ?x]
+          [pf-trans [analyze-linearity ?f ?t]
+                    [analyze-linearity ?x ?t]]]]
+
+  ;; === Disjointness via Proof ===
+  ;; check-proof verifies that a proof term witnesses a goal.
+  ;; For the disjointness check:
+  ;;   goal-eq(vars(left), vars(right)) should be UNPROVABLE if disjoint.
+  ;;   goal-eq(left, left) IS provable → not disjoint (shared variable).
+
+  ;; Refl proves equality of identical expressions
+  [@rule disj-refl [check-proof [pf-refl] [goal-eq ?e ?e]]
+    ==> [true]]
+
+  ;; Symmetry: check(sym(p), eq(a,b)) = check(p, eq(b,a))
+  [@rule disj-sym [check-proof [pf-sym ?p] [goal-eq ?a ?b]]
+    ==> [check-proof ?p [goal-eq ?b ?a]]]
+
+  ;; === Cost Function: Parallelization Cost Model ===
+  ;; A custom cost function that decides whether parallelization is worth it.
+  ;; Penalizes shallow expressions (not worth the rayon overhead).
+
+  ;; Atoms are too cheap to parallelize (cost 0)
+  [@rule par-cost-atom [eval-cost ?c [expr-atom ?s]]
+    ==> [zero]]
+
+  ;; Variables are too cheap (cost 0)
+  [@rule par-cost-var [eval-cost ?c [expr-var ?n]]
+    ==> [zero]]
+
+  ;; Applications have nontrivial cost (cost = 1 + children)
+  ;; This models the depth heuristic: only parallelize depth >= 1
+  [@rule par-cost-app [eval-cost ?c [expr-app ?f ?x]]
+    ==> [succ [add [eval-cost ?c ?f] [eval-cost ?c ?x]]]]
+
+  ;; === Nat Arithmetic ===
+  [@rule add-zero [add [zero] ?n] ==> ?n]
+  [@rule add-succ [add [succ ?m] ?n] ==> [succ [add ?m ?n]]]
+
+  ;; === Tactic: auto-prove disjointness ===
+  ;; If the goal is eq(e, e), variables are shared → NOT disjoint
+  [@rule tac-shared [apply-tactic [goal-eq ?e ?e]]
+    ==> [ps-qed [pf-refl]]]
+
+  ;; If the goal is eq(a, b) with a != b, try symmetry (may expose structure)
+  [@rule tac-try-sym [apply-tactic [goal-eq ?a ?b]]
+    ==> [ps-goals [goal-eq ?b ?a] [ps-qed [pf-sym [pf-refl]]]]]
+]

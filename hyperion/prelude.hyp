@@ -64,6 +64,23 @@
   [Object UniDef]        ;; Universe definitions
   [Object PassDef]       ;; Compilation pass annotations
 
+  ;; === Proof-Relevant Objects ===
+  ;; ProofTerm: a witness that a proposition holds. Returned by tactics,
+  ;; attached to compilation passes, and checked by the runtime.
+  [Object ProofTerm]     ;; Proof witnesses (lambda terms, refl, trans, ...)
+  ;; Goal: a proposition to be proved. The input to tactics.
+  [Object Goal]          ;; Proof obligations (type + context)
+  ;; ProofState: a tactic monad state — remaining goals + accumulated proof.
+  [Object ProofState]    ;; Tactic state (goals × partial proof)
+  ;; CostFn: a cost model for e-graph extraction. Maps Expr → Nat.
+  [Object CostFn]        ;; Custom cost functions for e-graph optimization
+  ;; Nat: natural numbers for cost values and fuel.
+  [Object Nat]           ;; Natural numbers (zero, succ)
+  ;; Bool: truth values for tactic decisions.
+  [Object Bool]          ;; Booleans (true, false)
+  ;; CompilerEffect: side effects of the compiler (I/O, e-graph queries).
+  [Object CompilerEffect] ;; Compiler-level side effects
+
   ;; Structural morphisms: navigating the AST
   [Morphism rule-lhs     :domain [RuleDef]           :codomain Expr]
   [Morphism rule-rhs     :domain [RuleDef]           :codomain Expr]
@@ -76,6 +93,74 @@
   [Morphism normalize    :domain [Expr TheoryDef]    :codomain Expr]
   [Morphism simplify     :domain [Expr TheoryDef]    :codomain Expr]
   [Morphism synthesize   :domain [Expr TheoryDef]    :codomain Expr]
+
+  ;; === Proof Construction Morphisms ===
+  ;; Tactic application: given a goal, produce subgoals + partial proof.
+  ;; This is the categorical Ltac: users write morphisms of this type.
+  [Morphism apply-tactic  :domain [Goal]              :codomain ProofState]
+  ;; Extract the current goal from a proof state.
+  [Morphism extract-goal  :domain [ProofState]        :codomain Goal]
+  ;; Check whether a proof term witnesses a goal (returns Bool).
+  [Morphism check-proof   :domain [ProofTerm Goal]    :codomain Bool]
+  ;; Construct a proof term from reflexivity (expr equals itself).
+  [Morphism proof-refl    :domain [Expr]              :codomain ProofTerm]
+  ;; Construct a proof by transitivity (chain two proof terms).
+  [Morphism proof-trans   :domain [ProofTerm ProofTerm] :codomain ProofTerm]
+  ;; Construct a proof by congruence (same head, prove args equal).
+  [Morphism proof-cong    :domain [Expr ProofTerm]    :codomain ProofTerm]
+  ;; Construct a proof by rewrite (apply a named rule).
+  [Morphism proof-rewrite :domain [RuleDef Expr]      :codomain ProofTerm]
+
+  ;; === Proof-Carrying Pass Morphisms ===
+  ;; Analyze an expression and return it paired with a proof of a property.
+  ;; Forces pass authors to justify their transformations.
+  [Morphism analyze-linearity :domain [Expr TheoryDef]  :codomain ProofTerm]
+  [Morphism transform-verified :domain [Expr ProofTerm] :codomain Expr]
+
+  ;; === Cost Function Morphisms (Custom E-Graph Extraction) ===
+  ;; Evaluate a cost function on an expression → natural number.
+  [Morphism eval-cost     :domain [CostFn Expr]       :codomain Nat]
+  ;; Optimize an expression using a custom cost function.
+  [Morphism optimize-with :domain [Expr CostFn TheoryDef] :codomain Expr]
+
+  ;; === Nat Constructors ===
+  [Morphism zero          :domain []                   :codomain Nat]
+  [Morphism succ          :domain [Nat]                :codomain Nat]
+  [Morphism add           :domain [Nat Nat]            :codomain Nat]
+
+  ;; === Bool Constructors ===
+  [Morphism true          :domain []                   :codomain Bool]
+  [Morphism false         :domain []                   :codomain Bool]
+
+  ;; === ProofTerm Constructors ===
+  [Morphism pf-refl       :domain []                   :codomain ProofTerm]
+  [Morphism pf-sym        :domain [ProofTerm]          :codomain ProofTerm]
+  [Morphism pf-trans      :domain [ProofTerm ProofTerm] :codomain ProofTerm]
+
+  ;; === ProofState Constructors ===
+  [Morphism ps-qed        :domain [ProofTerm]          :codomain ProofState]
+  [Morphism ps-goals      :domain [Goal ProofState]    :codomain ProofState]
+
+  ;; === Goal Constructors ===
+  [Morphism goal-eq       :domain [Expr Expr]          :codomain Goal]
+  [Morphism goal-type     :domain [Expr Sort]          :codomain Goal]
+
+  ;; === Expr Constructors (reified AST) ===
+  [Morphism expr-atom     :domain [Sort]               :codomain Expr]
+  [Morphism expr-app      :domain [Expr Expr]          :codomain Expr]
+  [Morphism expr-var      :domain [Nat]                :codomain Expr]
+
+  ;; === CompilerEffect Operations (effect sort for I/O) ===
+  ;; Ask the e-graph whether two expressions are equal in a theory.
+  [Morphism ask-egraph    :domain [Expr Expr TheoryDef] :codomain CompilerEffect]
+  ;; Read a source file from disk.
+  [Morphism read-file     :domain [Expr]               :codomain CompilerEffect]
+  ;; Write a generated crate to disk.
+  [Morphism write-crate   :domain [Expr]               :codomain CompilerEffect]
+  ;; Log a diagnostic message.
+  [Morphism log-diag      :domain [Expr]               :codomain CompilerEffect]
+  ;; Check a proof term against a goal (effectful: may invoke Apeiron).
+  [Morphism verify-proof  :domain [ProofTerm Goal]     :codomain CompilerEffect]
 
   ;; CCC structure: MetaCat has lambdas (code-generating functions)
   [Exponential meta-lam :object Expr]

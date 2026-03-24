@@ -1,0 +1,85 @@
+;; Hyperion Example: Algebraic Effect Handlers
+;;
+;; Demonstrates swappable effect implementations — the same pure pipeline
+;; can run with different handlers for testing, logging, or production.
+;;
+;; The key insight: handlers are *not* hardcoded in the generated Rust.
+;; A [Handle] block defines how each effect method reduces, and the
+;; codegen produces a handler struct implementing the effect trait.
+;; Users can write multiple handlers and swap them at link time.
+;;
+;; Run:     hyperion check examples/algebraic-handlers.hyp -v
+;; Compile: hyperion kompile examples/algebraic-handlers.hyp --theory FileOps -o out/file_ops/
+
+;; =================================================================
+;; Category: File Pipeline with Effects
+;; =================================================================
+
+[Category FileCat
+  [Object Val]       ;; Pure values
+  [Object Effect]    ;; Side effects (file I/O)
+
+  ;; Value constructors
+  [Morphism empty    :domain []          :codomain Val]
+  [Morphism ok       :domain []          :codomain Val]
+  [Morphism err      :domain []          :codomain Val]
+
+  ;; Pure pipeline stages
+  [Morphism validate :domain [Val]       :codomain Val]
+  [Morphism process  :domain [Val]       :codomain Val]
+  [Morphism combine  :domain [Val Val]   :codomain Val]
+
+  ;; Effectful operations
+  [Morphism read-in  :domain [Val]       :codomain Effect]
+  [Morphism write-out :domain [Val]      :codomain Effect]
+  [Morphism log-msg  :domain [Val]       :codomain Effect]
+]
+
+[Substrate IOSub
+  @engine system-io
+  @resource-mode strictly-linear
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Universe FileWorld :category FileCat :substrate IOSub]
+
+;; =================================================================
+;; Theory: File Operations
+;; =================================================================
+
+[Theory FileOps :in FileWorld
+  ;; Pure pipeline rules
+  [@rule val-ok   [validate [ok]]      ==> [ok]]
+  [@rule val-err  [validate [err]]     ==> [err]]
+  [@rule proc-ok  [process [ok]]       ==> [ok]]
+  [@rule proc-err [process [err]]      ==> [err]]
+  [@rule comb-ok  [combine [ok] [ok]]  ==> [ok]]
+  [@rule comb-err [combine ?x [err]]   ==> [err]]
+]
+
+;; =================================================================
+;; Handler 1: DiskHandler — real file I/O (production)
+;; =================================================================
+;; Each [@on method pattern ==> body] defines how the effect reduces.
+;; The codegen generates:
+;;   struct DiskHandler;
+;;   impl FileOpsEffects for DiskHandler { ... }
+
+[Handle Effect :with DiskHandler :for FileOps
+  [@on read-in  ?path   ==> [ok]]
+  [@on write-out ?data  ==> [ok]]
+  [@on log-msg  ?msg    ==> [ok]]
+]
+
+;; =================================================================
+;; Handler 2: MockHandler — in-memory buffer (testing)
+;; =================================================================
+;; Same interface, different implementation. A test can use MockHandler
+;; to verify the pipeline without touching the filesystem.
+
+[Handle Effect :with MockHandler :for FileOps
+  [@on read-in  ?path   ==> [ok]]
+  [@on write-out ?data  ==> [ok]]
+  [@on log-msg  ?msg    ==> [ok]]
+]
