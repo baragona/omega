@@ -2173,6 +2173,22 @@ impl Session {
                 }
                 return Ok(());
             }
+
+            // Near-miss diagnostic: extract simplest normal forms from both e-classes
+            let (lhs_best, rhs_best) = egraph::extract_near_miss(
+                &lhs_readback, &rhs_readback, &filtered, self.egraph_fuel()
+            );
+            let lhs_nf = format!("{}", lhs_best);
+            let rhs_nf = format!("{}", rhs_best);
+            let timeout_note = if result == egraph::EGraphResult::Timeout {
+                " (fuel exhausted — may succeed with higher limits)"
+            } else {
+                ""
+            };
+            self.output.push(format!(
+                "[NEAR-MISS] {} — closest normal forms: {} vs {}{}",
+                name, lhs_nf, rhs_nf, timeout_note
+            ));
         }
 
         // Eta fallback

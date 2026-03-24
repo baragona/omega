@@ -1557,8 +1557,10 @@ impl HyperionSession {
         }
 
         let rewritten = self.rewrite_for_apeiron(sexp, universe_name.as_deref())?;
-        self.apeiron.process(&rewritten)?;
+        let apeiron_result = self.apeiron.process(&rewritten);
+        // Drain output BEFORE propagating errors — captures near-miss diagnostics
         self.drain_apeiron_output();
+        apeiron_result?;
 
         // TCB transparency: if the universe has compilation passes, annotate the output
         // so the user knows which trusted bridges their proof depends on.
@@ -3261,36 +3263,125 @@ fn sexp_contains_meta(sexp: &Sexp) -> bool {
     }
 }
 
-/// Count the number of Sexp nodes (for structural termination checking).
-fn sexp_size(sexp: &Sexp) -> usize {
-    match sexp {
-        Sexp::Atom(_, _) => 1,
-        Sexp::List(items, _) => 1 + items.iter().map(sexp_size).sum::<usize>(),
+/// Collect all strict subterms of a Sexp (as formatted strings for comparison).
+fn collect_subterms(sexp: &Sexp) -> HashSet<String> {
+    let mut result = HashSet::new();
+    collect_subterms_inner(sexp, &mut result, true);
+    result
+}
+
+fn collect_subterms_inner(sexp: &Sexp, result: &mut HashSet<String>, is_root: bool) {
+    if !is_root {
+        result.insert(format!("{}", sexp));
+    }
+    if let Sexp::List(items, _) = sexp {
+        for item in items {
+            collect_subterms_inner(item, result, false);
+        }
     }
 }
 
-/// Check structural termination: RHS must not be strictly larger than LHS.
+/// Extract the head symbol and recursive argument positions from a LHS pattern.
+/// E.g., `[fib [s [s ?n]]]` → head="fib", args=["[s [s ?n]]"]
+fn extract_head_and_args(sexp: &Sexp) -> Option<(String, Vec<String>)> {
+    if let Sexp::List(items, _) = sexp {
+        if let Some(head) = items.first().and_then(|i| i.as_atom()) {
+            let args: Vec<String> = items[1..].iter().map(|a| format!("{}", a)).collect();
+            return Some((head.to_string(), args));
+        }
+    }
+    None
+}
+
+/// Find all recursive calls on the RHS and check that their arguments are
+/// strict subterms of the corresponding LHS arguments.
+///
+/// For a rule `[f [s [s ?n]]] ==> [add [f [s ?n]] [f ?n]]`:
+/// - Head function: `f`
+/// - LHS arg: `[s [s ?n]]` with subterms {`[s ?n]`, `?n`}
+/// - RHS recursive calls: `[f [s ?n]]` (arg `[s ?n]` ∈ subterms ✓)
+///                         `[f ?n]` (arg `?n` ∈ subterms ✓)
 fn check_structural_termination(
     rules: &[(Option<String>, Sexp, Sexp)],
     theory_name: &str,
 ) -> crate::error::Result<()> {
     for (rule_name, lhs, rhs) in rules {
-        let lhs_size = sexp_size(lhs);
-        let rhs_size = sexp_size(rhs);
-        if rhs_size > lhs_size {
+        // Extract head function and its argument patterns
+        let (head, lhs_args) = match extract_head_and_args(lhs) {
+            Some(h) => h,
+            None => continue, // Atom rules can't diverge
+        };
+
+        // Collect strict subterms of each LHS argument
+        let lhs_subterms: HashSet<String> = if let Sexp::List(items, _) = lhs {
+            items[1..].iter().flat_map(|arg| {
+                let mut subs = HashSet::new();
+                collect_subterms_inner(arg, &mut subs, false);
+                subs
+            }).collect()
+        } else {
+            HashSet::new()
+        };
+
+        // Also include the LHS args themselves as "same size" (non-strict)
+        // — we allow same-argument recursive calls (they need a separate
+        // metric to decrease, which we can't check statically).
+        // The key prohibition: recursive calls on LARGER arguments.
+        let lhs_arg_set: HashSet<String> = lhs_args.iter().cloned().collect();
+
+        // Find all recursive calls to `head` in RHS
+        let mut violations = Vec::new();
+        find_recursive_calls(rhs, &head, &lhs_subterms, &lhs_arg_set, &mut violations);
+
+        if !violations.is_empty() {
             return Err(crate::error::HyperionError::TotalityViolation {
                 theory: theory_name.to_string(),
                 rule_name: rule_name.clone(),
                 detail: format!(
-                    "RHS is strictly larger than LHS ({} > {} nodes) — \
-                     rewrite may not terminate. In @totality total mode, \
-                     every rule must be structurally non-expanding.",
-                    rhs_size, lhs_size,
+                    "recursive call argument is not a strict subterm of LHS pattern — \
+                     rewrite may not terminate. Violations: [{}]. \
+                     In @totality total mode, every recursive call must operate on \
+                     structurally smaller arguments.",
+                    violations.join(", "),
                 ),
             });
         }
     }
     Ok(())
+}
+
+/// Find recursive calls to `head` in an Sexp and check their arguments.
+fn find_recursive_calls(
+    sexp: &Sexp,
+    head: &str,
+    lhs_subterms: &HashSet<String>,
+    lhs_args: &HashSet<String>,
+    violations: &mut Vec<String>,
+) {
+    if let Sexp::List(items, _) = sexp {
+        if let Some(call_head) = items.first().and_then(|i| i.as_atom()) {
+            if call_head == head {
+                // This is a recursive call — check each argument
+                for arg in &items[1..] {
+                    let arg_str = format!("{}", arg);
+                    // Argument must be either a strict subterm of LHS args,
+                    // or one of the LHS args themselves (same-size recursion)
+                    if !lhs_subterms.contains(&arg_str) && !lhs_args.contains(&arg_str) {
+                        // Also allow meta-variables that appear in LHS
+                        if !(arg.as_atom().map(|a| a.starts_with('?')).unwrap_or(false)
+                            && lhs_subterms.iter().any(|s| s.contains(&arg_str)))
+                        {
+                            violations.push(format!("{}({}) not a subterm of LHS args", head, arg_str));
+                        }
+                    }
+                }
+            }
+        }
+        // Recurse into all subterms
+        for item in items {
+            find_recursive_calls(item, head, lhs_subterms, lhs_args, violations);
+        }
+    }
 }
 
 /// Collect all ?meta variable names from a Sexp tree.

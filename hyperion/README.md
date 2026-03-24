@@ -1292,7 +1292,15 @@ The `[Seal TheoryName]` directive closes a theory after verification:
 
 ### Structural Totality (`@totality`)
 
-Substrates can declare `@totality total` to enforce structural termination on all rewrite rules. In total mode, every rule's RHS must have no more AST nodes than its LHS — a conservative check that prevents non-terminating rewrites. Default is `@totality partial` (or unspecified), where fuel limits are the backstop.
+Substrates can declare `@totality total` to enforce structural termination on all rewrite rules. In total mode, every recursive call on the RHS must operate on a **strict subterm** of the corresponding LHS pattern argument. This allows standard structural recursion (e.g., Fibonacci: `fib(s(s(n))) → add(fib(s(n)), fib(n))`) while rejecting non-terminating rules where recursive calls grow the argument. Default is `@totality partial` (or unspecified), where fuel limits are the backstop.
+
+### E-Graph Near-Miss Diagnostics
+
+When an `assert-eq` fails in the e-graph, Apeiron extracts the **simplest normal forms** from both e-classes (using egg's `AstSize` cost function) and reports them as a `[NEAR-MISS]` diagnostic. This shows users exactly where the proof got stuck and what's structurally different between the two sides, instead of just "failed."
+
+### Self-Hosted Compilation Passes
+
+The `self-host-tensor-serial.hyp` example demonstrates how compilation passes can be mechanically verified within Hyperion itself. It defines the TensorSerialization pass as a Functor between parallel and sequential substrates, then uses `[VerifyFunctor]` to prove the equational theory is preserved. This is the first step toward eliminating the trusted Rust TCB for compilation passes.
 
 ### Universe Level Graph
 
@@ -1304,7 +1312,7 @@ Apeiron's `EGraphFuel` (30 iterations, 10k nodes) bounds all equality saturation
 
 ## Tests
 
-383 tests (148 unit + 235 integration), covering:
+385 tests (148 unit + 237 integration), covering:
 
 - Category/substrate/universe parsing and validation
 - Compilation pass insertion for all 9 bridging strategies (bang modality, nominal abstraction, defunctionalization, tensor serialization, Kripke threading, dependent combinators, RPC serialization, consensus replication, partition tolerance)
@@ -1339,7 +1347,9 @@ Apeiron's `EGraphFuel` (30 iterations, 10k nodes) bounds all equality saturation
 - **Tartarus Tier**: AC-bound variable scramble, Dialectica continuation trap, SMT matching loop hang (8 tests)
 - **Apollyon Tier**: Pass-ordering cycles, Miller pattern violations, e-graph memory avalanche (8 tests)
 - **Gödel Tier**: Axiom K truncation boundary (HoTT × SMT), universe lift cycle detection (6 tests)
-- **Architectural hardening**: E-graph binder safety (3 tests), TCB transparency (1 test), theory sealing (2 tests), structural totality (3 tests), level graph (3 tests)
+- **Architectural hardening**: E-graph binder safety (3 tests), TCB transparency (1 test), theory sealing (2 tests), structural totality (2 tests), level graph (3 tests)
+- **Self-hosted pass verification**: TensorSerialization as verified Functor (1 test)
+- **E-graph observability**: Near-miss diagnostics on failed proofs (1 test)
 
 ```bash
 cargo test

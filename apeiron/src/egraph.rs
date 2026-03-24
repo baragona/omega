@@ -476,6 +476,36 @@ pub fn extract_simplest(expr: &Sexp, rules: &[RewriteRule], fuel: EGraphFuel) ->
     recexpr_to_sexp(&best)
 }
 
+/// Near-miss diagnostic: when equality fails, extract the simplest normal forms
+/// of both sides from the saturated e-graph and return them for diffing.
+/// This helps users understand WHY a proof failed.
+pub fn extract_near_miss(
+    lhs: &Sexp,
+    rhs: &Sexp,
+    rules: &[RewriteRule],
+    fuel: EGraphFuel,
+) -> (Sexp, Sexp) {
+    let lhs_expr = sexp_to_recexpr(lhs);
+    let rhs_expr = sexp_to_recexpr(rhs);
+    let rewrites = rules_to_rewrites(rules);
+
+    let runner = Runner::default()
+        .with_expr(&lhs_expr)
+        .with_expr(&rhs_expr)
+        .with_iter_limit(fuel.iter_limit)
+        .with_node_limit(fuel.node_limit)
+        .run(&rewrites);
+
+    let lhs_root = runner.roots[0];
+    let rhs_root = runner.roots[1];
+
+    let extractor = Extractor::new(&runner.egraph, AstSize);
+    let (_, lhs_best) = extractor.find_best(lhs_root);
+    let (_, rhs_best) = extractor.find_best(rhs_root);
+
+    (recexpr_to_sexp(&lhs_best), recexpr_to_sexp(&rhs_best))
+}
+
 /// Check if a Sexp tree contains a specific atom anywhere.
 fn contains_atom(sexp: &Sexp, name: &str) -> bool {
     match sexp {

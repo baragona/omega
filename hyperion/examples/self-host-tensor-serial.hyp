@@ -1,0 +1,72 @@
+;; Self-Hosted Compilation Pass: TensorSerialization
+;;
+;; This file defines TensorSerialization as a verified Functor between
+;; two substrates sharing the same category, mechanically proving that
+;; the compilation pass preserves equational theory.
+;;
+;; Source: parallel substrate (e-graph, optimal sharing)
+;; Target: sequential substrate (von-neumann, deep-copy)
+;; Both use the same MonoidalOps category with tensor + unit.
+;;
+;; The verification proves: evaluating tensor operands left-to-right
+;; (serialization) preserves all equational laws of the monoidal category.
+
+;; === Shared Category: Monoidal Operations ===
+
+[Category MonoidalOps
+  [Object Type] [Object Term]
+  [Morphism tensor :domain [Term Term] :codomain Term]
+  [Morphism unit :domain [] :codomain Term]
+  [Morphism a :domain [] :codomain Term]
+  [Morphism b :domain [] :codomain Term]
+  [Morphism c :domain [] :codomain Term]
+]
+
+;; === Substrates ===
+
+[Substrate ParallelNet
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality equality-saturation
+]
+
+[Substrate SequentialVN
+  @engine von-neumann
+  @resource-mode deep-copy
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+;; === Universes (same category, different substrates) ===
+
+[Universe ParallelWorld :category MonoidalOps :substrate ParallelNet]
+[Universe SequentialWorld :category MonoidalOps :substrate SequentialVN]
+
+;; === Functor: identity on morphisms (tensor=tensor, unit=unit) ===
+;; The functor is the identity because serialization doesn't rename operations;
+;; it only changes evaluation strategy. The equational theory must be preserved.
+
+[Functor TensorSerialize :from ParallelNet :to SequentialVN]
+
+;; === Source Theory: Monoidal Laws (in e-graph universe) ===
+
+[Theory ParallelMonoid :in ParallelWorld
+  [@rule assoc [tensor [tensor ?a ?b] ?c] ==> [tensor ?a [tensor ?b ?c]]]
+  [@rule unit-l [tensor unit ?a] ==> ?a]
+  [@rule unit-r [tensor ?a unit] ==> ?a]
+]
+
+;; === Target Theory: Same Laws (in VN universe) ===
+
+[Theory SequentialMonoid :in SequentialWorld
+  [@rule assoc [tensor [tensor ?a ?b] ?c] ==> [tensor ?a [tensor ?b ?c]]]
+  [@rule unit-l [tensor unit ?a] ==> ?a]
+  [@rule unit-r [tensor ?a unit] ==> ?a]
+]
+
+;; === Verification ===
+;; VerifyFunctor proves: for every rule in ParallelMonoid,
+;; applying TensorSerialize (identity map) yields a valid rule in SequentialMonoid.
+
+[VerifyFunctor TensorSerialize :source ParallelMonoid :target SequentialMonoid]

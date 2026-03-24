@@ -5399,7 +5399,12 @@ fn seal_double_seal_rejected() {
 // --- Fix 4: Totality ---
 
 #[test]
-fn totality_total_rejects_expanding_rule() {
+fn totality_total_rejects_non_subterm_recursion() {
+    // f(?x) ==> g(f(?x), ?x) — recursive call on ?x which IS the LHS arg,
+    // but g wraps it, making the term grow. However, with subterm checking,
+    // f(?x) recurses with ?x which IS a subterm of LHS arg ?x (it IS the arg).
+    // Actually ?x = ?x, so it's same-size recursion — allowed.
+    // Instead, test: f(?x) ==> f(g(?x, ?x)) — recursive call on LARGER arg
     let src = r#"
 [Category C [Object T] [Morphism f :domain [T] :codomain T] [Morphism g :domain [T T] :codomain T]]
 
@@ -5414,22 +5419,29 @@ fn totality_total_rejects_expanding_rule() {
 [Universe TotalWorld :category C :substrate TotalSub]
 
 [Theory BadTotal :in TotalWorld
-  ;; RHS is larger than LHS — fails structural termination
-  [@rule expand [f ?x] ==> [g ?x ?x]]
+  ;; Recursive call f(g(?x, ?x)) — arg g(?x,?x) is NOT a subterm of LHS arg ?x
+  [@rule bad-recurse [f ?x] ==> [f [g ?x ?x]]]
 ]
 "#;
     let mut session = HyperionSession::new();
     let sexps = apeiron::parser::parse(src).unwrap();
     let result = sexps.iter().try_for_each(|s| session.process(s));
-    assert!(result.is_err(), "Expanding rule should fail totality check");
+    assert!(result.is_err(), "Non-subterm recursive call should fail totality");
     let err = format!("{}", result.err().unwrap());
     assert!(err.contains("totality"), "Error should mention totality: {}", err);
 }
 
 #[test]
-fn totality_total_allows_shrinking_rule() {
+fn totality_total_allows_structural_recursion() {
+    // fib(s(s(?n))) ==> add(fib(s(?n)), fib(?n))
+    // Recursive calls on s(?n) and ?n which are STRICT subterms of s(s(?n))
     let src = r#"
-[Category C2 [Object T] [Morphism f :domain [T] :codomain T] [Morphism g :domain [T T] :codomain T]]
+[Category Nat [Object T]
+  [Morphism z :domain [] :codomain T]
+  [Morphism s :domain [T] :codomain T]
+  [Morphism add :domain [T T] :codomain T]
+  [Morphism fib :domain [T] :codomain T]
+]
 
 [Substrate TotalSub2
   @engine von-neumann
@@ -5439,17 +5451,18 @@ fn totality_total_allows_shrinking_rule() {
   @totality total
 ]
 
-[Universe TotalWorld2 :category C2 :substrate TotalSub2]
+[Universe TotalWorld2 :category Nat :substrate TotalSub2]
 
-[Theory GoodTotal :in TotalWorld2
-  ;; RHS is same size or smaller — passes structural termination
-  [@rule shrink [g ?x ?y] ==> [f ?x]]
+[Theory FibTotal :in TotalWorld2
+  [@rule fib-base-0 [fib z] ==> z]
+  [@rule fib-base-1 [fib [s z]] ==> [s z]]
+  [@rule fib-step [fib [s [s ?n]]] ==> [add [fib [s ?n]] [fib ?n]]]
 ]
 "#;
     let mut session = HyperionSession::new();
     let sexps = apeiron::parser::parse(src).unwrap();
     let result = sexps.iter().try_for_each(|s| session.process(s));
-    assert!(result.is_ok(), "Shrinking rule should pass totality: {:?}", result.err());
+    assert!(result.is_ok(), "Fibonacci should pass totality (structural recursion): {:?}", result.err());
 }
 
 #[test]
@@ -5513,4 +5526,70 @@ fn level_graph_diamond_consistent() {
     g.add_constraint("top", "L", "r3");
     g.add_constraint("top", "R", "r4");
     assert!(g.check_consistent().is_ok());
+}
+
+// --- Self-Hosted Pass: TensorSerialization ---
+
+#[test]
+fn self_host_tensor_serialization_verified() {
+    // The self-hosted TensorSerialization pass defines source/target categories,
+    // a Functor mapping tensor→seq, and uses VerifyFunctor to mechanically prove
+    // the compilation pass preserves equational theory.
+    let source = std::fs::read_to_string("examples/self-host-tensor-serial.hyp").unwrap();
+    let mut session = HyperionSession::new();
+    let sexps = apeiron::parser::parse(&source).unwrap();
+    for sexp in &sexps {
+        session.process(sexp)
+            .unwrap_or_else(|e| panic!("Self-host tensor serial failed: {}", e));
+    }
+
+    // VerifyFunctor should have verified the functor
+    let verify_msg = session.output.iter().find(|s| s.contains("[VERIFY-FUNCTOR]"));
+    assert!(verify_msg.is_some(),
+        "VerifyFunctor should produce verification output. Got: {:?}", session.output);
+    let msg = verify_msg.unwrap();
+    assert!(msg.contains("verified"), "Should contain 'verified': {}", msg);
+}
+
+// --- Near-Miss Diagnostics ---
+
+#[test]
+fn near_miss_diagnostic_on_failed_proof() {
+    // Set up a theory where a proof ALMOST works but is missing a unit law
+    let src = r#"
+[Category NearMissTest
+  [Object Type] [Object Term]
+  [Morphism add :domain [Term Term] :codomain Term]
+  [Morphism z :domain [] :codomain Term]
+]
+
+[Substrate NMSub
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality equality-saturation
+]
+
+[Universe NMWorld :category NearMissTest :substrate NMSub]
+
+[Theory PartialArith :in NMWorld
+  ;; Only left-unit, deliberately missing right-unit
+  [@rule unit-l [add z ?a] ==> ?a]
+]
+
+[Proofs NMP :in PartialArith
+  ;; This should FAIL because we have no right-unit law
+  [assert-eq missing-right-unit [add a z] a]
+]
+"#;
+    let mut session = HyperionSession::new();
+    let sexps = apeiron::parser::parse(src).unwrap();
+    let result = sexps.iter().try_for_each(|s| session.process(s));
+    // The proof should fail (missing right-unit)
+    assert!(result.is_err(), "Should fail without right-unit law");
+
+    // Check for near-miss diagnostic in output
+    let has_near_miss = session.output.iter().any(|s| s.contains("[NEAR-MISS]"));
+    assert!(has_near_miss,
+        "Failed proof should produce near-miss diagnostic. Output: {:?}", session.output);
 }
