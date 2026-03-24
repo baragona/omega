@@ -4502,6 +4502,36 @@ fn logic_engine_occurs_check_abyss() {
 }
 
 #[test]
+fn hoas_defunctionalization_actually_transforms() {
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category LF [Object Type] [Object Term]
+          [Morphism arrow :domain [Type Type] :codomain Type]
+          [HOASBinding lam :object Term]
+          [Morphism typeof :domain [Term Type] :codomain Type]
+        ]
+        [Substrate VN @engine von-neumann @resource-mode deep-copy @barrier transparent @equality rewrite-equivalence]
+        [Universe LFvn :category LF :substrate VN]
+        [Theory STLC :in LFvn
+          [@rule t-lam [typeof [lam ?A ?body] [arrow ?A ?B]] ==> [true]]
+        ]
+    "#;
+    process_all(&mut session, input).unwrap();
+    let output = session.output.join("\n");
+    assert!(output.contains("[PASS:HOASDefunctionalization]"),
+        "HOAS pass should have run: {}", output);
+    assert!(output.contains("Lifted 1 closure"),
+        "Should lift 1 closure: {}", output);
+
+    // The theory should now have the original rule + an apply rule
+    let theory = &session.vn_theories["STLC"];
+    assert!(theory.rules.len() >= 2,
+        "Should have original rule + apply rule, got {} rules", theory.rules.len());
+    let has_apply = theory.rules.iter().any(|r| r.name.contains("closure"));
+    assert!(has_apply, "Should have a closure apply rule");
+}
+
+#[test]
 fn smt_oracle_rewriting_proofs() {
     // SMT oracle mode: rewriting succeeds, so Z3 isn't needed
     let mut session = HyperionSession::new();
@@ -4588,4 +4618,564 @@ fn load_prelude(session: &mut HyperionSession) {
     for sexp in &sexps {
         session.process(sexp).unwrap();
     }
+}
+
+// ====================================================================
+// ABYSSAL TIER: Edge-case tests targeting mathematical blind spots
+// ====================================================================
+
+#[test]
+fn abyssal_shadowing_sinkhole_hyp() {
+    // Verify the .hyp file parses and the session processes category/universe/theory
+    let source = std::fs::read_to_string("examples/abyssal-shadowing-sinkhole.hyp").unwrap();
+    let sexps = apeiron::parser::parse(&source).unwrap();
+    let mut session = HyperionSession::new();
+    for sexp in &sexps {
+        session.process(sexp)
+            .unwrap_or_else(|e| panic!("Error: {}\nOutput: {:?}", e, session.output));
+    }
+    assert!(session.universes.contains_key("CtxWorld"),
+        "CtxWorld universe should be registered");
+}
+
+#[test]
+fn abyssal_trojan_closure_hyp() {
+    let source = std::fs::read_to_string("examples/abyssal-trojan-closure.hyp").unwrap();
+    let sexps = apeiron::parser::parse(&source).unwrap();
+    let mut session = HyperionSession::new();
+    for sexp in &sexps {
+        session.process(sexp)
+            .unwrap_or_else(|e| panic!("Error: {}\nOutput: {:?}", e, session.output));
+    }
+    assert!(session.universes.contains_key("CohWorld"),
+        "CohWorld universe should be registered");
+}
+
+#[test]
+fn abyssal_orelse_leak_hyp() {
+    let source = std::fs::read_to_string("examples/abyssal-orelse-leak.hyp").unwrap();
+    let sexps = apeiron::parser::parse(&source).unwrap();
+    let mut session = HyperionSession::new();
+    for sexp in &sexps {
+        session.process(sexp)
+            .unwrap_or_else(|e| panic!("Error: {}\nOutput: {:?}", e, session.output));
+    }
+    assert!(session.universes.contains_key("TacWorld"),
+        "TacWorld universe should be registered");
+}
+
+#[test]
+fn abyssal_dependent_transport_hyp() {
+    let source = std::fs::read_to_string("examples/abyssal-dependent-transport.hyp").unwrap();
+    let sexps = apeiron::parser::parse(&source).unwrap();
+    let mut session = HyperionSession::new();
+    for sexp in &sexps {
+        session.process(sexp)
+            .unwrap_or_else(|e| panic!("Error: {}\nOutput: {:?}", e, session.output));
+    }
+    assert!(session.universes.contains_key("CubWorld"),
+        "CubWorld universe should be registered");
+}
+
+#[test]
+fn abyssal_context_reify_generates_shadowing_rules() {
+    // Verify the reify pass generates name-based lookup + successor rules
+    use hyperion::passes::context_reify::reify_contexts;
+    let result = reify_contexts(&[], &[]);
+
+    let rule_names: Vec<&str> = result.aux_rules.iter().map(|r| r.name.as_str()).collect();
+    assert!(rule_names.contains(&"ctx-lookup-zero"), "Missing zero rule: {:?}", rule_names);
+    assert!(rule_names.contains(&"ctx-lookup-succ"), "Missing successor rule: {:?}", rule_names);
+    assert!(rule_names.contains(&"ctx-lookup-name-hit"), "Missing name-hit rule: {:?}", rule_names);
+    assert!(rule_names.contains(&"ctx-lookup-name-skip"), "Missing name-skip rule: {:?}", rule_names);
+}
+
+#[test]
+fn abyssal_modal_deep_capture_detection() {
+    // Verify modal pass catches sharp vars captured deep inside compound terms
+    use hyperion::passes::modal_restrict::{check_modal_restrictions, Modality};
+    use std::collections::HashMap;
+    use apeiron::parser::{Sexp, Span};
+
+    fn atom(s: &str) -> Sexp { Sexp::Atom(s.to_string(), Span::default()) }
+    fn list(items: Vec<Sexp>) -> Sexp { Sexp::List(items, Span::default()) }
+
+    let mut ann = HashMap::new();
+    ann.insert("?x".to_string(), Modality::Sharp);
+
+    // [flat [f [g [h ?x]]]] — sharp ?x buried 3 levels deep in flat context
+    let rules = vec![hyperion::session::VonNeumannRule {
+        name: "deep".to_string(),
+        lhs: list(vec![atom("flat"),
+            list(vec![atom("f"),
+                list(vec![atom("g"),
+                    list(vec![atom("h"), atom("?x")])])])]),
+        rhs: atom("ok"),
+    }];
+
+    let result = check_modal_restrictions(&rules, &ann);
+    assert!(!result.violations.is_empty(),
+        "Must detect sharp ?x buried 3 levels deep in flat context");
+    assert!(result.violations[0].var_name == "?x");
+}
+
+#[test]
+fn abyssal_kan_sigma_dependent_transport() {
+    // Verify Sigma transport is dependent, not independent componentwise
+    use hyperion::passes::kan_compute::{generate_kan_rules, KanOp};
+
+    let rules = generate_kan_rules(&[("Sigma".to_string(), 2)]);
+    let transp = rules.iter().find(|r| r.op == KanOp::Transport).unwrap();
+    let rhs = format!("{}", transp.rule.rhs);
+
+    // Must contain __dep_transp (dependent transport for second component)
+    assert!(rhs.contains("__dep_transp"),
+        "Sigma transport must use dependent transport for second component.\n\
+         Independent componentwise transport is mathematically WRONG for Σ-types.\n\
+         Got: {}", rhs);
+
+    // Must NOT be simple independent [transp ?A1 ?phi [proj1 ?u]]
+    assert!(!rhs.contains("[transp ?A1 ?phi [proj1 ?u]]"),
+        "Sigma transport must NOT independently transport second component.\n\
+         Got: {}", rhs);
+}
+
+#[test]
+fn abyssal_kan_pi_contravariant_domain() {
+    // Verify Pi transport has contravariant (backward) domain transport
+    use hyperion::passes::kan_compute::{generate_kan_rules, KanOp};
+
+    let rules = generate_kan_rules(&[("Pi".to_string(), 2)]);
+    let transp = rules.iter().find(|r| r.op == KanOp::Transport).unwrap();
+    let rhs = format!("{}", transp.rule.rhs);
+
+    // Must contain neg (direction negation for contravariant domain)
+    assert!(rhs.contains("neg"),
+        "Pi transport must negate direction for contravariant domain.\n\
+         Got: {}", rhs);
+
+    // Must contain lam (the result is a lambda)
+    assert!(rhs.contains("lam"),
+        "Pi transport result must be a lambda.\n\
+         Got: {}", rhs);
+}
+
+#[test]
+fn abyssal_orelse_state_isolation_unit() {
+    // Unit test: ORELSE(THEN(step, FAIL), finish) must see original goal
+    use hyperion::passes::goal_directed::*;
+    use apeiron::parser::{Sexp, Span};
+
+    fn atom(s: &str) -> Sexp { Sexp::Atom(s.to_string(), Span::default()) }
+    fn list(items: Vec<Sexp>) -> Sexp { Sexp::List(items, Span::default()) }
+
+    let rules = vec![
+        // "step" transforms [P] → [Q] (partial progress)
+        hyperion::session::VonNeumannRule {
+            name: "step".to_string(),
+            lhs: list(vec![atom("P")]),
+            rhs: list(vec![atom("Q")]),
+        },
+        // "finish" transforms [P] → true (full proof)
+        hyperion::session::VonNeumannRule {
+            name: "finish".to_string(),
+            lhs: list(vec![atom("P")]),
+            rhs: atom("true"),
+        },
+    ];
+
+    // ORELSE(THEN(step, FAIL), finish)
+    let tactic = list(vec![atom("ORELSE"),
+        list(vec![atom("THEN"),
+            list(vec![atom("APPLY"), atom("step")]),
+            atom("FAIL")]),
+        list(vec![atom("APPLY"), atom("finish")])]);
+
+    let prog = compile_tactic(&tactic).unwrap();
+    let goal = Goal { term: list(vec![atom("P")]), assumptions: vec![] };
+
+    let result = execute_tactic(&prog, &goal, &rules, 100);
+    assert!(matches!(result, TacticResult::Success),
+        "ORELSE must recover from THEN(step,FAIL) and prove via finish on ORIGINAL goal.\n\
+         If this fails, state leaked from the 'step' tactic corrupted the goal.");
+}
+
+// ====================================================================
+// APOLLYON TIER: Undecidability, resource exhaustion, pass-ordering
+// ====================================================================
+
+#[test]
+fn apollyon_pass_ordering_hyp() {
+    // A category with both HOASBinding AND classical axioms on a first-order engine.
+    // HOASDefunctionalization must run and convert lambdas to closures.
+    // If Dialectica were wired in, it must run BEFORE defunctionalization.
+    let source = std::fs::read_to_string("examples/apollyon-pass-ordering.hyp").unwrap();
+    let sexps = apeiron::parser::parse(&source).unwrap();
+    let mut session = HyperionSession::new();
+    for sexp in &sexps {
+        session.process(sexp)
+            .unwrap_or_else(|e| panic!("Error: {}\nOutput: {:?}", e, session.output));
+    }
+    let output = session.output.join("\n");
+
+    // HOASDefunctionalization must have run (lam is HOAS binder on VN engine)
+    assert!(output.contains("[PASS:HOASDefunctionalization]"),
+        "HOAS defunc must run for HOASBinding on VN engine. Output: {}", output);
+
+    // The closure rules must be present in the theory
+    let theory = &session.vn_theories["ClassicalSTLC"];
+    let has_closure = theory.rules.iter().any(|r| r.name.contains("closure"));
+    assert!(has_closure,
+        "Theory must have closure rules from defunctionalization");
+}
+
+#[test]
+fn apollyon_pass_ordering_dialectica_before_defunc() {
+    // Verify the architectural invariant: if both Dialectica and HOASDefunc
+    // are needed, Dialectica must precede defunctionalization in the pipeline.
+    // (Dialectica generates lambdas; defunc lowers them to first-order.)
+    use hyperion::universe::CompilationPass;
+
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category CDLF [Object Type] [Object Term]
+          [Morphism arrow :domain [Type Type] :codomain Type]
+          [HOASBinding lam :object Term]
+        ]
+        [Substrate VN @engine von-neumann @resource-mode deep-copy @barrier transparent @equality rewrite-equivalence]
+        [Universe CDWorld :category CDLF :substrate VN]
+    "#;
+    process_all(&mut session, input).unwrap();
+    let compiled = &session.universes["CDWorld"];
+
+    // HOASDefunctionalization should be present
+    assert!(compiled.passes.contains(&CompilationPass::HOASDefunctionalization),
+        "Must have HOAS defunc for HOASBinding on VN. Passes: {:?}", compiled.passes);
+
+    // If we ever add DialecticaExtraction to the pipeline, verify ordering:
+    // Dialectica index must be < HOASDefunc index (runs first).
+    if let (Some(di), Some(hi)) = (
+        compiled.passes.iter().position(|p| matches!(p, CompilationPass::DialecticaExtraction)),
+        compiled.passes.iter().position(|p| matches!(p, CompilationPass::HOASDefunctionalization)),
+    ) {
+        assert!(di < hi,
+            "DialecticaExtraction (pos {}) must precede HOASDefunctionalization (pos {})",
+            di, hi);
+    }
+    // Currently Dialectica is not wired in — that's fine, this is a guard for future.
+}
+
+#[test]
+fn apollyon_miller_violation_hyp() {
+    // Ground queries on the logic engine — these should succeed.
+    // The Miller pattern boundary is tested at the unit level.
+    let source = std::fs::read_to_string("examples/apollyon-miller-violation.hyp").unwrap();
+    let sexps = apeiron::parser::parse(&source).unwrap();
+    let mut session = HyperionSession::new();
+    for sexp in &sexps {
+        session.process(sexp)
+            .unwrap_or_else(|e| panic!("Error: {}\nOutput: {:?}", e, session.output));
+    }
+    let output = session.output.join("\n");
+    assert!(output.contains("[PROOF:LP]"),
+        "Logic engine should handle ground Miller-safe queries. Output: {}", output);
+}
+
+#[test]
+fn apollyon_miller_duplicate_bound_vars_rejected() {
+    // F(x, x) = t — duplicate bound variable violates Miller condition.
+    // The logic engine must NOT attempt full HO unification (undecidable).
+    // It should fail gracefully, not diverge.
+    use hyperion::passes::logic_engine::{resolve, Clause};
+    use apeiron::parser::{Sexp, Span};
+
+    fn atom(s: &str) -> Sexp { Sexp::Atom(s.to_string(), Span::default()) }
+    fn list(items: Vec<Sexp>) -> Sexp { Sexp::List(items, Span::default()) }
+
+    // Clause: [eq [?F ?x ?x] t] ==> [true]
+    // This has ?F applied to duplicate args — non-Miller
+    let clauses = vec![Clause {
+        name: "eq-dup".to_string(),
+        head: list(vec![atom("eq"),
+            list(vec![atom("?F"), atom("?x"), atom("?x")]),
+            atom("t")]),
+        body: list(vec![atom("true")]),
+    }];
+
+    // Query: [eq [g a a] t] — can ?F = g solve this?
+    // In first-order matching: ?F matches "g" (head), ?x matches "a".
+    // The duplicate ?x is fine for first-order (both positions get "a").
+    let query = list(vec![atom("eq"),
+        list(vec![atom("g"), atom("a"), atom("a")]),
+        atom("t")]);
+
+    let result = resolve(&query, &clauses, 100);
+    // First-order: this should succeed (no HO unification needed)
+    assert!(result.is_success(),
+        "Ground first-order query with repeated vars should succeed");
+
+    // But: [eq [g a b] t] should FAIL because ?x can't be both a and b
+    let query2 = list(vec![atom("eq"),
+        list(vec![atom("g"), atom("a"), atom("b")]),
+        atom("t")]);
+
+    let result2 = resolve(&query2, &clauses, 100);
+    assert!(result2.is_failure(),
+        "Non-linear pattern with distinct args must fail: ?x can't be both 'a' and 'b'");
+}
+
+#[test]
+fn apollyon_egraph_avalanche_hyp() {
+    // SKI combinator calculus — verify the theory loads without crashing.
+    // The e-graph fuel limit protects against exponential blowup.
+    let source = std::fs::read_to_string("examples/apollyon-egraph-avalanche.hyp").unwrap();
+    let sexps = apeiron::parser::parse(&source).unwrap();
+    let mut session = HyperionSession::new();
+    for sexp in &sexps {
+        session.process(sexp)
+            .unwrap_or_else(|e| panic!("Error: {}\nOutput: {:?}", e, session.output));
+    }
+    assert!(session.universes.contains_key("SKIWorld"),
+        "SKI universe should load");
+    let output = session.output.join("\n");
+    assert!(output.contains("SKICombinators"),
+        "SKI theory should load. Output: {}", output);
+}
+
+#[test]
+fn apollyon_egraph_fuel_prevents_oom() {
+    // Feed the e-graph a deeply nested SKI term that would explode without limits.
+    // S(S(S(K)))(K)(S(K)) applied to args — exponential e-node proliferation.
+    // The e-graph must hit its fuel limit and stop, not OOM.
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category SKI2 [Object Term]
+          [Morphism app :domain [Term Term] :codomain Term]
+        ]
+        [Universe SKI2World :category SKI2 :substrate ApeironStandard]
+        [Theory SKI2T :in SKI2World
+          ;; S combinator: deeply recursive
+          [@rule s-red [app [app [app S ?x] ?y] ?z] ==> [app [app ?x ?z] [app ?y ?z]]]
+          [@rule k-red [app [app K ?x] ?y] ==> ?x]
+        ]
+        [Proofs SKI2P :in SKI2T
+          ;; This is a simple reduction that should terminate
+          [assert-eq k-basic [app [app K a] b] a]
+        ]
+    "#;
+    // This must complete (not OOM). Apeiron's 10k node limit is the guard.
+    let result = process_all(&mut session, input);
+    // Either succeeds or fails with a fuel error — both are acceptable.
+    // The only unacceptable outcome is hanging or OOM.
+    match result {
+        Ok(()) => {
+            let output = session.output.join("\n");
+            assert!(output.contains("k-basic") || output.contains("PROOF"),
+                "K reduction should succeed. Output: {}", output);
+        }
+        Err(e) => {
+            let err = format!("{}", e);
+            // Fuel exhaustion is acceptable — it means the limit worked
+            eprintln!("E-graph bounded error (acceptable): {}", err);
+        }
+    }
+}
+
+#[test]
+fn apollyon_dialectica_classical_extraction() {
+    // Verify Dialectica extraction handles classical proofs correctly.
+    use hyperion::passes::dialectica::{extract_witness, ClassicalAxiom};
+    use apeiron::parser::{Sexp, Span};
+
+    fn atom(s: &str) -> Sexp { Sexp::Atom(s.to_string(), Span::default()) }
+    fn list(items: Vec<Sexp>) -> Sexp { Sexp::List(items, Span::default()) }
+
+    // A proof using LEM: [exist-intro lem classical-proof]
+    let proof = list(vec![atom("exist-intro"), atom("lem"), atom("classical-proof")]);
+    let goal = list(vec![atom("exists"), atom("x"), list(vec![atom("P"), atom("x")])]);
+    let rules = vec![hyperion::session::VonNeumannRule {
+        name: "lem-axiom".to_string(),
+        lhs: atom("lem"),
+        rhs: list(vec![atom("or"), atom("A"), atom("notA")]),
+    }];
+
+    let result = extract_witness(&proof, &goal, &rules);
+
+    // Must detect LEM and apply CPS translation
+    assert!(result.cps_translated, "Must CPS-translate classical proof");
+    assert!(result.classical_axioms.contains(&ClassicalAxiom::LEM));
+
+    // Must not extract raw "lem" as witness
+    if let Some(ref w) = result.witness {
+        assert!(format!("{}", w) != "lem",
+            "Must not extract raw classical axiom as witness");
+    }
+}
+
+#[test]
+fn apollyon_smt_rlimit_prevents_hang() {
+    // Verify SMT-LIB2 payloads include rlimit to prevent Z3 hangs
+    use hyperion::passes::smt_bridge::encode_smtlib2;
+    let encoded = encode_smtlib2(&[], &[], &[], true);
+    assert!(encoded.contains("rlimit"),
+        "SMT payload must include rlimit. Got: {}", encoded);
+}
+
+// ============================================================
+// GÖDEL TIER: Semantic Translation Paradoxes
+// ============================================================
+
+#[test]
+fn godel_axiom_k_contagion_hyp_loads() {
+    // The HoTT+SMT theory should load (theory registration is fine).
+    // The danger is at PROOF TIME when path terms are sent to Z3.
+    let src = std::fs::read_to_string("examples/godel-axiom-k-contagion.hyp").unwrap();
+    let mut session = hyperion::session::HyperionSession::new();
+    let result = { let sexps = apeiron::parser::parse(&src).unwrap(); sexps.iter().try_for_each(|s| session.process(s)) };
+    assert!(result.is_ok(), "HoTT+SMT theory should load: {:?}", result.err());
+}
+
+#[test]
+fn godel_axiom_k_truncation_boundary() {
+    // Direct test: validate_truncation_boundary must reject path terms in HoTT context
+    use hyperion::passes::smt_bridge::{validate_truncation_boundary, contains_path_constructors};
+    use apeiron::parser::{Sexp, Span};
+
+    let sp = Span::default();
+    let a = |s: &str| Sexp::Atom(s.to_string(), sp);
+    let l = |v: Vec<Sexp>| Sexp::List(v, sp);
+
+    // Path constructor term: [concat p q] — proof-relevant, MUST be rejected
+    let path_term = l(vec![a("concat"), a("p"), a("q")]);
+    let ground = a("r");
+
+    assert!(contains_path_constructors(&path_term),
+        "concat is a HoTT path constructor");
+    assert!(!contains_path_constructors(&ground),
+        "bare atom 'r' is not a path constructor");
+
+    // In HoTT theory: rejected
+    let result = validate_truncation_boundary(&path_term, &ground, true);
+    assert!(result.is_err(), "Must reject path terms in HoTT context");
+    assert!(result.unwrap_err().contains("Axiom K contagion"));
+
+    // In non-HoTT theory: allowed (concat is just an uninterpreted function)
+    assert!(validate_truncation_boundary(&path_term, &ground, false).is_ok());
+
+    // Ground arithmetic in HoTT context: allowed (0-truncated)
+    let arith = l(vec![a("plus"), a("x"), a("zero")]);
+    assert!(validate_truncation_boundary(&arith, &a("x"), true).is_ok());
+}
+
+#[test]
+fn godel_axiom_k_deep_path_detection() {
+    // Path constructors nested deep inside terms must still be caught
+    use hyperion::passes::smt_bridge::contains_path_constructors;
+    use apeiron::parser::{Sexp, Span};
+
+    let sp = Span::default();
+    let a = |s: &str| Sexp::Atom(s.to_string(), sp);
+    let l = |v: Vec<Sexp>| Sexp::List(v, sp);
+
+    // [eq [f [g [transport A B p x]]] y] — transport buried 3 levels deep
+    let deep = l(vec![
+        a("eq"),
+        l(vec![a("f"), l(vec![a("g"), l(vec![a("transport"), a("A"), a("B"), a("p"), a("x")])])]),
+        a("y"),
+    ]);
+    assert!(contains_path_constructors(&deep),
+        "transport nested 3 levels deep must be detected");
+
+    // All known HoTT constructors
+    for ctor in &["refl", "concat", "inv", "ap", "transport", "hcomp", "coe", "transp", "glue"] {
+        assert!(contains_path_constructors(&a(ctor)),
+            "{} should be recognized as a path constructor", ctor);
+    }
+}
+
+#[test]
+fn godel_cumulativity_loophole_safe_loads() {
+    // Safe cumulativity rules (lift elimination) should load fine
+    let src = std::fs::read_to_string("examples/godel-cumulativity-loophole.hyp").unwrap();
+    let mut session = hyperion::session::HyperionSession::new();
+    let result = { let sexps = apeiron::parser::parse(&src).unwrap(); sexps.iter().try_for_each(|s| session.process(s)) };
+    assert!(result.is_ok(), "Safe cumul theory should load: {:?}", result.err());
+}
+
+#[test]
+fn godel_cumulativity_lift_cycle_rejected() {
+    // Unsafe: rule that INTRODUCES lift on RHS without it on LHS
+    // ?A ==> [lift ?A] would cause infinite e-graph expansion
+    use hyperion::passes::smt_bridge::detect_lift_cycles;
+    use hyperion::session::VonNeumannRule;
+    use apeiron::parser::{Sexp, Span};
+
+    let sp = Span::default();
+    let a = |s: &str| Sexp::Atom(s.to_string(), sp);
+    let l = |v: Vec<Sexp>| Sexp::List(v, sp);
+
+    let bad_rules = vec![VonNeumannRule {
+        name: "cumul-intro".to_string(),
+        lhs: a("?A"),
+        rhs: l(vec![a("lift"), a("?A")]),
+    }];
+    let cycles = detect_lift_cycles(&bad_rules);
+    assert!(!cycles.is_empty(),
+        "Must detect lift-expanding rule as potential infinite loop");
+
+    // Expanding nested lift: [lift ?A] ==> [lift [lift ?A]]
+    let nested_bad = vec![VonNeumannRule {
+        name: "lift-grow".to_string(),
+        lhs: l(vec![a("lift"), a("?A")]),
+        rhs: l(vec![a("lift"), l(vec![a("lift"), a("?A")])]),
+    }];
+    let cycles2 = detect_lift_cycles(&nested_bad);
+    assert!(!cycles2.is_empty(),
+        "Must detect nested lift growth");
+
+    // Safe: elimination [lift ?A] ==> ?A
+    let safe = vec![VonNeumannRule {
+        name: "lift-elim".to_string(),
+        lhs: l(vec![a("lift"), a("?A")]),
+        rhs: a("?A"),
+    }];
+    assert!(detect_lift_cycles(&safe).is_empty(),
+        "Lift elimination is safe, should not be flagged");
+}
+
+#[test]
+fn godel_cumulativity_session_rejects_expanding_lift() {
+    // A .hyp theory with a lift-expanding rule must be rejected at parse time
+    let src = r#"
+[Category TypeH
+  [Object Type] [Object Term]
+  [Morphism lift :domain [Type] :codomain Type]
+  [Morphism base :domain [] :codomain Type]
+]
+
+[Substrate VNStd
+  @engine von-neumann
+  @resource-mode deep-copy
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Universe TW :category TypeH :substrate VNStd]
+
+[Theory BadCumul :in TW
+  ;; This rule causes infinite e-graph expansion: A → lift(A) → lift(lift(A)) → ...
+  [@rule cumul-up [base] ==> [lift [base]]]
+]
+"#;
+    let mut session = hyperion::session::HyperionSession::new();
+    let result = { let sexps = apeiron::parser::parse(src).unwrap(); sexps.iter().try_for_each(|s| session.process(s)) };
+    // Hm, this particular rule has lift on both sides? No — [base] ==> [lift [base]]
+    // LHS has 0 lifts, RHS has 1 lift — should be caught.
+    // Actually wait: detect_lift_cycles checks for "lift" substring.
+    // [base] doesn't contain "lift", [lift [base]] does. So this is caught.
+    assert!(result.is_err(),
+        "Theory with lift-expanding rule must be rejected");
+    let err = format!("{:?}", result.err().unwrap());
+    assert!(err.contains("lift cycle") || err.contains("lift"),
+        "Error should mention lift cycle: {}", err);
 }

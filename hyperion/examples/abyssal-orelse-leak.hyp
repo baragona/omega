@@ -1,0 +1,36 @@
+;; Abyssal Test 3: The State-Leaking ORELSE
+;;
+;; LCF tactic combinators are state machines. ORELSE requires perfect rollback.
+;;
+;; Setup: A goal G with two possible proof strategies.
+;; Strategy A: partially succeeds (transforms G → G'), then fails on a subgoal.
+;; Strategy B: works on the ORIGINAL G.
+;;
+;; The trap: If tactic A leaks its partial state into the environment,
+;; strategy B inherits a corrupted proof state (sees G' instead of G).
+
+[Category TacticLC
+  [Object Prop]
+  [Morphism implies :domain [Prop Prop] :codomain Prop]
+  [Morphism and :domain [Prop Prop] :codomain Prop]
+  [Morphism P :domain [] :codomain Prop]
+  [Morphism Q :domain [] :codomain Prop]
+  [Morphism R :domain [] :codomain Prop]
+]
+
+[Universe TacWorld :category TacticLC :substrate ApeironStandard]
+
+[Theory StateLeak :in TacWorld
+  ;; A rewrite that transforms P → Q (the "partial success" of tactic A)
+  [@rule step-to-Q [implies P Q] ==> Q]
+
+  ;; The "real" proof: P implies P (trivially)
+  [@rule p-refl P ==> P]
+
+  ;; Composition: if we can prove P, and P→P, we're done
+  [@rule id-proof [implies P P] ==> P]
+]
+
+;; Proofs deferred to unit tests — ORELSE state isolation is tested
+;; directly in goal_directed.rs. E-graph substrate would loop on
+;; implies/and rewriting.

@@ -1253,9 +1253,35 @@ hyperion kompile <file.hyp> --theory <name> -o <output_dir/>
 | `--theory` | Theory name for kompile |
 | `-o` | Output directory for generated Rust crate |
 
+## Safety Guardrails
+
+### Axiom K Truncation Boundary (SMT × HoTT)
+
+Z3 is proof-irrelevant: it silently imposes Axiom K (uniqueness of identity proofs). If a HoTT theory with `PathType` structure dispatches path-relevant equalities to Z3 via `@equality smt-oracle`, Z3 will collapse the ∞-topos into a 1-groupoid — all higher homotopies become trivially equal.
+
+**Guard**: Before any SMT query, the session checks whether the theory's category has `PathType` structure. If so, terms are scanned for 16 known path constructors (`refl`, `concat`, `inv`, `ap`, `transport`, `hcomp`, `coe`, `transp`, `glue`, etc.). Queries containing path constructors are rejected with an "Axiom K contagion" error. Only 0-truncated (Set) or (-1)-truncated (Prop) types may use the SMT oracle.
+
+**Known limitation**: The check is syntactic, not type-directed. A term `f(a)` whose return type is `Path(B, x, y)` will pass the scan if `f` is opaque. The full fix requires sort-aware SMT dispatch (querying the type-checker at the bridge boundary).
+
+### Universe Lift Cycle Detection (Cumulativity)
+
+Universe hierarchies are cumulative: `A : U₀` implies `A : U₁`. If this is modeled as rewrite rules with explicit `lift`/`cumul` operators where the RHS has more occurrences than the LHS, the e-graph enters an infinite expansion loop: `A = lift(A) = lift(lift(A)) = ...`
+
+**Guard**: At theory registration time, rules are scanned for `lift`/`Lift`/`cumul`/`Cumul` operators. Rules where the RHS has strictly more lift occurrences than the LHS are rejected as potential infinite loops. Lift-eliminating rules (`[lift ?A] ==> ?A`) are safe and allowed.
+
+**Known limitation**: This rejects the rules entirely rather than implementing true cumulativity. Real cumulative universes require parametric level constraints (`max(i,j)`) resolved during elaboration, before equality saturation begins — not explicit lift nodes in the e-graph.
+
+### SMT Resource Limits
+
+All Z3 queries include `(set-option :rlimit 1000000)` to prevent quantifier instantiation loops, the Z3 `-T:10` timeout flag, and a Rust-side deadline with `child.kill()` as a safety net.
+
+### E-Graph Fuel
+
+Apeiron's `EGraphFuel` (30 iterations, 10k nodes) bounds all equality saturation, preventing OOM from exponential e-class growth (e.g., SKI combinator reduction).
+
 ## Tests
 
-221 tests (48 unit + 173 integration), covering:
+365 tests (142 unit + 223 integration), covering:
 
 - Category/substrate/universe parsing and validation
 - Compilation pass insertion for all 9 bridging strategies (bang modality, nominal abstraction, defunctionalization, tensor serialization, Kripke threading, dependent combinators, RPC serialization, consensus replication, partition tolerance)
@@ -1286,6 +1312,10 @@ hyperion kompile <file.hyp> --theory <name> -o <output_dir/>
 - E-graph round-trip: `NativeCompilerEffects::ask_egraph` proves equalities via egg (commutativity, identity, nested simplification, 0+1=1, 1+1=2)
 - Dogfood disjointness: compiler pass written in Hyperion, compiled by its own compiler
 - All example files
+- **Abyssal Tier**: Context reify shadowing, modal trojan closures, ORELSE state isolation, dependent Kan transport (9 tests)
+- **Tartarus Tier**: AC-bound variable scramble, Dialectica continuation trap, SMT matching loop hang (8 tests)
+- **Apollyon Tier**: Pass-ordering cycles, Miller pattern violations, e-graph memory avalanche (8 tests)
+- **Gödel Tier**: Axiom K truncation boundary (HoTT × SMT), universe lift cycle detection (6 tests)
 
 ```bash
 cargo test

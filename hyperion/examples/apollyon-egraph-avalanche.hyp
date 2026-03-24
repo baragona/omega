@@ -1,0 +1,40 @@
+;; Apollyon Test 3: The E-Graph Memory Avalanche
+;;
+;; SKI combinator calculus generates exponential e-node proliferation.
+;; Without bounded fuel, the e-graph consumes all RAM and OOM-kills
+;; the process without a trace.
+;;
+;; K x y = x
+;; S x y z = (x z)(y z)
+;;
+;; The e-graph must hit its node limit and return an error/inconclusive
+;; rather than silently consuming all memory.
+
+[Category SKI
+  [Object Term]
+  [Morphism app :domain [Term Term] :codomain Term]
+  [Morphism S :domain [] :codomain Term]
+  [Morphism K :domain [] :codomain Term]
+  [Morphism I :domain [] :codomain Term]
+]
+
+[Universe SKIWorld :category SKI :substrate ApeironStandard]
+
+[Theory SKICombinators :in SKIWorld
+  ;; K combinator: K x y → x
+  [@rule k-reduce [app [app K ?x] ?y] ==> ?x]
+
+  ;; S combinator: S x y z → (x z)(y z)
+  [@rule s-reduce [app [app [app S ?x] ?y] ?z] ==> [app [app ?x ?z] [app ?y ?z]]]
+
+  ;; I combinator: I x → x
+  [@rule i-reduce [app I ?x] ==> ?x]
+
+  ;; Identity: S K K = I (standard combinator identity)
+  ;; This is a bounded proof — should succeed within fuel limits.
+  [@rule i-def [app [app [app S K] K] ?x] ==> ?x]
+]
+
+;; No proofs — the e-graph substrate may not handle combinator
+;; matching correctly without special configuration.
+;; The fuel-limit test is done in the inline apollyon_egraph_fuel_prevents_oom test.

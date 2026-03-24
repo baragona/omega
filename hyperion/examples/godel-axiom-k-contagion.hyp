@@ -1,0 +1,42 @@
+;; Gödel Tier Test 1: The Axiom K Contagion
+;;
+;; Z3 (first-order logic) is proof-irrelevant: it silently imposes Axiom K
+;; (uniqueness of identity proofs). If a HoTT theory with PathType sends
+;; path equalities to Z3, the SMT oracle collapses the ∞-topos into a
+;; 1-groupoid — all higher homotopies become trivial.
+;;
+;; The truncation boundary must REJECT path-relevant queries sent to Z3.
+;; Only 0-truncated (Set) types are safe for SMT oracle dispatch.
+
+;; A HoTT category with PathType structure
+[Category HoTTArith
+  [Object Type] [Object Term] [Object Path]
+  [Morphism zero :domain [] :codomain Term]
+  [Morphism succ :domain [Term] :codomain Term]
+  [Morphism plus :domain [Term Term] :codomain Term]
+  [PathType :refl refl :concat concat :inv inv :ap ap]
+]
+
+;; SMT oracle substrate — proof-irrelevant decision procedure
+[Substrate Z3Dec
+  @engine von-neumann
+  @resource-mode deep-copy
+  @barrier transparent
+  @equality smt-oracle
+]
+
+[Universe HoTTZ3World :category HoTTArith :substrate Z3Dec]
+
+;; Theory with both arithmetic (0-truncated, safe) and path operations (unsafe)
+[Theory HoTTArithOps :in HoTTZ3World
+  [@rule plus-zero [plus ?x zero] ==> ?x]
+  [@rule plus-succ [plus ?x [succ ?y]] ==> [succ [plus ?x ?y]]]
+]
+
+;; Safe: arithmetic is 0-truncated, Z3 can handle it
+;; (This theory has PathType in its category, so the truncation boundary
+;; will be checked. Pure arithmetic terms should pass.)
+;;
+;; NOTE: We don't include path-involving proofs here because the session
+;; must REJECT them before they reach Z3. That rejection is tested in the
+;; integration test (godel_axiom_k_truncation_boundary).

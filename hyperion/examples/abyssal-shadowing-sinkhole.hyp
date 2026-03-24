@@ -1,0 +1,41 @@
+;; Abyssal Test 1: The Shadowing Sinkhole
+;;
+;; Context reification turns meta-level environments into structural lists.
+;; The hardest case: variable shadowing.
+;;
+;; Setup: Context [x:C, y:B, x:A] — x is bound TWICE.
+;; The trap: looking up "x" MUST return A (most recent), not C (oldest).
+;; Additionally, index-based lookup must traverse past the first binding
+;; using a successor rule.
+
+[Category ContextualLC
+  [Object Term] [Object Type] [Object Ctx]
+  [Morphism typeof :domain [Ctx Term] :codomain Type]
+  [Morphism extend :domain [Ctx Term Type] :codomain Ctx]
+  [Morphism lookup :domain [Ctx Term] :codomain Type]
+  [Morphism empty-ctx :domain [] :codomain Ctx]
+]
+
+[Universe CtxWorld :category ContextualLC :substrate ApeironStandard]
+
+[Theory ContextShadow :in CtxWorld
+  ;; Build a shadowed context: x:C, then y:B, then x:A (x shadows)
+  ;; After reification this becomes nested __ctx_cons with x appearing twice.
+
+  ;; Typing rule using context lookup
+  [@rule t-var [typeof ?Γ ?x] ==> [lookup ?Γ ?x]]
+
+  ;; These test the structural lookup rules:
+  ;; extend(extend(extend(empty-ctx, x, C), y, B), x, A)
+  ;;   → __ctx_cons(__ctx_cons(__ctx_cons(__ctx_nil, x, C), y, B), x, A)
+  ;; Looking up x should find A (the outermost/most-recent binding)
+
+  ;; Index 0 always returns the most recent binding's type
+  [@rule idx-zero-test
+    [lookup [extend [extend [extend empty-ctx x C] y B] x A] x]
+    ==> A]
+]
+
+;; Proofs deferred to unit tests — the e-graph substrate would
+;; loop on context lookup rules (they need the logic engine).
+;; The pass-level shadowing tests are in context_reify.rs unit tests.

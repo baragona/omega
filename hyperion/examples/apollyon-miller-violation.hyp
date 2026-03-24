@@ -1,0 +1,35 @@
+;; Apollyon Test 2: The Miller Pattern Violation
+;;
+;; Higher-Order Pattern Unification (Miller patterns) requires that
+;; meta-variables are only applied to DISTINCT bound variables.
+;; F(x,x) = t or F(0) = t violate the Miller condition.
+;;
+;; The logic engine must detect and reject non-pattern equations
+;; rather than attempting full higher-order unification (undecidable).
+
+[Category HOLogic
+  [Object Term] [Object Prop]
+  [Morphism app :domain [Term Term] :codomain Term]
+  [Morphism eq :domain [Term Term] :codomain Prop]
+  [Morphism f :domain [Term] :codomain Term]
+  [Morphism g :domain [Term Term] :codomain Term]
+]
+
+[Universe HOWorld :category HOLogic :substrate PrologEngine]
+
+[Theory MillerTest :in HOWorld
+  ;; A well-formed rule (distinct bound vars in pattern position)
+  [@rule eq-refl [eq ?x ?x] ==> [true]]
+
+  ;; Rules that use the logic engine for resolution
+  [@rule app-f [app [f ?x] ?y] ==> [g ?x ?y]]
+]
+
+;; The safe test: ground queries that don't trigger HO unification
+[Proofs MillerSafe :in MillerTest
+  ;; Reflexivity: eq(a, a) = true (ground, no metavar issues)
+  [assert-eq refl-ground [eq a a] true]
+
+  ;; App reduction: app(f(a), b) = g(a, b) (ground)
+  [assert-eq app-ground [app [f a] b] [g a b]]
+]

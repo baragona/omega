@@ -1,0 +1,42 @@
+;; Apollyon Test 1: The Pass-Ordering Cycle
+;;
+;; If DialecticaExtraction runs AFTER HOASDefunctionalization, it injects
+;; fresh lambdas (__callcc, lam) into an AST the pipeline assumes is already
+;; first-order. The SMT serializer or logic engine will choke.
+;;
+;; The pipeline DAG must guarantee: higher-order synthetic generation
+;; (Dialectica) strictly precedes first-order lowering (HOAS Defunc).
+
+[Category ClassicalLF
+  [Object Type] [Object Term] [Object Proof]
+  [Morphism typeof :domain [Term] :codomain Type]
+  [Morphism arrow :domain [Type Type] :codomain Type]
+  [HOASBinding lam :object Term]
+  [Morphism exists :domain [Type Type] :codomain Type]
+  [Morphism lem :domain [] :codomain Proof]
+  [Morphism dne :domain [Proof] :codomain Proof]
+]
+
+;; VonNeumann engine: first-order. This forces HOASDefunctionalization.
+[Substrate VN1st
+  @engine von-neumann
+  @resource-mode deep-copy
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Universe ClassicalWorld :category ClassicalLF :substrate VN1st]
+
+;; Theory with both HOAS binders AND classical axioms.
+;; The pass pipeline must handle both without conflict.
+[Theory ClassicalSTLC :in ClassicalWorld
+  ;; Typing rule with HOAS binder (needs defunctionalization)
+  [@rule t-lam [typeof [lam ?A ?body] [arrow ?A ?B]] ==> [true]]
+
+  ;; Classical axiom (would need Dialectica extraction for witness extraction)
+  [@rule lem-axiom [typeof lem [arrow ?A [arrow ?A ?A]]] ==> [true]]
+]
+
+;; The key test: does the pipeline handle HOAS + classical in the right order?
+;; HOASDefunctionalization should transform lam bodies to closures.
+;; If Dialectica were also active, it must run BEFORE defunctionalization.

@@ -1,0 +1,39 @@
+;; Abyssal Test 2: The Trojan Horse Closure
+;;
+;; Modal restriction checks must look INSIDE closures, not just at the
+;; surface level. A sharp variable captured inside a lambda passed into
+;; a flat context is still a violation.
+;;
+;; The trap: [flat [lam y [op x y]]] where x is sharp.
+;; A shallow check sees "lam" (not tagged sharp) and lets it through.
+;; A deep check finds ?x inside the closure body and flags the violation.
+
+[Category CohesiveLC
+  [Object Term] [Object Type]
+  [Morphism typeof :domain [Term] :codomain Type]
+  [Morphism flat :domain [Term] :codomain Term]
+  [Morphism sharp :domain [Term] :codomain Term]
+  [Morphism lam :domain [Term Term] :codomain Term]
+  [Morphism op :domain [Term Term] :codomain Term]
+]
+
+[Universe CohWorld :category CohesiveLC :substrate ApeironStandard]
+
+[Theory ModalCapture :in CohWorld
+  ;; A flat-introduction rule: the argument to flat must not capture sharp vars
+  [@rule flat-intro [typeof [flat ?e]] ==> [typeof ?e]]
+
+  ;; A rule where a sharp variable is explicitly used in a closure
+  ;; The modal restriction pass should detect ?x inside the flat context
+  [@rule trojan-rule
+    [typeof [flat [lam ?y [op [sharp ?x] ?y]]]]
+    ==> [typeof [lam ?y [op [sharp ?x] ?y]]]]
+
+  ;; Safe rule: flat variable in flat context is fine
+  [@rule safe-flat
+    [typeof [flat [lam ?y [op [flat ?z] ?y]]]]
+    ==> [typeof [lam ?y [op [flat ?z] ?y]]]]
+]
+
+;; Proofs deferred to unit tests — modal restriction is a compilation pass,
+;; not an e-graph proof. The deep-capture tests are in modal_restrict.rs.

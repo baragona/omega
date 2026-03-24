@@ -951,6 +951,30 @@ impl HyperionSession {
         if let Some(compiled) = self.universes.get(universe_name) {
             use crate::universe::CompilationPass;
 
+            // HOASDefunctionalization: convert HOAS binders to explicit closures
+            if compiled.passes.contains(&CompilationPass::HOASDefunctionalization) {
+                // Find the HOAS binder name from the category
+                if let Some(binder_name) = self.categories.get(&compiled.category_name)
+                    .and_then(|c| c.structure.iter().find_map(|s| {
+                        if let crate::category::CategoricalStructure::HOASBinding { binder, .. } = s {
+                            Some(binder.clone())
+                        } else {
+                            None
+                        }
+                    }))
+                {
+                    let result = crate::passes::hoas_defunc::defunctionalize_rules(&rules, &binder_name);
+                    if result.lifted_count > 0 {
+                        rules = result.rules;
+                        rules.extend(result.closure_rules);
+                        self.output.push(format!(
+                            "[PASS:HOASDefunctionalization] Lifted {} closures from binder '{}'",
+                            result.lifted_count, binder_name
+                        ));
+                    }
+                }
+            }
+
             // ACNormalization: detect AC operators from @law commutativity patterns,
             // then flatten+sort all AC operator trees in rules.
             if compiled.passes.contains(&CompilationPass::ACNormalization) {
@@ -1014,6 +1038,19 @@ impl HyperionSession {
                 None
             }
         });
+
+        // Check for universe lift cycles before registering
+        let lift_cycles = crate::passes::smt_bridge::detect_lift_cycles(&rules);
+        if !lift_cycles.is_empty() {
+            return Err(HyperionError::ParseError {
+                block: "Theory".into(),
+                detail: format!(
+                    "Universe lift cycle detected — rules that expand lift/cumul operators \
+                     will cause infinite e-graph saturation: [{}]",
+                    lift_cycles.join(", ")
+                ),
+            });
+        }
 
         self.vn_theories.insert(
             theory_name.clone(),
@@ -1381,7 +1418,16 @@ impl HyperionSession {
         });
 
         if matches!(equality_mode, Some(substrate::EqualityMode::SMTOracle)) {
-            return self.process_proofs_smt_oracle(items, theory_name.as_deref());
+            // Check for Axiom K contagion: if the theory's category has PathType
+            // (HoTT path spaces), the SMT oracle must reject path-relevant queries.
+            let is_hott = theory_name.as_deref().map(|tn| {
+                self.theory_universes.get(tn)
+                    .and_then(|un| self.universes.get(un))
+                    .and_then(|cu| self.categories.get(&cu.category_name))
+                    .map(|cat| cat.has_path_type())
+                    .unwrap_or(false)
+            }).unwrap_or(false);
+            return self.process_proofs_smt_oracle(items, theory_name.as_deref(), is_hott);
         }
 
         let rewritten = self.rewrite_for_apeiron(sexp, universe_name.as_deref())?;
@@ -1439,7 +1485,7 @@ impl HyperionSession {
     }
 
     /// Process proofs using the SMT oracle (Z3 decision procedure).
-    fn process_proofs_smt_oracle(&mut self, items: &[Sexp], theory_name: Option<&str>) -> Result<()> {
+    fn process_proofs_smt_oracle(&mut self, items: &[Sexp], theory_name: Option<&str>, is_hott: bool) -> Result<()> {
         let theory_name = theory_name.ok_or_else(|| HyperionError::ParseError {
             block: "Proofs".into(),
             detail: "missing :in theory for SMT oracle proofs".into(),
@@ -1463,6 +1509,16 @@ impl HyperionSession {
                     let name = inner[1].as_atom().unwrap_or("?").to_string();
                     let lhs = &inner[2];
                     let rhs = &inner[3];
+
+                    // Axiom K truncation boundary: reject path-relevant terms
+                    if is_hott {
+                        if let Err(detail) = crate::passes::smt_bridge::validate_truncation_boundary(lhs, rhs, true) {
+                            return Err(HyperionError::ProofFailure {
+                                name: name.clone(),
+                                detail,
+                            });
+                        }
+                    }
 
                     // First try rewriting (VN rules), then fall back to Z3
                     let clauses = crate::passes::logic_engine::rules_to_clauses(&theory.rules);

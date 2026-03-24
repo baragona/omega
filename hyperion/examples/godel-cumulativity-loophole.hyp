@@ -1,0 +1,32 @@
+;; Gödel Tier Test 2: The Cumulativity Loophole
+;;
+;; Universe hierarchies are cumulative: A : U_0 implies A : U_1.
+;; If this is modeled as a rewrite rule [lift ?X] ==> ... that GROWS
+;; the number of lift operators, the e-graph enters an infinite loop:
+;;   A = lift(A) = lift(lift(A)) = ...
+;;
+;; The theory registration must detect and reject lift-expanding rules.
+
+[Category TypeHierarchy
+  [Object Type] [Object Term]
+  [Morphism zero :domain [] :codomain Term]
+  [Morphism succ :domain [Term] :codomain Term]
+  [Morphism lift :domain [Type] :codomain Type]
+]
+
+[Substrate VNStandard
+  @engine von-neumann
+  @resource-mode deep-copy
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Universe TypeWorld :category TypeHierarchy :substrate VNStandard]
+
+;; Safe: lift elimination (shrinks lift count) — should be accepted
+;; NOTE: The unsafe variant (lift expansion) is tested in the integration
+;; test godel_cumulativity_lift_cycle_rejected, which expects a parse error.
+[Theory SafeCumul :in TypeWorld
+  [@rule lift-elim [lift [lift ?A]] ==> [lift ?A]]
+  [@rule plus-zero [succ zero] ==> [succ zero]]
+]

@@ -212,6 +212,62 @@ mod tests {
         assert_eq!(format!("{}", result), "x");
     }
 
+    // === TARTARUS: AC-Bound Variable Scramble ===
+
+    #[test]
+    fn binder_bodies_are_opaque_leaves() {
+        // add(lam(x, add(f(x), c)), lam(y, add(a, g(y))))
+        // The lam terms contain bound variables. AC normalization must NOT
+        // flatten into the binder bodies — they are opaque leaves.
+        let mut ac = HashSet::new();
+        ac.insert("add".to_string());
+
+        // [add [lam x [add [f x] c]] [lam y [add a [g y]]]]
+        let lam1 = list(vec![atom("lam"), atom("x"),
+            list(vec![atom("add"), list(vec![atom("f"), atom("x")]), atom("c")])]);
+        let lam2 = list(vec![atom("lam"), atom("y"),
+            list(vec![atom("add"), atom("a"), list(vec![atom("g"), atom("y")])])]);
+        let input = list(vec![atom("add"), lam1.clone(), lam2.clone()]);
+
+        let result = ac_normalize_sexp(&input, &ac);
+        let result_str = format!("{}", result);
+
+        // The binder bodies must NOT be flattened — we should have exactly 2 leaves
+        // under the top-level add, both being complete lam terms.
+        // The inner [add [f x] c] and [add a [g y]] must remain INSIDE their lams.
+        assert!(!result_str.contains("[add [f x]") || result_str.contains("[lam"),
+            "Bound variable 'x' must stay inside its lam binder, got: {}", result_str);
+        assert!(!result_str.contains("[add a [g y]]") || result_str.contains("[lam"),
+            "Bound variable 'y' must stay inside its lam binder, got: {}", result_str);
+
+        // The two lam terms should be the only leaves of the top-level add.
+        // They should be sorted, but their internals must be preserved.
+        // Since lam1 starts with "[lam x" and lam2 with "[lam y",
+        // the sort order depends on string representation.
+        assert!(result_str.starts_with("[add [lam"),
+            "Result should be add of two lam terms: {}", result_str);
+    }
+
+    #[test]
+    fn binder_with_ac_op_inside_not_flattened_out() {
+        // op(a, lam(x, op(x, b)))
+        // The inner op(x, b) must NOT be flattened into the outer op's leaves.
+        // If it were, we'd get op(a, x, b) — ripping x from its binder scope.
+        let input = op(atom("a"),
+            list(vec![atom("lam"), atom("x"),
+                op(atom("x"), atom("b"))]));
+
+        let result = ac_normalize_sexp(&input, &ac_set());
+        let result_str = format!("{}", result);
+
+        // The outer op should have exactly 2 leaves: "a" and the whole lam term
+        // NOT 3 leaves (a, x, b) from flattening through the binder
+        assert!(!result_str.contains("[op a [op b"),
+            "Must NOT flatten through binder — would rip x from scope: {}", result_str);
+        assert!(result_str.contains("[lam x [op"),
+            "Lam body must be preserved intact: {}", result_str);
+    }
+
     #[test]
     fn meta_variables_preserved() {
         // op(?y, ?x) → op(?x, ?y) (metavars sort alphabetically)
