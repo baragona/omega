@@ -37,7 +37,7 @@ Four layers, each a conservative extension of the one below. Every layer adds a 
 |:------|:-------|:---------|:-------|
 | 0 | **Omega** | How do we write proofs? | ~7,400 LOC Rust, zero deps |
 | 1 | **Apeiron** | How do we run them on interaction nets? | ~6,000 LOC Rust, 1 dep (egg) |
-| 2 | **Hyperion** | How do we decouple math from physics? | Categories + substrates + compilation passes |
+| 2 | **Hyperion** | How do we decouple math from physics? | ~7,600 LOC Rust — categories + substrates + compilation passes + CatLab + e-graphs |
 | 3 | **Metacosm** | How do we reason about moving between worlds? | Typed epistemic profiles + tactic prover |
 
 ---
@@ -162,17 +162,33 @@ The trusted computing base (`omega-core`) has no external dependencies and imple
 
 ## Hyperion
 
-**A logical framework framework.** Separates *math* (categories) from *physics* (substrates) and compiles the two together, verifying that your mathematical structure is actually implementable on your chosen computational engine.
+**A logical framework framework framework** (~7,600 LOC Rust). Separates *math* (categories) from *physics* (substrates) and compiles the two together, verifying that your mathematical structure is actually implementable on your chosen computational engine. Then it applies this same machinery to itself — frameworks all the way up.
 
 ### The Core Insight
 
-Not every mathematical structure runs natively on every computational substrate. Lambda calculus needs closures. Modal logic needs scope isolation. Tensor products need parallel composition. When a category and substrate are compatible, Hyperion compiles directly. When they aren't, it inserts *compilation passes* — Girard's bang modality, Reynolds' defunctionalization, Kripke world threading — to bridge the gap.
+Not every mathematical structure runs natively on every computational substrate. Lambda calculus needs closures. Modal logic needs scope isolation. Tensor products need parallel composition. When a category and substrate are compatible, Hyperion compiles directly. When they aren't, it inserts *compilation passes* — well-known theoretical constructions that bridge the gap. Every combination compiles; the question is how many passes are needed.
 
 ### Three-Layer Design
 
 - **Category** (the math): CCC, symmetric monoidal, modal, HoTT path algebra, preorder, judgment declarations
-- **Substrate** (the physics): interaction graphs, term trees, von Neumann machines; resource modes (optimal sharing, linear, affine, deep copy)
+- **Substrate** (the physics): interaction graphs, term trees, von Neumann machines, cellular automata, symmetric monoidal nets, network-rpc clusters; resource modes (optimal sharing, linear, affine, deep copy, eventually-consistent)
 - **Universe**: binds category to substrate after compatibility checking, compiles to Apeiron
+
+### Key Capabilities
+
+- **Compilation passes**: Girard's bang modality, Reynolds' defunctionalization, Kripke world threading, explicit substitution calculus (λσ), and more — automatically inserted when math/physics are incompatible
+- **Reflective tower**: meta-circular self-hosting — Hyperion can reason about its own category/substrate/universe structure
+- **CatLab verification backend**: J-elimination, cubical reduction, proof-term extraction, proof-relevant mode, adjunction verification
+- **E-graph integration**: equality saturation discovery, e-graph extraction, roundtrip equivalence checking via `WeakEquivalence`
+- **Algebraic effects**: first-class effect handlers with typed effect rows
+- **Runtime backends**: AC normalization, forward-chaining logic engine, SMT bridge
+- **Totality checker**: with near-miss diagnostics for incomplete pattern coverage
+- **Static linearity checking**: compile-time validation of linear/affine resource usage
+- **Distributed systems substrate**: network-rpc engine, network-partition barriers, eventually-consistent resources
+- **Functor verification**: cross-universe transport with resource-correctness proofs
+- **Smart constructors**: refined physics validation, dev-to-prod pipeline
+- **`@law` vs `@rule`**: laws are equational (verified bidirectionally via e-graphs), rules are directed rewrites
+- **Runtime harness generation**: `hyperion kompile` compiles theories to Rust crates with `cargo check` validation
 
 ### Self-Application
 
@@ -181,12 +197,13 @@ Categories and substrates are just data. Nothing stops you from defining a categ
 ### Example
 
 ```lisp
-[Category STLC
-  :structure CartesianClosed
-  :objects [Type]
-  :morphisms [Term]
-  :composition [app]
-  :identity [id]]
+[Category CartesianClosed
+  [Object Type]
+  [Object Term]
+  [Morphism arrow :domain [Type Type] :codomain Type]
+  [Morphism app   :domain [Term Term] :codomain Term]
+  [Exponential lam :object Term]
+  [Evaluator app]]
 
 [Substrate InteractionNet
   @engine interaction-graph
@@ -194,9 +211,11 @@ Categories and substrates are just data. Nothing stops you from defining a categ
   @equality topological-hash]
 
 [Universe STLCOnNets
-  :category STLC
+  :category CartesianClosed
   :substrate InteractionNet]
 ```
+
+70 examples spanning CatLab cubical types, compilation passes, distributed actors, Eckmann-Hilton, algebraic handlers, reflective tactics, HoTT transport, and adversarial stress tests. See [`hyperion/README.md`](hyperion/README.md).
 
 ---
 
