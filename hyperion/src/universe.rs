@@ -105,6 +105,11 @@ pub enum CompilationPass {
     /// classical proofs. Extracts witness functions (realizers) from
     /// ∀x.∃y.A(x,y) as concrete code: f: X → Y with proof of A(x, f(x)).
     DialecticaExtraction,
+
+    /// Explicit substitution calculus (λσ): lowers lambda binders into
+    /// first-order Closure/Env nodes so the e-graph can safely rewrite
+    /// under binders without variable capture.
+    ExplicitSubstitution,
 }
 
 impl CompilationPass {
@@ -131,6 +136,7 @@ impl CompilationPass {
             Self::SMTEncoding => "smt-encoding",
             Self::EffectElaboration => "effect-elaboration",
             Self::DialecticaExtraction => "dialectica-extraction",
+            Self::ExplicitSubstitution => "explicit-substitution",
         }
     }
 
@@ -157,6 +163,7 @@ impl CompilationPass {
             Self::SMTEncoding => "SMT encoding: categorical terms translated to SMT-LIB2 for external solver",
             Self::EffectElaboration => "effect elaboration: effect grading compiled to monadic/CPS encoding",
             Self::DialecticaExtraction => "Dialectica extraction: classical proofs compiled to witness programs via Gödel's interpretation",
+            Self::ExplicitSubstitution => "explicit substitution calculus (λσ): binders lowered to first-order Closure/Env for safe e-graph rewriting",
         }
     }
 }

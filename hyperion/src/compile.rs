@@ -164,6 +164,15 @@ fn check_compatibility(cat: &CategoryDef, sub: &SubstrateDef) -> Result<Vec<Comp
         passes.push(CompilationPass::HOASDefunctionalization);
     }
 
+    // Equality-saturation + binders (Exponential/HOAS) without nominal scoping →
+    // explicit substitution calculus (λσ) so the e-graph can rewrite under binders safely
+    if matches!(sub.equality, EqualityMode::EqualitySaturation)
+        && (cat.has_exponential() || cat.has_hoas())
+        && !matches!(sub.barrier, BarrierMode::NominalScoping)
+    {
+        passes.push(CompilationPass::ExplicitSubstitution);
+    }
+
     // Logic programming engine + Exponential → clause compilation
     if matches!(sub.engine, Engine::LogicProgramming) && needs_exponential {
         passes.push(CompilationPass::ClauseCompilation);

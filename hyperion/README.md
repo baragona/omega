@@ -1306,13 +1306,17 @@ The `self-host-tensor-serial.hyp` example demonstrates how compilation passes ca
 
 Universe level constraints are resolved via a side-channel DAG (`level_graph.rs`) before e-graph invocation, rather than via explicit `lift`/`cumul` rewrite rules. The graph uses topological sort to detect cycles and propagate concrete level assignments. This prevents the infinite expansion loop `A = lift(A) = lift(lift(A)) = ...` that occurs when cumulativity is modeled as e-graph rewrite rules.
 
+### Explicit Substitution Calculus (λσ)
+
+When a category has Exponential or HOAS binders on an equality-saturation substrate without nominal scoping, Hyperion auto-injects an **Explicit Substitution Calculus** pass. This lowers lambda binders into first-order `Closure`/`Env` nodes (Closure, IdEnv, Cons, Shift, Compose) with σ-calculus rewrite rules, so the e-graph can safely commute, merge, and evaluate substitutions without variable capture. The binder safety guardrail is relaxed when ESC is active, because the first-order representation eliminates the capture risk.
+
 ### E-Graph Fuel
 
 Apeiron's `EGraphFuel` (30 iterations, 10k nodes) bounds all equality saturation, preventing OOM from exponential e-class growth (e.g., SKI combinator reduction).
 
 ## Tests
 
-385 tests (148 unit + 237 integration), covering:
+396 tests (153 unit + 243 integration), covering:
 
 - Category/substrate/universe parsing and validation
 - Compilation pass insertion for all 9 bridging strategies (bang modality, nominal abstraction, defunctionalization, tensor serialization, Kripke threading, dependent combinators, RPC serialization, consensus replication, partition tolerance)

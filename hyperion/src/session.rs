@@ -989,6 +989,9 @@ impl HyperionSession {
                 }
             }
 
+            // ExplicitSubstitution (λσ) is NOT applied in VN theories —
+            // it targets e-graph rewriting safety. See process_theory() for e-graph path.
+
             // ACNormalization: detect AC operators from @law commutativity patterns,
             // then flatten+sort all AC operator trees in rules.
             if compiled.passes.contains(&CompilationPass::ACNormalization) {
@@ -1275,11 +1278,15 @@ impl HyperionSession {
         // E-graph binder safety: if the substrate uses equality-saturation and has no
         // nominal/scoping barrier, reject rules that pattern-match inside binders.
         // Without this, the e-graph can unsoundly capture variables during rewriting.
+        // Exception: if ExplicitSubstitution pass is active, binders are lowered to
+        // first-order Closure/Env nodes, making e-graph rewriting under binders safe.
         if let Some(uni_name) = &universe_name {
             if let Some(compiled) = self.universes.get(uni_name) {
+                let has_esc = compiled.passes.contains(&crate::universe::CompilationPass::ExplicitSubstitution);
                 if let Some(sub) = self.substrates.get(&compiled.substrate_name) {
                     if matches!(sub.equality, substrate::EqualityMode::EqualitySaturation)
                         && !matches!(sub.barrier, substrate::BarrierMode::NominalScoping)
+                        && !has_esc
                     {
                         if let Some(cat) = self.categories.get(&compiled.category_name) {
                             let binder_names = collect_binder_names(cat);
@@ -1346,6 +1353,47 @@ impl HyperionSession {
             Sexp::List(filtered, sexp.span())
         } else {
             sexp.clone()
+        };
+
+        // ExplicitSubstitution (λσ): lower binder bodies in @rule declarations
+        // to Closure/Env nodes before sending to Apeiron e-graph
+        let sexp_for_apeiron = if let Some(uni_name) = &universe_name {
+            if let Some(compiled) = self.universes.get(uni_name) {
+                if compiled.passes.contains(&crate::universe::CompilationPass::ExplicitSubstitution) {
+                    if let Some(binder_name) = self.categories.get(&compiled.category_name)
+                        .and_then(|c| c.structure.iter().find_map(|s| {
+                            match s {
+                                crate::category::CategoricalStructure::HOASBinding { binder, .. } => Some(binder.clone()),
+                                crate::category::CategoricalStructure::Exponential { name, .. } => Some(name.clone()),
+                                _ => None,
+                            }
+                        }))
+                    {
+                        let transformed = crate::passes::explicit_subst::lower_theory_sexp(
+                            &sexp_for_apeiron, &binder_name,
+                        );
+                        if let Some((new_sexp, count)) = transformed {
+                            if count > 0 {
+                                self.output.push(format!(
+                                    "[PASS:ExplicitSubstitution] Lowered {} binder(s) to λσ calculus for '{}'",
+                                    count, binder_name
+                                ));
+                            }
+                            new_sexp
+                        } else {
+                            sexp_for_apeiron
+                        }
+                    } else {
+                        sexp_for_apeiron
+                    }
+                } else {
+                    sexp_for_apeiron
+                }
+            } else {
+                sexp_for_apeiron
+            }
+        } else {
+            sexp_for_apeiron
         };
 
         let rewritten = self.rewrite_for_apeiron(&sexp_for_apeiron, universe_name.as_deref())?;

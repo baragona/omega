@@ -7,6 +7,7 @@
 pub mod ac_normalize;
 pub mod context_reify;
 pub mod dialectica;
+pub mod explicit_subst;
 pub mod goal_directed;
 pub mod hoas_defunc;
 pub mod kan_compute;

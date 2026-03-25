@@ -5188,8 +5188,9 @@ fn godel_cumulativity_session_rejects_expanding_lift() {
 
 #[test]
 fn binder_safety_rejects_egraph_rule_inside_lam() {
-    // A theory using equality-saturation (e-graph) with transparent barrier
-    // must NOT allow rules that pattern-match inside a binder body.
+    // With ExplicitSubstitution pass active (auto-triggered for equality-saturation
+    // + Exponential), binder descent is safe — the pass lowers binders to Closure nodes.
+    // So this test now verifies that ESC makes binder rules acceptable.
     let src = r#"
 [Category CCC
   [Object Type] [Object Term]
@@ -5206,17 +5207,17 @@ fn binder_safety_rejects_egraph_rule_inside_lam() {
 
 [Universe EGWorld :category CCC :substrate EGraphSub]
 
-[Theory BadBinderMatch :in EGWorld
-  ;; This rule matches INSIDE a lam body — unsafe for e-graph!
-  [@rule bad [lam ?body] ==> ?body]
+[Theory BinderMatchWithESC :in EGWorld
+  [@rule esc-safe [lam ?body] ==> ?body]
 ]
 "#;
     let mut session = HyperionSession::new();
     let sexps = apeiron::parser::parse(src).unwrap();
     let result = sexps.iter().try_for_each(|s| session.process(s));
-    assert!(result.is_err(), "Must reject rule matching inside binder under e-graph");
-    let err = format!("{}", result.err().unwrap());
-    assert!(err.contains("binder safety"), "Error should mention binder safety: {}", err);
+    // With ESC active, binder descent is safe
+    assert!(result.is_ok(), "ESC pass should make binder matching safe: {:?}", result.err());
+    let output = session.output.join("\n");
+    assert!(output.contains("ExplicitSubstitution"), "Should show ESC pass: {}", output);
 }
 
 #[test]
@@ -5250,7 +5251,7 @@ fn binder_safety_allows_nominal_scoping() {
 
 #[test]
 fn binder_safety_allows_top_level_binder_ref() {
-    // Rule that mentions binder at top level without descending into body
+    // With ESC active, even rules that descend into binder bodies are safe
     let src = r#"
 [Category CCC
   [Object Type] [Object Term]
@@ -5267,19 +5268,162 @@ fn binder_safety_allows_top_level_binder_ref() {
 
 [Universe EGW2 :category CCC :substrate EGSub2]
 
-[Theory SafeRule :in EGW2
-  ;; This rule doesn't match inside lam — it matches app(lam(...), arg)
-  ;; The lam is on the LHS but not descended into with a meta in body position
+[Theory BetaRule :in EGW2
   [@rule beta [app [lam ?f] ?x] ==> [app ?f ?x]]
 ]
 "#;
     let mut session = HyperionSession::new();
     let sexps = apeiron::parser::parse(src).unwrap();
     let result = sexps.iter().try_for_each(|s| session.process(s));
-    // This should actually be caught too — [lam ?f] has ?f inside the binder
-    // The check is: binder_name as head + meta in body position
-    // [lam ?f] = head is lam, ?f is in body position → CAUGHT
-    assert!(result.is_err(), "Rule [lam ?f] still matches inside binder body");
+    assert!(result.is_ok(), "ESC pass makes binder matching safe: {:?}", result.err());
+}
+
+// --- Explicit Substitution Calculus (λσ) ---
+
+#[test]
+fn esc_pass_auto_triggered_for_egraph_with_exponential() {
+    let src = r#"
+[Category STLC
+  [Object Type] [Object Term]
+  [Exponential lam :object Term]
+  [Evaluator app]
+]
+
+[Substrate EGSub
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality equality-saturation
+]
+
+[Universe LWorld :category STLC :substrate EGSub]
+"#;
+    let mut session = HyperionSession::new();
+    let sexps = apeiron::parser::parse(src).unwrap();
+    for s in &sexps { session.process(s).unwrap(); }
+    let output = session.output.join("\n");
+    assert!(output.contains("explicit-substitution"), "ESC pass should be listed: {}", output);
+}
+
+#[test]
+fn esc_pass_lowers_binders_in_egraph_theory() {
+    let src = r#"
+[Category STLC
+  [Object Type] [Object Term]
+  [Exponential lam :object Term]
+  [Evaluator app]
+]
+
+[Substrate EGSub3
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality equality-saturation
+]
+
+[Universe LW3 :category STLC :substrate EGSub3]
+
+[Theory BinderTheory :in LW3
+  [@rule beta-like [lam ?body] ==> ?body]
+]
+"#;
+    let mut session = HyperionSession::new();
+    let sexps = apeiron::parser::parse(src).unwrap();
+    for s in &sexps { session.process(s).unwrap(); }
+    let output = session.output.join("\n");
+    assert!(output.contains("ExplicitSubstitution"), "Should show ESC lowering: {}", output);
+}
+
+#[test]
+fn esc_pass_not_triggered_for_nominal_scoping() {
+    // Nominal-scoping barrier handles binders natively — no ESC needed
+    let src = r#"
+[Category STLC2
+  [Object Type] [Object Term]
+  [Exponential lam :object Term]
+  [Evaluator app]
+]
+
+[Substrate NomSub2
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier nominal-scoping
+  @equality equality-saturation
+]
+
+[Universe NomWorld2 :category STLC2 :substrate NomSub2]
+"#;
+    let mut session = HyperionSession::new();
+    let sexps = apeiron::parser::parse(src).unwrap();
+    for s in &sexps { session.process(s).unwrap(); }
+    let output = session.output.join("\n");
+    assert!(!output.contains("explicit-substitution"), "ESC should NOT trigger with nominal-scoping: {}", output);
+}
+
+#[test]
+fn esc_pass_not_triggered_for_vn_engine() {
+    // VN engine doesn't use e-graph — ESC not needed
+    let src = r#"
+[Category STLC3
+  [Object Type] [Object Term]
+  [Exponential lam :object Term]
+  [Evaluator app]
+]
+
+[Substrate VNSub
+  @engine von-neumann
+  @resource-mode deep-copy
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Universe VNWorld :category STLC3 :substrate VNSub]
+"#;
+    let mut session = HyperionSession::new();
+    let sexps = apeiron::parser::parse(src).unwrap();
+    for s in &sexps { session.process(s).unwrap(); }
+    let output = session.output.join("\n");
+    assert!(!output.contains("explicit-substitution"), "ESC should NOT trigger for VN engine: {}", output);
+}
+
+#[test]
+fn esc_relaxes_binder_safety_guard() {
+    // With ESC active, rules that descend into binders are safe
+    let src = r#"
+[Category CCC2
+  [Object Type] [Object Term]
+  [Exponential lam :object Term]
+  [Evaluator app]
+]
+
+[Substrate EGSub4
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality equality-saturation
+]
+
+[Universe EGW4 :category CCC2 :substrate EGSub4]
+
+[Theory BinderDescent :in EGW4
+  [@rule descend [lam ?body] ==> ?body]
+]
+"#;
+    let mut session = HyperionSession::new();
+    let sexps = apeiron::parser::parse(src).unwrap();
+    let result = sexps.iter().try_for_each(|s| session.process(s));
+    assert!(result.is_ok(), "ESC should make binder descent safe: {:?}", result.err());
+}
+
+#[test]
+fn explicit_subst_demo_loads() {
+    let mut session = HyperionSession::new();
+    let source = std::fs::read_to_string("examples/explicit-subst-demo.hyp").unwrap();
+    let sexps = apeiron::parser::parse(&source).unwrap();
+    let result = sexps.iter().try_for_each(|s| session.process(s));
+    assert!(result.is_ok(), "explicit-subst-demo.hyp should load: {:?}", result.err());
+    let output = session.output.join("\n");
+    assert!(output.contains("explicit-substitution"), "Should detect ESC pass: {}", output);
 }
 
 // --- Fix 2: TCB Transparency ---

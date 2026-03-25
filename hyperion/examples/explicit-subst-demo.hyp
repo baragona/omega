@@ -1,0 +1,49 @@
+;; Explicit Substitution Calculus (λσ) Demo
+;;
+;; Demonstrates the ExplicitSubstitution compilation pass which automatically
+;; lowers lambda binders into first-order Closure/Env nodes so the e-graph
+;; can safely rewrite under binders without variable capture.
+;;
+;; The pass is auto-triggered when:
+;;   - The substrate uses equality-saturation
+;;   - The category has Exponential or HOAS binders
+;;   - The barrier is NOT nominal-scoping
+;;
+;; The σ-calculus machinery (Closure, IdEnv, Cons, Shift, Compose, Var)
+;; is injected as first-order rewrite rules, making substitution explicit
+;; and safe for e-graph equality saturation.
+
+;; === Category with lambda binder ===
+
+[Category STLC
+  [Object Type] [Object Term]
+  [Morphism arrow :domain [Type Type] :codomain Type]
+  [Morphism app   :domain [Term Term] :codomain Term]
+  [Exponential lam :object Term]
+  [Evaluator app]
+]
+
+;; === E-graph substrate (triggers ESC pass) ===
+
+[Substrate EGraphEngine
+  @engine interaction-graph
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality equality-saturation
+]
+
+;; === Universe (ESC pass auto-detected) ===
+
+[Universe LambdaWorld :category STLC :substrate EGraphEngine]
+
+;; === Theory with binder rules ===
+;; The ESC pass will wrap binder bodies in [Closure body IdEnv],
+;; making substitution structure explicit for the e-graph.
+
+[Theory LambdaCalc :in LambdaWorld
+  ;; Beta reduction through explicit substitution
+  [@rule beta [app [lam ?A ?body] ?arg] ==> [app [lam ?A ?body] ?arg]]
+
+  ;; Eta expansion
+  [@rule eta-expand ?f ==> [lam Type ?f]]
+]
