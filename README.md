@@ -1,185 +1,259 @@
 <p align="center">
   <h1 align="center">Omega</h1>
-  <p align="center"><strong>A Logic-Agnostic Logical Framework</strong></p>
+  <p align="center"><strong>A Unified Stack for Logic, Computation, and Epistemic Reasoning</strong></p>
   <p align="center">
-    <a href="#getting-started">Getting Started</a> &middot;
-    <a href="#features">Features</a> &middot;
-    <a href="#architecture">Architecture</a> &middot;
-    <a href="#examples">Examples</a>
+    <a href="#the-stack">The Stack</a> &middot;
+    <a href="#omega-core">Omega Core</a> &middot;
+    <a href="#apeiron">Apeiron</a> &middot;
+    <a href="#hyperion">Hyperion</a> &middot;
+    <a href="#metacosm">Metacosm</a> &middot;
+    <a href="#getting-started">Getting Started</a>
   </p>
 </p>
 
 ---
 
-Omega is a **logic-agnostic proof framework** written in Rust. Unlike systems such as Coq, Lean, or Agda — which commit to a fixed logic (CIC, MLTT) — Omega ships with **no built-in logic at all**. Users define their own sorts, connectives, inference rules, and binding structures, and the kernel verifies derivations against those definitions.
+## The Stack
 
-The result is a single runtime that can host propositional logic, first-order logic, ZFC set theory, modal logic, linear logic, simply-typed lambda calculus, dependent type theory, classical logic, or any other formal system you can specify.
+Four layers, each a conservative extension of the one below. Every layer adds a new question without invalidating anything beneath it.
 
-## Performance
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Metacosm          What survives when we move between       │
+│                    logics and engines?                       │
+├─────────────────────────────────────────────────────────────┤
+│  Hyperion          What computational physics runs           │
+│                    the math?                                 │
+├─────────────────────────────────────────────────────────────┤
+│  Apeiron           Same logic, different engine —            │
+│                    interaction nets with proof extraction     │
+├─────────────────────────────────────────────────────────────┤
+│  Omega             How do we write and verify proofs         │
+│                    in a user-defined logic?                  │
+└─────────────────────────────────────────────────────────────┘
+```
 
-Omega's kernel operates on a **hash-consed, arena-allocated** term representation. Structurally identical sub-terms are stored exactly once, reducing equality checks to pointer comparisons and enabling verification of terms with exponential sharing in constant space.
+| Layer | System | Question | Kernel |
+|:------|:-------|:---------|:-------|
+| 0 | **Omega** | How do we write proofs? | ~7,400 LOC Rust, zero deps |
+| 1 | **Apeiron** | How do we run them on interaction nets? | ~6,000 LOC Rust, 1 dep (egg) |
+| 2 | **Hyperion** | How do we decouple math from physics? | Categories + substrates + compilation passes |
+| 3 | **Metacosm** | How do we reason about moving between worlds? | Typed epistemic profiles + tactic prover |
 
-| System | Term Size | Time | Result |
-| :--- | :--- | :--- | :--- |
-| Tree-Based Checker | 2^100,001 nodes | — | OOM (would require >10^30 PB) |
-| **Omega (Interned)** | 2^100,001 nodes | **~30 µs** | Verified |
+---
 
-> Benchmark: structural verification of a recursively doubled term at depth 100,000. See `examples/torture.omega`.
+## Omega Core
 
-## Features
+**A logic-agnostic proof framework.** Unlike Coq, Lean, or Agda — which commit to a fixed logic — Omega ships with **no built-in logic at all**. Users define their own sorts, connectives, inference rules, and binding structures, and the kernel verifies derivations against those definitions.
 
-### Logic as Configuration
+The result is a single runtime that can host propositional logic, first-order logic, ZFC set theory, modal logic, linear logic, dependent type theory, HoTT, classical logic, or any formal system you can specify.
 
-Define sorts, term constructors, operators with custom binding specifications, and inference rules — all in a declarative S-expression syntax.
+### Key Features
+
+- **Hash-consed, arena-allocated** terms — O(1) equality, exponential sharing in constant space (2^100,001 nodes verified in ~30 µs)
+- **Five proof layers**: raw derivation trees → tactics → lemmas → metatheorems → reflection
+- **Miller pattern unification** for higher-order matching
+- **Substructural contexts** (affine, linear) with per-binder eta/linear/affine checks
+- **Dependent types**, algebraic universes, W-types, Sigma types, level polymorphism
+- **Definitional equality** via user-defined rewrite rules
+- **Parameterized theories** with imports and aliased namespaces
+- **Theory-to-Rust compiler** (`omega kompile`) — sorts become enums, rewrite rules become `match` functions
+
+### Architecture
+
+```
+omega-cli              Command-line interface
+  └─ omega-driver        Batch processor, pipeline, code generation
+       ├─ omega-elaborate   Constraint solver, unifier, tactic engine
+       │    └─ omega-core
+       ├─ omega-syntax      S-expression parser
+       │    └─ omega-core
+       └─ omega-core          Trusted kernel (~7400 LOC, zero dependencies)
+```
+
+The trusted computing base (`omega-core`) has no external dependencies and implements three operations: `register_theory`, `check_derivation`, and `check_metatheorem`.
+
+### Quick Example
 
 ```lisp
 (theory Peano
-  (sort Nat)
-  (sort Prop)
-
+  (sort Nat) (sort Prop)
   (constructor zero : Nat)
   (constructor succ : (-> Nat Nat))
   (constructor eq   : (-> Nat Nat Prop))
+  (constructor add  : (-> Nat Nat Nat))
 
   (judgment (proves ?P) :where P : Prop)
 
-  (rule eq-refl
-    :premises ()
-    :conclusion (proves (eq ?n ?n)))
+  (rewrite add-z  (add zero ?n)      ?n)
+  (rewrite add-s  (add (succ ?n) ?m) (succ (add ?n ?m)))
 
-  (rule eq-symm
-    :premises ((proves (eq ?a ?b)))
-    :conclusion (proves (eq ?b ?a))))
+  (rule eq-refl :premises () :conclusion (proves (eq ?n ?n))))
+
+;; 1+1=2, proved by normalization alone:
+(proof one-plus-one :theory Peano
+  :goal (proves (eq (add (succ zero) (succ zero)) (succ (succ zero))))
+  :derivation (eq-refl))
 ```
 
-### Five Layers of Proof
+### What You Can Build
 
-Omega has five mechanisms for building proofs, each making the next one easier. You never have to write verbose proof trees once you've built up your toolbox.
+60+ examples spanning foundations, type theory, substructural logic, algebra, verified compilation, and more:
 
-**1. Raw derivation trees** — explicit, verbose, trusted by the kernel:
-```lisp
-;; A ∧ B → B ∧ A (5 nodes):
-(proof and-comm
-  :theory MyLogic
-  :goal (proves (imp (and ?A ?B) (and ?B ?A)))
-  :derivation
-    (imp-intro (and-intro (and-elim-r (assumption)) (and-elim-l (assumption)))))
+- **Set theory**: ZFC axioms, CH independence, large cardinals, forcing, ordinal arithmetic
+- **Type theory**: STLC, System F, dependent types, HoTT, cubical types, quotients, W-types, induction-recursion
+- **Substructural**: linear, affine, relevant, Lambek calculus, separation logic
+- **Modal/temporal**: S5, provability logic (GL), LTL, Gödel's incompleteness
+- **Verified systems**: TCP state machines, rate limiters, KV stores, calculators — all compilable to Rust
+- **Compilation**: HOAS verified compilation to C, string ropes, code generation
+- **Self-representation**: a proof checker encoded as rewrite rules that verifies its own proofs
+
+> See the full [examples catalog](#examples) below.
+
+---
+
+## Apeiron
+
+**A logic compiler built on interaction nets.** Same user-defined logics as Omega, but running on a fundamentally different engine — interaction nets with optimal sharing, proof-term extraction, and pluggable binding/checking strategies.
+
+### Three Layers of Truth
+
+```
+[System]  — How do I speak?    (syntax, binding, evaluation strategy)
+[Theory]  — What do I believe? (rewrite rules — the trusted base)
+[Proofs]  — What do I know?    (verified theorems — sealed, read-only)
 ```
 
-**2. Tactics** — backward reasoning, the engine builds the tree for you:
-```lisp
-;; auto finds the proof by brute-force search:
-(proof auto-swap
-  :theory MyLogic
-  :goal (proves (and q p))
-  :assumptions ((proves p) (proves q))
-  :tactics (auto 3))
-```
+### Pluggable Physics
 
-**3. Lemmas** — prove once, reuse as a one-step rule (the Cut rule):
-```lisp
-(lemma and-assoc
-  :theory MyLogic
-  :premises ((proves (and (and ?A ?B) ?C)))
-  :conclusion (proves (and ?A (and ?B ?C)))
-  :derivation ...)  ;; verified once, then and-assoc is a new rule
-```
+**Binding modes**: implicit, exposed, contextual, linear-explicit, nominal
 
-**4. Metatheorems** — prove properties *about* derivations via case analysis:
-```lisp
-(meta-theorem and-comm-meta
-  :theory MyLogic
-  :forall ((D (proves (and ?A ?B))))
-  :exists  ((D' (proves (and ?B ?A))))
-  :proof (case-analysis D
-    (case and-intro (D1 D2) (by-rule and-intro D2 D1))))
-```
+**Check modes**: rewriting, beta-reduction, oracle, unification, reversible, equality-saturation, eta — and they compose.
 
-**5. Reflection** — turn a metatheorem into a first-class rule:
-```lisp
-(reflect and-comm-meta :as and-comm :theory MyLogic)
+### Key Capabilities
 
-;; Now and-comm is a one-step rule. The original 5-node proof becomes:
-(proof and-comm-easy
-  :goal (proves (imp (and ?A ?B) (and ?B ?A)))
-  :derivation (imp-intro (and-comm (assumption))))
-```
+- **Optimal sharing** via interaction nets — non-linear variables duplicated lazily
+- **Proof-term extraction** showing exact rewrite chains
+- **E-graph equality saturation** with bidirectional laws
+- **Existence queries** and **negative assertions** (`assert-refuted`)
+- **Goal-stack tactics** (apply, auto, assumption, intro, cut, egraph)
+- **AutoMorphisms** — automatic compilation between systems with different binding/checking strategies
+- **Nested parameterized theories** with parameter substitution
 
-> See `examples/full-demo.omega` for a complete walkthrough that builds all five layers from scratch and proves distributivity of conjunction over disjunction.
-
-### Constraint-Based Elaboration
-
-Omega's elaborator infers implicit arguments via first-order unification with occurs check, deferred constraints, and transitive fixpoint resolution. Proof terms stay concise.
+### Example
 
 ```lisp
-;; eq-trans declares ?b as implicit — the middle term is inferred:
-(rule eq-trans
-  :premises ((proves (eq ?a ?b)) (proves (eq ?b ?c)))
-  :conclusion (proves (eq ?a ?c))
-  :implicit (?b))
+[System Peano
+  [@syntax [sort Nat] [op z] [op s] [op add]]
+  [@binding implicit]
+  [@check rewriting]]
 
-;; The user writes a derivation without the middle term:
-(eq-trans (eq-refl) (eq-refl))
+[Theory PeanoRules :in Peano
+  [@rule add-z [add z ?n]      ==> ?n]
+  [@rule add-s [add [s ?n] ?m] ==> [s [add ?n ?m]]]]
+
+[Proofs Check :in PeanoRules
+  [assert-eq one-plus-one [add [s z] [s z]] [s [s z]]]]
 ```
 
-### Theory-to-Rust Compiler
+29 examples including Omega ports, lambda calculus, type systems, modal logic, morphisms, reversible computing, and more.
 
-`omega kompile` extracts a verified theory into a Rust crate. Sorts become enums, constructors become variants, rewrite rules become `match` functions, and effect sorts become traits.
+---
 
-```bash
-# Compile a verified calculator to Rust:
-omega kompile examples/calc.omega --theory CalcTheory -o calc-crate/
+## Hyperion
 
-# The generated crate has types, functions, and Cargo.toml — ready to use.
+**A logical framework framework.** Separates *math* (categories) from *physics* (substrates) and compiles the two together, verifying that your mathematical structure is actually implementable on your chosen computational engine.
+
+### The Core Insight
+
+Not every mathematical structure runs natively on every computational substrate. Lambda calculus needs closures. Modal logic needs scope isolation. Tensor products need parallel composition. When a category and substrate are compatible, Hyperion compiles directly. When they aren't, it inserts *compilation passes* — Girard's bang modality, Reynolds' defunctionalization, Kripke world threading — to bridge the gap.
+
+### Three-Layer Design
+
+- **Category** (the math): CCC, symmetric monoidal, modal, HoTT path algebra, preorder, judgment declarations
+- **Substrate** (the physics): interaction graphs, term trees, von Neumann machines; resource modes (optimal sharing, linear, affine, deep copy)
+- **Universe**: binds category to substrate after compatibility checking, compiles to Apeiron
+
+### Self-Application
+
+Categories and substrates are just data. Nothing stops you from defining a category whose objects are themselves categories, whose morphisms are functors, and whose paths are natural isomorphisms — then running it on a substrate. The framework frameworks itself, all the way up.
+
+### Example
+
+```lisp
+[Category STLC
+  :structure CartesianClosed
+  :objects [Type]
+  :morphisms [Term]
+  :composition [app]
+  :identity [id]]
+
+[Substrate InteractionNet
+  @engine interaction-graph
+  @resource optimal-sharing
+  @equality topological-hash]
+
+[Universe STLCOnNets
+  :category STLC
+  :substrate InteractionNet]
 ```
 
-The generated code preserves the semantics proved in Omega: a `step(state, event)` function proven to maintain safety invariants compiles to a Rust function with the same guarantee. See `examples/tcp-state.omega`, `examples/calc.omega`, and `examples/rate-limiter.omega`.
+---
 
-## Comparison
+## Metacosm
 
-| | **Omega** | **Lean 4 / Coq** | **Dedukti / Lambdapi** |
-| :--- | :--- | :--- | :--- |
-| Logic | User-defined | Fixed (CIC) | User-defined (rewrite rules) |
-| Kernel language | Rust (zero deps) | Lean / OCaml | OCaml |
-| Term representation | Interned DAG (maximal sharing) | Tree-based | Mixed |
-| Equality check | O(1) (pointer comparison) | O(n) | O(n) |
-| Binding control | Per-binder eta, linear, affine | Fixed | Fixed |
-| Surface syntax | S-expressions | Algol-style | Algol-style |
+**A physics engine for mathematical epistemology.** Makes the transitions between different logical worlds formal. Where Hyperion lets you choose your physics, Metacosm lets you reason about what happens when you *change* your physics.
 
-## The "Neutral Tool" Philosophy
+### The Problem
 
-By being neutral, Omega is more powerful than specialized tools in their own domains.
+Real-world theorem proving is a pipeline: an e-graph discovers an equivalence → a directed rewriter verifies it → a compiler generates code. Each stage has different strengths. Today these transitions are informal. Metacosm makes them formal.
 
-- **Coq** forces you into Constructive Logic. (Hard to do classical math.)
-- **Isabelle** forces you into Classical Logic. (Hard to do constructive math.)
-- **Rust** forces you into Affine Logic. (Hard to do GC/sharing.)
-- **Omega** lets you choose.
+### Typed Epistemic Profiles
 
-Want Classical? `axiom excluded_middle : Or A (Not A)`.
-Want Constructive? Don't add it.
-Want Linear? Use `(binder-behavior tensor :linear)`.
-Want Affine? Use `(context-mode affine)`.
-Want HoTT? Add path axioms.
+Worlds are characterized across four independent axes:
 
-Omega is powerful enough to:
+- **Discovery**: none → heuristic → semi-decidable → complete
+- **Verification**: soundness × completeness × termination (independent sub-axes)
+- **Canonicalization**: normalization × confluence × unique-normal-forms
+- **Compression**: mode (lossless/lossy/codegen) × invertibility
 
-- **Verify a Rust-like type system** (`libs/omega-rust/`)
-- **Formalize ZFC set theory** (`examples/zfc.omega`)
-- **Formalize Homotopy Type Theory** (`examples/hott.omega`)
-- **Compile verified programs to C** (`examples/compile-verified.omega`)
-- **Model induction-recursion and HITs** (`examples/induction-recursion.omega`, `examples/hits.omega`)
-- **Prove Gödel's Second Incompleteness Theorem** (`examples/godel.omega`)
-- **Derive classical logic from game-theoretic strategies** (`examples/game.omega`)
-- **Compare Boolean vs Heyting topoi** (`examples/topos.omega`)
-- **Show CH is independent of ZFC** — full development from atomic axioms (`examples/zfc-independence.omega`), honest audit with derived Cantor lemmas (`examples/zfc-honest.omega`)
-- **Formalize large cardinals** and the reflection principle (`examples/large-cardinals.omega`)
-- **Climb to Γ₀** through the Veblen hierarchy (`examples/ordinal-arithmetic.omega`)
-- **Verify zero-knowledge circuits** via R1CS satisfiability (`examples/zk-circuit.omega`)
-- **Reason coinductively about infinite streams** (`examples/streams.omega`)
-- **Kompile theories to Rust** — extract verified state machines to executable code (`omega kompile`)
-- **Implement a verified proof checker as rewrite rules** — self-representation where the kernel certifies its own encoded checker (`examples/self.omega`)
+### Topological Taint Tracking
 
-The kernel is done. The rest is just writing `.omega` files.
+When a theorem moves between worlds, what survives? Transitions compose precisely: `preserves` is an intersection, `breaks` is a union, lossy transport irreparably taints the chain.
+
+### Substrate Physics Auditing
+
+Epistemic claims are audited against the underlying Hyperion substrate. You cannot declare a world has complete discovery if its engine is a von Neumann machine with no equality saturation.
+
+### Cosmological Prover
+
+An LCF-style tactic engine for proving universal metatheorems and impossibility results that hold for *all* admissible worlds, not just registered ones.
+
+### The Epistemic Receipt
+
+The ultimate output: a materialized artifact wrapped in a formal guarantee of what was preserved and what was lost across the pipeline.
+
+```
+=== EPISTEMIC RECEIPT ===
+  input:  [mult [s [s [s z]]] [s [s [s z]]]]
+  output: [s [s [s [s [s [s [s [s [s z]]]]]]]]]    <- 3*3 = 9
+  preserved: [Soundness, Completeness]
+  lost:      [PathStructure, ResourceSensitivity]
+  distance:  24
+=========================
+```
+
+### Three Coexisting Modes
+
+| Mode | Blocks | Behavior |
+|:-----|:-------|:---------|
+| **Omega** | `Theory`, `Proofs` | Routes through Hyperion to Apeiron |
+| **Hyperion** | `Category`, `Substrate`, `Universe`, `Functor` | Handled by Hyperion |
+| **Cosmology** | `World`, `Transition`, `Pipeline`, `Emit`, `Law`, ... | Full epistemic machinery |
+
+120+ tests including adversarial edge cases: ouroboros topologies, Ship of Theseus leaks, categorical contradictions, physics defiers, and round-trip paradoxes.
+
+---
 
 ## Getting Started
 
@@ -191,455 +265,168 @@ cd omega
 cargo build --release
 ```
 
-### Running an Example
+### Running Examples
 
 ```bash
-# Verify ZFC set theory
+# Omega — verify ZFC set theory
 cargo run --release -- check examples/zfc.omega
 
-# Verify the exponential-sharing stress test
-cargo run --release -- check examples/torture.omega
+# Omega — compile a verified state machine to Rust
+cargo run --release -- kompile examples/tcp-state.omega --theory TcpState -o tcp-crate/
+
+# Apeiron — run a logic on interaction nets
+cd apeiron && cargo run -- examples/omega-stlc.ap
+
+# Hyperion — compile a category onto a substrate
+cd hyperion && cargo run -- examples/stlc-universe.hyp
+
+# Metacosm — full epistemic pipeline
+cd metacosm && cargo run -- check examples/golden-path.mcm -v
 ```
 
-### Examples
-
-#### Start Here
-
-**`examples/full-demo.omega`** — A Complete Tour (17 proofs)
-
-The best way to learn Omega. Builds propositional logic from scratch and demonstrates all five proof mechanisms in sequence: raw derivation trees, tactics, metatheorems, reflection, and lemmas. Culminates in proving distributivity of conjunction over disjunction, using reflected commutativity rules to make the proof concise.
-
-#### Foundations
-
-**`examples/prop-logic.omega`** — Propositional Logic (5 proofs)
-
-Natural deduction with conjunction, disjunction, and implication. Context extensions enable hypothetical reasoning — `A → (B → (A ∧ B))` adds assumptions to nested premises. Identity, weakening, commutativity, currying, and or-commutativity.
-
-**`examples/first-order.omega`** — First-Order Logic (5 proofs)
-
-Predicates over terms, universal quantification, and equality substitution. The classic Socrates syllogism: "all humans are mortal, Socrates is human, therefore Socrates is mortal" — formalized as universal instantiation through pattern matching.
-
-**`examples/classical-logic.omega`** — Classical Logic (5 proofs)
-
-Double negation elimination as a single axiom, deriving everything classical: LEM, Peirce's law `((P→Q)→P)→P`, contraposition, and negation of implication. Explicit `(assumption N)` for disambiguating context search in deeply nested proofs.
-
-**`examples/paraconsistent.omega`** — Paraconsistent Logic (10 proofs)
-
-Contradictions without explosion. Russell's paradox `R∈R ∧ R∉R` exists as a dialetheia — a true contradiction — but doesn't infect the entire system. The key: omit the standard explosion rule `⊥ → A`, so contradictions remain locally contained.
-
-**`examples/zfc.omega`** — ZFC Set Theory (39 proofs)
-
-Von Neumann ordinals (0=∅, 1={∅}, 2={∅,{∅}}), pairing, union, powerset, and the Axiom of Choice with a Skolem operator. Deep implicit-argument chains: `eq-trans` infers middle terms across 3-step equality reasoning over set membership.
-
-**`examples/zfc-foundations.omega`** — ZFC from Scratch (15 proofs)
-
-Everything built from Set, Prop, and ∈. Natural numbers exist (0, 1, 2 ∈ ω), ordinal structure (ω is a limit ordinal), and the ordering on numbers (∈ IS the ordering: 0 < 1 < 2). Ordered pairs, singletons, and successor all constructed from ZFC axioms — no primitives beyond membership.
-
-**`examples/zfc-cardinals.omega`** — Functions to Independence (15 proofs)
-
-Part II of the atomic CH proof. Functions as sets of ordered pairs, injections, surjections, bijections. Cardinal ordering via injections, Cantor's diagonal theorem (no surjection A → P(A)), the aleph hierarchy, and the Continuum Hypothesis stated and shown independent — all importing from `zfc-foundations`.
-
-**`examples/zfc-independence.omega`** — Complete CH Independence (25 proofs)
-
-The full development in ~200 rules across eight parts: atomic foundation, functions and cardinals, first-order logic with satisfaction, absoluteness and relativization, Gödel's L with condensation, forcing machinery with names and generics, the Cohen poset Add(ω,ℵ₂) with CCC, and the final independence theorem. Zero black boxes.
-
-**`examples/zfc-honest.omega`** — Honest CH Formalization (29 proofs)
-
-Every rule tagged as [AXIOM-FOL], [AXIOM-ZFC], [DEFINITION], [DERIVED], or [ADMITTED]. The crown jewel: Cantor's theorem fully derived as 4 chained lemmas (diag-in-power → diag-contradiction → cantor-no-surj → cantor) — no admits. Uses the `(lemma ...)` command as Cut: verify proof, discard tree, register conclusion. 21 FOL axioms + 18 ZFC axioms + 10 definitions + 9 derived rules + ~55 admitted lemmas.
-
-**`examples/ch-complete.omega`** — CH Independence Expanded (15 proofs)
-
-Expands the black-box rules into actual mathematical content: ordinals and cardinals, first-order logic and models, the ZFC axioms, absoluteness, the constructible universe L, forcing machinery, and the Cohen poset. Eight-part structure from ordinals through the independence theorem.
-
-**`examples/large-cardinals.omega`** — Large Cardinals (10 proofs)
-
-Going beyond ZFC. Inaccessible cardinals (regular + strong limit + uncountable), the Grothendieck Universe Axiom, and the large cardinal hierarchy. Cantor's theorem `ℵ₀ < 2^ℵ₀`, measurable → inaccessible → weakly inaccessible chains, and the reflection principle: if κ is inaccessible, V_κ models ZFC.
-
-**`examples/ordinal-arithmetic.omega`** — Veblen Functions & Γ₀ (10 proofs)
-
-Ordinal arithmetic beyond addition: the Veblen hierarchy φ_α(β) climbs through fixed points of ordinal exponentiation. `φ₀(β) = ω^β`, `ε₀ = φ₁(0)` satisfies `ω^ε₀ = ε₀`, and Γ₀ (the Feferman-Schütte ordinal) is the smallest α with `φ_α(0) = α` — the limit of predicative reasoning. Eight proofs by normalization, two by fixed-point axioms.
-
-**`examples/surreal-numbers.omega`** — Surreal Numbers (10 proofs)
-
-Conway's surreal numbers: { L | R } encompassing reals and ordinals in a single Field. The infinitesimal ε = { 0 | 1, ½, ¼, ... } satisfies `0 < ε < ½`. Transfinite arithmetic: `ω + 1 > ω` (unlike ordinals where `1 + ω = ω`). Five proofs by normalization (arithmetic rewrites), five by ordering axioms.
-
-**`examples/continuum.omega`** — Continuum Hypothesis Independence (10 proofs)
-
-The "final boss" of set theory. Boolean-valued models where truth values live in a Boolean algebra B. Six normalization proofs verify Boolean algebra laws (identity, annihilation, double negation, modus ponens computes via 3-step rewrite chain). Then the big results: Gödel's L satisfies CH (1940), Cohen's forcing satisfies ¬CH (1963), therefore CH is independent of ZFC.
-
-**`examples/forcing.omega`** — Forcing & CH Independence (10 proofs)
-
-The most famous unprovable statement. Gödel (1938): CH is consistent — the constructible universe L satisfies GCH. Cohen (1963): ¬CH is consistent — forcing with Add(ω,ℵ₂) adds ℵ₂ new reals while CCC preserves cardinals. Beth hierarchy, cardinal exponentiation, and both directions proved.
-
-**`examples/club-filter.omega`** — Club Filter & Fodor's Lemma (10 proofs)
-
-Combinatorial set theory: club sets (closed + unbounded) form a filter on regular cardinals. Clubs are stationary, stationary sets meet every club, and the filter is closed under intersection. Fodor's pressing-down lemma: a regressive function on a stationary set is constant on a stationary subset — "if everyone tries to move to a smaller room, an infinite crowd ends up in the same room."
-
-**`examples/ultrafinite.omega`** — Ultrafinite Arithmetic (12 proofs)
-
-Ultrafinitism where only "feasibly constructible" numbers truly exist. Numbers exist as syntax (computation works on all terms), but feasibility is a separate certification closed under tame operations. Computation on infeasible numbers proceeds normally — you just can't *prove* they're feasible.
-
-**`examples/hyperfinite.omega`** — Hyperfinite Analysis (12 proofs)
-
-Robinson's nonstandard analysis with infinitely large hypernaturals and infinitely small infinitesimals. Transfer principle, overspill, and hyperfinite sets that are "internally finite" despite infinite cardinality. The infinitesimal `ε` satisfying `0 < ε < 1/n` for all standard `n`.
-
-**`examples/sequent-calc.omega`** — Sequent Calculus (8 proofs)
-
-Left/right introduction rules, explicit structural rules (weakening, exchange, contraction), and the cut rule. Proves the same theorem both directly and via cut-based reasoning — the sequent calculus analog of the "detour" that cut-elimination removes.
-
-#### Type Theory
-
-**`examples/stlc.omega`** — Simply-Typed Lambda Calculus (10 proofs)
-
-De Bruijn indices with explicit typing contexts. All the combinators: I (identity), K (const), S (7-level derivation tree), B (composition), Church pair, flip, and Church numeral 2. Eta-expansion in a non-empty STLC context demonstrates deep variable lookup.
-
-**`examples/dep-types.omega`** — Dependent Types (7 proofs)
-
-Pi types (dependent function spaces), identity type, and type computation via beta-reduction. The key proof: `(λx.λy.refl) z : Π(y:Nat). Eq(Nat, y, y)` — partial application triggers WHNF reduction to solve the type family.
-
-**`examples/w-types.omega`** — W-Types and Universes (10 proofs)
-
-Algebraic universe levels (lzero, lsuc, lmax, imax) with AC normalization. W-type recursion via built-in `wrec` reduction. Sigma types with `fst`/`snd` as rewrite rules. Impredicative Prop: `imax(l, 0) = 0` for CIC-style universe stratification.
-
-**`examples/hott.omega`** — Homotopy Type Theory (12 proofs)
-
-The J eliminator (path induction), transport, ap (action on paths), and the full groupoid structure: left/right unit laws, left/right inverse, involution of path inversion, and transport over concatenation. All proved via J — no axioms beyond reflexivity.
-
-**`examples/hits.omega`** — Higher Inductive Types (12 proofs)
-
-Circle (S¹ with base and loop), suspension (north, south, merid), and propositional truncation. Typing derivations for path composition `concat(loop, loop)`, path inversion, and the squash constructor. Recursor computation rules as definitional equalities.
-
-**`examples/cubical.omega`** — Cubical Type Theory (8 proofs)
-
-Transport and univalence that actually compute — not stuck terms like in Book HoTT. `transport(ua(neg), true) = false` reduces in 3 steps. The interval, Kan composition, and Glue types give computational content to the univalence axiom.
-
-**`examples/quotients.omega`** — Quotient Types (10 proofs)
-
-Integers as (N x N)/~, where (a,b) represents a-b. Well-definedness: `(2,0) + (1,0) ~ (3,1) + (2,1)` — different representatives, same equivalence class. The quotient eliminates into any type respecting the equivalence relation.
-
-**`examples/system-f.omega`** — System F (10 proofs)
-
-Impredicative polymorphism where `∀α. α→α` can be instantiated with itself — the self-application that STLC forbids. Church-encoded booleans as polymorphic functions, type abstraction/application, and the identity polymorphism that makes System F the simplest system with type:type flavor.
-
-**`examples/extensional.omega`** — Extensional Type Theory (10 proofs)
-
-The reflection rule turns propositional equality proofs into definitional equality — if you can prove `a = b`, the kernel treats them as identical. Consequences: function extensionality for free and UIP (all identity proofs are equal). The price: type checking becomes undecidable.
-
-**`examples/two-level.omega`** — Two-Level Type Theory (10 proofs)
-
-Inner fibrant level (HoTT-like, no UIP) and outer strict level (with UIP and reflection) running simultaneously, connected by one-way lifting. Staged compilation and parametricity reasoning — the inner level is the "object language" and the outer level is the "meta language."
-
-**`examples/quantitative.omega`** — Quantitative Type Theory (10 proofs)
-
-Dependent types meet resource tracking. Each binder carries a quantity annotation: 0 (erased at runtime), 1 (used exactly once), or ω (unrestricted). Semiring laws govern quantity composition. Per-binder usage checks enforce the annotations — a linear function that discards its argument is a type error.
-
-**`examples/induction-recursion.omega`** — Induction-Recursion (12 proofs)
-
-Mutual definition of a universe of codes U and decoding function El — the Dybjer-Setzer pattern. `El(nat-code) = Nat` and `El(pi-code(a, b)) = Pi(El(a), El(b(a)))` as rewrite rules. Symmetry, transitivity, and Pi congruence over decoded types.
-
-**`examples/level-poly.omega`** — Level Polymorphism (13 proofs)
-
-Universe-polymorphic List, Id, and Pi with `lmax` as ACI-normalized level computation. `nil : List(List(Nat))` requires chaining `t-list(t-nat)` through the level system. Pi types at generic levels with assumptions providing universe witnesses.
-
-**`examples/bidirectional.omega`** — Bidirectional Type Checking (10 proofs)
-
-Types flow in two directions: synthesis (⇒) produces a type, checking (⇐) receives an expected type. The same surface lambda `λx.body` elaborates to different core terms depending on context — `check(λx.x, Nat→Nat)` produces `λ(x:Nat).x`. Synthesis for literals and variables, checking for lambdas and application.
-
-**`examples/nominal.omega`** — Nominal Logic (10 proofs)
-
-Names as first-class citizens. Swapping `swap(a,b,t)` exchanges names, freshness `a # t` means "a does not appear free in t", and alpha-equivalence is *computed* by swapping: `lam(a, var(a)) ≡α lam(b, var(b))` because `b # lam(a, var(a))` and `swap(a,b,...)` makes them identical. No de Bruijn indices needed.
-
-**`examples/refinement.omega`** — Refinement Types (10 proofs)
-
-Types plus predicates: `{ x : Nat | x > 0 }` is the type of positive naturals. Subtyping lattice Pos ⊂ NonZero ⊂ Nat with arrow variance. The rewrite engine acts as an SMT solver — it *computes* whether a literal is positive. Safe division: only NonZero denominators type-check.
-
-#### Substructural Logic
-
-**`examples/linear-logic.omega`** — Linear Logic (6 proofs)
-
-Multiplicative conjunction (tensor), linear implication (lolli), additive connectives (with/oplus), and the bang modality. `!A ⊢ A ⊗ A` shows how bang enables resource duplication — the fundamental difference from affine logic.
-
-**`examples/affine-logic.omega`** — Affine Logic (10 proofs)
-
-Move semantics as logic: each assumption used at most once. Tensor introduction splits resources, tensor elimination decomposes them. Linear implication via context extensions. The crown jewel: `A⊸B, B⊸C ⊢ A⊸C` — linear function composition chaining three rules deep.
-
-**`examples/relevant-logic.omega`** — Relevant Logic (10 proofs)
-
-System R: implications `A → B` require A to actually be used in deriving B, rejecting vacuous truths like `B → (A → A)`. Linear binder constraints forbid both weakening (discarding) and contraction (duplicating), creating a logic strictly between linear and classical.
-
-**`examples/lambek.omega`** — Lambek Calculus (10 proofs)
-
-Non-commutative substructural logic for natural language parsing. Tensor product `A ⊗ B ≠ B ⊗ A` — word order matters. Directed implications: `A\B` (A needed on the left) vs `B/A` (A needed on the right). Type-raising, composition, and parsing transitive verb constructions as logical derivations.
-
-**`examples/separation.omega`** — Space (10 proofs)
-
-Bunched Implications: classical ∧ (sharing) and linear \* (ownership) in one system. The distribution bridge (P∧Q)\*R ⊢ (P\*R)∧(Q\*R). Heap verification: framed writes, pointer swaps, composed operations.
-
-**`examples/separation-logic.omega`** — Separation Logic (10 proofs)
-
-Extends Hoare logic with separating conjunction `P * Q` for disjoint heap regions, enabling local reasoning about heap-manipulating programs. The frame rule: `{P}c{Q}` implies `{P*R}c{Q*R}` — unrelated heap state is preserved automatically. Allocation, deallocation, and pointer operations.
-
-#### Categories and Algebra
-
-**`examples/category-theory.omega`** — Yoneda Lemma (16 proofs)
-
-Categories, functors, and natural transformations with the full Yoneda bijection. Part 1: 10 definitional equalities (all by normalization — composition laws, functor laws, ψ/φ maps). Part 2: 6 multi-step proofs using naturality, double congruence, and right cancellation via sections.
-
-**`examples/category.omega`** — Structure (10 proofs)
-
-Cartesian Closed Categories. Morphisms are proofs, composition is cut, products are conjunction, exponentials are implication. The hypothetical syllogism as a 5-level categorical morphism.
-
-**`examples/monoid.omega`** — Parameterized Monoid Theory (8 proofs)
-
-A single `MonoidTheory` parameterized over carrier, operation, and identity — instantiated for Nat with addition and Bool with conjunction. Triple associativity via `trans(assoc, assoc)`, unit simplification via `cong-l(right-id)`, and double congruence from assumptions.
-
-**`examples/topos.omega`** — The Engine of Truth (10 proofs)
-
-Two subobject classifiers computed side by side:
-- Boolean Ω = {⊤,⊥}: ¬¬x = x, LEM holds → Classical
-- Heyting Ω = {⊤,u,⊥}: ¬¬u = ⊤ ≠ u, LEM fails → Intuitionistic
-
-Same connectives, same rules. Change Ω, change the logic. Ω defined inside Omega.
-
-#### Modal and Temporal Logic
-
-**`examples/modal-logic.omega`** — S5 Modal Logic (6 proofs)
-
-Box (necessity) and diamond (possibility) with axioms K, T, and 5. Positive introspection, necessitation, and the S5 theorem `◇A → □◇A` — possibility is itself necessary.
-
-**`examples/provability-logic.omega`** — Provability Logic (10 proofs)
-
-Gödel-Löb logic (GL) where `□P` means "P is provable" and Löb's axiom `□(□P→P) → □P` replaces the standard T axiom. Box distribution, provability of tautologies, and the groundwork for Gödel's incompleteness — related to but distinct from the full treatment in `godel.omega`.
-
-**`examples/temporal.omega`** — Time (10 proofs)
-
-State machines as categories. Traffic light cycles and mutex lock protocols. Safety by absence (no Held→Held morphism), liveness by reachability.
-
-**`examples/temporal-logic.omega`** — Linear Temporal Logic (10 proofs)
-
-LTL with first-class temporal operators: always (□), eventually (◇), next (○), and until (U). Proves operator interactions, distribution laws, and eventuality guarantees over infinite execution traces. The fundamental duality: `□A ≡ ¬◇¬A`.
-
-**`examples/godel.omega`** — The Limits of Proof (10 proofs)
-
-Provability logic (GL) with the Gödel sentence G ↔ ¬□G. Highlights:
-- Proof 9 (Second Incompleteness): Con → ¬□Con in 5 lines — "if consistent, you can't prove your own consistency." The proof: □Con → □⊥ via Löb, then Con turns □⊥ into ⊥.
-- Proofs 7-8: □(G → ¬□G) and □(¬□G → G) — the system knows what G means, it just can't decide it.
-
-#### Computation and Effects
-
-**`examples/monad.omega`** — Effects (10 proofs)
-
-Hoare logic as Kleisli category. Monad laws verified by rewriting. Counter state machine with {n=0} inc;inc;inc {n=3}.
-
-**`examples/game.omega`** — Logic as Interaction (10 proofs)
-
-Game semantics: proofs are winning strategies. Copycat (A→A), fork (combine two responses), case analysis (or-elimination), and Peirce's law — the classical "bluff" strategy where the Prover assumes ¬A, catches the Opponent in a contradiction, and wins.
-
-**`examples/hoare-logic.omega`** — Program Verification (5 proofs)
-
-Hoare triples {P}c{Q} with assignment, frame rule, sequencing, and conditionals. The frame rule enables local reasoning — `{P}c{Q}` implies `{P∧R}c{Q∧R}` when c doesn't touch R. Conditional proof combines two branches into a disjunctive postcondition.
-
-**`examples/pi.omega`** — Pi-Calculus (10 proofs)
-
-Session-typed concurrent processes where protocols are types and processes are proofs. Duality guarantees deadlock freedom: if one side sends, the other receives. Channel creation, parallel composition, and session continuation — the Curry-Howard correspondence for concurrency.
-
-**`examples/cut-elim.omega`** — Cut Elimination (11 proofs)
-
-Proofs as programs with cut elimination as computation. Linear logic proof terms where each cut-reduction step is a rewrite rule and Omega's normalizer is the abstract machine. Tensor projection, additive selection, dereliction, duplication, and composition all reduce to normal forms by `eq-refl`.
-
-**`examples/effects.omega`** — Algebraic Effects (10 proofs)
-
-Three handlers for one program. `put(1, choose(get, val(0)))` produces `some(1)`, `(0, [err])`, or `[1, 0]` depending on which handler interprets the effects. State, nondeterminism, and exceptions as composable effect algebras — the program is fixed, only the interpretation changes.
-
-**`examples/inference.omega`** — Type Inference (15 proofs)
-
-Mini-ML with Robinson unification. Soundness: `unify(α→β, Int→Bool) = [α↦Int, β↦Bool]` and applying the substitution to both sides yields `Int→Bool`. Constraint generation, occurs check, and substitution composition — the algorithm behind `let x = ...` in ML-family languages.
-
-**`examples/streams.omega`** — Coinduction & Bisimulation (10 proofs)
-
-Reasoning about infinite structures. Streams defined by observations (head and tail), with coinduction as the dual of induction: to prove two streams bisimilar, assume bisimilarity when comparing their tails. Five observation proofs (head of ones, nats, zip-add) and five bisimulation proofs including `map-succ(zeros) ∼ ones` via coinductive hypothesis.
-
-**`examples/zk-circuit.omega`** — Zero-Knowledge Circuits (10 proofs)
-
-R1CS (Rank-1 Constraint Systems) for zero-knowledge proofs. Arithmetic gates (`a * b = c`, `a + b = c`), witnesses assigning values to wires, and circuit satisfiability checked by the rewrite engine as arithmetic verifier. Multiple witnesses for the same public output demonstrate zero-knowledge: you can't tell *which* factoring was used.
-
-#### Verified State Machines
-
-**`examples/kv-store.omega`** — Verified Key-Value Store (10 proofs)
-
-Transactional KV store state machine with put/get/delete operations, begin/commit/rollback transaction logic, and safety invariants: read-your-writes consistency and multi-key isolation. State transitions modeled as rewrite rules.
-
-**`examples/rate-limiter.omega`** — Token-Bucket Rate Limiter (14 proofs)
-
-Token-bucket algorithm with Peano natural number tokens capped at maximum capacity. Safety invariant: accept count never exceeds token count. Burst capacity, token replenishment, and request handling — all verified by normalization.
-
-**`examples/tcp-state.omega`** — TCP State Machine (10 proofs)
-
-Simplified TCP connection lifecycle: Closed → Listen → SynRecvd → Established → FinWait → Closed. Transitions as rewrite rules, safety proofs for valid state sequences, and Rust code generation via string ropes and `emit`.
-
-**`examples/tcp-server.omega`** — TCP Server with Effects (5 proofs)
-
-Pure state machine (`step`, `can-send`, `is-open`) separated from abstract I/O effects (`bind-port`, `send-ack`). The effect dispatch pattern: verify the logic in Omega, implement the I/O boundary in Rust via a generated effects trait.
-
-**`examples/calc.omega`** — Verified Calculator (16 proofs)
-
-5 sorts, 29 constructors, 34 rewrite rules. Peano arithmetic (add, mul, sub, pow, factorial), control flow (if, min, max), expression AST with eval dispatch, and effect-based output. Kompiles to Rust with a REPL frontend for interactive use.
-
-#### Verified Compilation
-
-**`examples/compile-verified.omega`** — HOAS Verified Compilation (19 proofs, 6 emitted C functions)
-
-ONE program definition, TWO uses. A lambda like `λx. x+x` is both an evaluator (apply to 3 → 6) and a compiler (apply to `var("x")` → `"x + x"`). Beta reduction bridges the two worlds. Five HOAS functions (double, square, abs, triple, is-zero) verified by normalization AND compiled to C. Multi-step congruence proofs: from `n=m`, derive `triple(n)=triple(m)` in a 3-step chain.
-
-**`examples/compile-factorial.omega`** — Verified Factorial (6 proofs + C emission)
-
-Factorial verified from 0! through 5! by Peano normalization, then compiled to `int factorial(int n)` via string rope translation. The same rewrite rules that compute `3! = 6` also guide the C code generation.
-
-**`examples/codegen-demo.omega`** — String Ropes and C Generation
-
-Tree-based string construction: fragments built during proof, flattened only at emit time. Generates a complete C program with `#include`, `main()`, `printf`, and `return 0` — all assembled from rope combinators.
-
-#### Metatheory and Reflection
-
-**`examples/reflection-demo.omega`** — Proof by Reflection (2 metatheorems, 10 proofs)
-
-Two metatheorems verified by exhaustive case analysis — `and-comm` and `or-comm` — then reflected as new inference rules. The reflected rules compose: `and-comm(and-comm(x)) = x` (roundtrip), cross-connective reasoning `A∧B ⊢ A∨B` via elimination + introduction, and `A∨B ⊢ (B∨A) ∧ (B∨A)` combining or-comm with contraction.
-
-**`examples/number-theory.omega`** — Induction via Miller Patterns (3 proofs)
-
-Structural induction over naturals with higher-order pattern unification. `(?P ?n)` matched against `(eq (add ?n z) ?n)` automatically solves `?P → λx.(eq (add x z) x)`. Proves `n+0=n`, the successor lemma, and commutativity of addition — all over ALL naturals, not just examples.
-
-**`examples/implicit-demo.omega`** — Implicit Arguments (10 proofs)
-
-The `eq-trans` rule declares `?b` implicit — the middle term is inferred from sub-derivation conclusions. Triple transitivity `a=b, b=c, c=d ⊢ a=d` chains two `eq-trans` calls, each inferring a different implicit. Deep congruence-symmetry composition: `a=b ⊢ succ(succ(b)) = succ(succ(a))`.
-
-#### Logic Translations
-
-**`examples/girard.omega`** — Girard Translation (10 proofs)
-
-Call-by-name translation from classical logic to linear logic. Every classical hypothesis gets wrapped in `!` (of-course), enabling the contraction and weakening that linear logic forbids by default. Classical ∧ becomes ⊗, classical ∨ becomes ⊕, and implication becomes `!A ⊸ B`. Four bridge theorems with identity as the canonical proof.
-
-**`examples/glivenko.omega`** — Glivenko Translation (10 proofs)
-
-Every classical tautology becomes intuitionistic when double-negated: if `⊢_c A` then `⊢_i ¬¬A`. The 1929 theorem that bridges classical and intuitionistic logic. Continuation monad interpretation: `¬¬A` is `(A → ⊥) → ⊥`, so classical proofs are CPS-transformed intuitionistic proofs.
-
-**`examples/collapse.omega`** — Paraconsistent Collapse (12 proofs)
-
-Consistency filter extracting the classically safe fragment from paraconsistent logic. Dialetheias (propositions that are both true and false) are tolerated but don't escape — a "robust truth" predicate distinguishes genuine truths from mere dialetheias, restoring DNE for the safe fragment.
-
-#### Kernel Features
-
-**`examples/peano-compute.omega`** — Definitional Equality (6 proofs)
-
-Arithmetic by normalization alone. Rewrite rules for addition and multiplication fire during proof checking — `1+1=2`, `2×3=6`, and `3×3=9` are all proved by `eq-refl` after the kernel reduces both sides to the same normal form.
-
-**`examples/eta-demo.omega`** — Eta-Contraction (12 proofs)
-
-With `(binder-behavior lambda :substitutive :eta)`, the arena canonicalizes `λx.(f x)` to `f` at intern time. Nested eta works: `λx.λy.(f x y)` contracts to `f` in two steps. Part 2 combines eta with equational reasoning — `f=g ⊢ (λx.(f x)) = g` succeeds because the LHS eta-contracts before matching.
-
-**`examples/linear-demo.omega`** — Per-Binder Usage Checks (5 proofs)
-
-Fine-grained resource tracking at the lambda abstraction level: linear binders require exactly one use, affine binders allow zero or one. Different from context-level substructurality — each binder independently controls its variable's usage.
-
-**`examples/ac-demo.omega`** — AC Normalization (12 proofs)
-
-Symbols declared `:ac` are flattened, sorted by structural hash, and rebuilt right-associative at intern time. `op(a, op(b, c)) = op(c, op(a, b))` by `eq-refl`. ACI adds idempotency: `join(a, join(a, join(b, b))) = join(a, b)`. Part 2 adds equational reasoning with assumptions over AC-normalized terms.
-
-**`examples/torture.omega`** — Exponential Sharing Stress Test
-
-Hash-consing benchmark: a term doubled 100,000 times has 2^100,001 nodes as a tree but ~50 unique interned handles. The interned checker verifies it in ~30μs. The tree checker would need more memory than exists.
-
-**`examples/compiler-demo.omega`** — Multi-Theory Imports (10 proofs)
-
-The "final boss" of the module system: imports Option(Int), Result(Int, String), and Pair(Int, Bool) into a single theory. Each parameterized theory instantiated with different types, all coexisting with aliased namespaces. Cross-module equality reasoning.
-
-**`examples/lemma-demo.omega`** — The Cut Rule (13 proofs)
-
-The `(lemma ...)` command: prove a theorem, then use its conclusion as a derived rule. Logically the Cut rule — once verified, the proof tree is discarded and only the signature is retained. Demonstrates lemma chaining (using one lemma to prove the next), deep composition, and the `[DERIVED]` audit trail.
-
-**`examples/self.omega`** — Self-Representation: Omega Checks Itself (15 proofs)
-
-A derivation checker, automated solver, and reflection principle — all as rewrite rules. Three acts: (I) `concl(D)` validates proof trees, returning `ok(F)` or `fail`; (II) `tauto(φ)` builds proof trees automatically via context-aware search; (III) `reflect-tauto` lifts validated results to a `true` judgment. Catch-all rewrite rules (declaration-order priority) eliminate O(n²) failure enumeration. Highlights:
-- Proof 11: MP antecedent mismatch `P→Q, R` → `fail` (catch-all handles without per-formula rules)
-- Proof 13: `tauto(P∧Q → Q∧P)` — automated commutativity (compare manual proof 6)
-- Proof 14: `tauto(P∧(Q∧R) → (P∧Q)∧R)` — automated associativity via depth-3 context lookup
-- Proof 15: `true(P∧Q → Q∧P)` — one-line reflected proof composing solver + checker + soundness
-
-#### Standard Library (`libs/`)
-
-**`libs/option.omega`** — Option(T): parameterized theory with none/some constructors and case elimination. Single type parameter.
-
-**`libs/result.omega`** — Result(T, E): parameterized with two type parameters, ok/err constructors, and case elimination.
-
-**`libs/pair.omega`** — Pair(A, B): parameterized with affine context mode — pairs consume their components linearly.
-
-**`libs/string.omega`** — StringLib: rope constructors (empty, cat, newline) with identity rewrites. The backbone of code generation.
-
-#### OmegaRust (`libs/omega-rust/`)
-
-**`libs/omega-rust/rust-types.omega`** — Rust type system formalized: U32, Bool, Box, Ref, MutRef, Pair, Fn, Option, Result. Lifetimes with outlives relation, Copy trait derivation, and reference subtyping via covariance. 10 proofs.
-
-**`libs/omega-rust/borrow.omega`** — Borrow checker as affine logic: Box is move-only (consumed on use), resource splitting across pairs, shared and mutable references with lifetime tracking. 10 proofs.
-
-**`libs/omega-rust/eval.omega`** — Operational semantics via rewrite rules: pair projection, box dereference, option unwrap, conditionals, and Peano arithmetic. All proved by `eq-refl` after normalization. 10 proofs.
-
-## Architecture
-
-Omega is structured as a Rust workspace with a strict dependency hierarchy:
-
-```
-omega-cli              Command-line interface
-  └─ omega-driver        Batch processor and pipeline
-       ├─ omega-elaborate   Constraint solver, unifier, tactic engine
-       │    └─ omega-core
-       ├─ omega-syntax      S-expression parser, locally nameless encoding
-       │    └─ omega-core
-       └─ omega-core          Trusted kernel (~7400 LOC, zero dependencies)
-```
-
-**`omega-core`** is the trusted computing base. It has no external dependencies and implements three operations: `register_theory`, `check_derivation`, and `check_metatheorem`. Reflection is driver-level sugar — the kernel verifies the metatheorem, and the driver installs the derived rule. Everything above the kernel is untrusted elaboration.
-
-## Testing & Coverage
+### Testing
 
 ```bash
-# Run all tests
+# Everything
 cargo test --workspace
 
-# Run just integration tests (example files + negative tests + kompile + bench)
-cargo test --test integration
-
-# Run a specific example test
-cargo test --test integration -- full_demo
-
-# Code coverage (requires cargo-llvm-cov: cargo install cargo-llvm-cov)
-cargo llvm-cov --workspace --summary-only   # Per-file line coverage
-cargo llvm-cov --workspace --html           # HTML report in target/llvm-cov/html/
-cargo llvm-cov --workspace --open           # Generate and open in browser
+# Individual crates
+cargo test --test integration                    # Omega integration tests
+cd apeiron && cargo test                         # Apeiron (75 tests)
+cd hyperion && cargo test                        # Hyperion
+cd metacosm && cargo test                        # Metacosm (120+ tests)
 ```
 
-Coverage is ~80% overall (~84% for omega-core). Untestable code (interactive REPL, CLI main) is excluded from targets. Negative tests exercise error paths: duplicate declarations, goal mismatches, affine violations, rewrite meta escape, and more.
+---
 
-## Roadmap
+## Examples
 
-- [x] User-defined binding specifications
-- [x] Hash-consed interned kernel
-- [x] Constraint unification and implicit arguments
-- [x] Definitional equality (delta reduction / rewrite rules)
-- [x] Substructural (affine) contexts
-- [x] Context extensions and induction
-- [x] Miller pattern unification (higher-order)
-- [x] Theory imports
-- [x] Parameterized theories / modules
-- [x] String ropes and code generation (`emit`)
-- [x] Dependent types (Pi) and classical logic (DNE)
-- [x] HOAS verified compilation
-- [x] Algebraic universes, W-types, Sigma types
-- [x] Induction-recursion and higher inductive types
-- [x] Level-polymorphic declarations
-- [x] Per-binder eta-contraction, linear/affine checks
-- [x] Reflection moved out of kernel (three-operation trusted core)
-- [x] Lemma command (Cut rule for proof chaining)
-- [x] Theory-to-Rust compiler (`omega kompile`)
+### Omega (60+ examples)
+
+<details>
+<summary><strong>Foundations</strong></summary>
+
+| Example | Description |
+|:--------|:------------|
+| `full-demo.omega` | Complete tour — all five proof layers from scratch (17 proofs) |
+| `prop-logic.omega` | Natural deduction with conjunction, disjunction, implication |
+| `first-order.omega` | Predicates, universal quantification, the Socrates syllogism |
+| `classical-logic.omega` | DNE, LEM, Peirce's law, contraposition |
+| `zfc.omega` | ZFC set theory — Von Neumann ordinals, pairing, union, AC (39 proofs) |
+| `zfc-independence.omega` | Complete CH independence — forcing, Cohen poset, zero black boxes (25 proofs) |
+| `zfc-honest.omega` | Honest CH formalization — every rule tagged as axiom/derived/admitted (29 proofs) |
+| `large-cardinals.omega` | Inaccessible cardinals, Grothendieck universes, reflection principle |
+| `ordinal-arithmetic.omega` | Veblen hierarchy, ε₀, Γ₀ (Feferman-Schütte ordinal) |
+| `godel.omega` | Gödel's Second Incompleteness Theorem via provability logic |
+| `continuum.omega` | CH independence via Boolean-valued models |
+| `forcing.omega` | Gödel's L and Cohen's forcing |
+
+</details>
+
+<details>
+<summary><strong>Type Theory</strong></summary>
+
+| Example | Description |
+|:--------|:------------|
+| `stlc.omega` | Simply-typed lambda calculus with de Bruijn indices |
+| `dep-types.omega` | Pi types, identity type, type computation |
+| `w-types.omega` | W-types, algebraic universes, Sigma types |
+| `hott.omega` | Homotopy Type Theory — J eliminator, full groupoid structure |
+| `hits.omega` | Higher inductive types — circle, suspension, truncation |
+| `cubical.omega` | Cubical type theory — transport and univalence that compute |
+| `system-f.omega` | Impredicative polymorphism, Church encodings |
+| `induction-recursion.omega` | Dybjer-Setzer pattern, universe of codes |
+| `level-poly.omega` | Universe-polymorphic List, Id, Pi |
+| `bidirectional.omega` | Bidirectional type checking (synthesis ⇒, checking ⇐) |
+
+</details>
+
+<details>
+<summary><strong>Substructural Logic</strong></summary>
+
+| Example | Description |
+|:--------|:------------|
+| `linear-logic.omega` | Tensor, lolli, bang modality |
+| `affine-logic.omega` | Move semantics as logic |
+| `relevant-logic.omega` | System R — no vacuous truths |
+| `lambek.omega` | Non-commutative logic for natural language |
+| `separation.omega` | Bunched implications — sharing + ownership |
+| `separation-logic.omega` | Frame rule, heap reasoning |
+
+</details>
+
+<details>
+<summary><strong>Categories, Algebra, Modal/Temporal</strong></summary>
+
+| Example | Description |
+|:--------|:------------|
+| `category-theory.omega` | Yoneda lemma (16 proofs) |
+| `topos.omega` | Boolean vs Heyting subobject classifiers |
+| `monoid.omega` | Parameterized theory instantiated for Nat and Bool |
+| `modal-logic.omega` | S5 — necessity, possibility |
+| `temporal-logic.omega` | LTL — always, eventually, next, until |
+| `provability-logic.omega` | Gödel-Löb logic (GL) |
+| `game.omega` | Game semantics — proofs as winning strategies |
+
+</details>
+
+<details>
+<summary><strong>Computation, Effects, Verified Systems</strong></summary>
+
+| Example | Description |
+|:--------|:------------|
+| `compile-verified.omega` | HOAS verified compilation to C (19 proofs + 6 emitted functions) |
+| `effects.omega` | Algebraic effects — three handlers for one program |
+| `tcp-state.omega` | TCP state machine, compiled to Rust |
+| `calc.omega` | Verified calculator (34 rewrite rules), compiled to Rust with REPL |
+| `rate-limiter.omega` | Token-bucket algorithm with safety invariants |
+| `self.omega` | Self-representation — Omega's checker encoded as rewrite rules |
+| `zk-circuit.omega` | Zero-knowledge R1CS circuits |
+| `streams.omega` | Coinduction and bisimulation over infinite structures |
+
+</details>
+
+### Apeiron (29 examples)
+
+Omega ports, lambda calculus, optimal sharing, type systems, binding modes, morphisms, reversible computing, and more. See [`apeiron/README.md`](apeiron/README.md).
+
+### Metacosm (9 examples)
+
+End-to-end epistemic pipelines, tactic-proved laws, adversarial stress tests, and three-layer integration. See [`metacosm/README.md`](metacosm/README.md).
+
+---
+
+## The "Neutral Tool" Philosophy
+
+Each layer is neutral about the layer below it:
+
+- **Omega** is neutral about logic — define your own
+- **Apeiron** is neutral about binding and checking — choose your physics
+- **Hyperion** is neutral about the math/physics pairing — compile any combination
+- **Metacosm** is neutral about epistemic regimes — formally track what you gain and lose
+
+Want Classical? Add `axiom excluded_middle`.
+Want Constructive? Don't.
+Want Linear? Use `(binder-behavior tensor :linear)`.
+Want HoTT? Add path axioms.
+Want to run it on an e-graph? Change the substrate.
+Want to know what survives the transition? Read the receipt.
+
+---
+
+## Comparison
+
+| | **Omega** | **Lean 4 / Coq** | **Dedukti / Lambdapi** |
+|:---|:---|:---|:---|
+| Logic | User-defined | Fixed (CIC) | User-defined (rewrite rules) |
+| Kernel language | Rust (zero deps) | Lean / OCaml | OCaml |
+| Term representation | Interned DAG (maximal sharing) | Tree-based | Mixed |
+| Equality check | O(1) (pointer comparison) | O(n) | O(n) |
+| Binding control | Per-binder eta, linear, affine | Fixed | Fixed |
+| Multi-engine | Apeiron (interaction nets), Hyperion (substrates) | Single engine | Single engine |
+| Epistemic tracking | Metacosm (typed profiles, taint algebra) | — | — |
+
+---
 
 ## License
 
