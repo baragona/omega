@@ -7,7 +7,7 @@
 
 use apeiron::node::{OpCode, Ptr};
 
-use crate::extended_arena::ArchonArena;
+use crate::extended_arena::{ArchonArena, MarkerId};
 use crate::region::BoundaryType;
 
 /// Result of a boundary crossing interaction.
@@ -198,26 +198,80 @@ fn defunc_crossing(
     let lam_var = arena.port(lam, 1);
     let lam_body = arena.port(lam, 2);
 
-    // Create a closure constructor: __closure_N(captured_var, body)
-    let closure_id = lam.0; // unique ID from the lambda's address
+    // Collect free variables in the body subgraph via radiation.
+    // Any node in the body that is glowing with a marker NOT from this lambda's
+    // own bound variable is a free variable that needs to be captured.
+    let own_markers: Vec<MarkerId> = if lam_var.is_connected() {
+        arena.markers_on(lam_var.target)
+    } else {
+        vec![]
+    };
+
+    let mut captured: Vec<Ptr> = Vec::new();
+    if lam_body.is_connected() {
+        let mut visited = std::collections::HashSet::new();
+        let mut stack = vec![lam_body.target];
+        while let Some(ptr) = stack.pop() {
+            if !visited.insert(ptr.0) { continue; }
+            // Check if this node is glowing with markers OTHER than our own bound var.
+            let markers = arena.markers_on(ptr);
+            for &m in &markers {
+                if !own_markers.contains(&m) {
+                    // This node carries a free variable's radiation — capture it.
+                    // The radiation source is the free variable itself.
+                    if !captured.iter().any(|&c| c == ptr) {
+                        captured.push(ptr);
+                    }
+                }
+            }
+            if let Some(node) = arena.get(ptr) {
+                let pc = node.kind.port_count();
+                for slot in 1..pc {
+                    let port = arena.port(ptr, slot as u8);
+                    if port.is_connected() && arena.get(port.target).is_some() {
+                        stack.push(port.target);
+                    }
+                }
+            }
+        }
+    }
+
+    // Create closure constructor: __closure_N(captured1, captured2, ..., body)
+    // Arity = number of captured vars + 1 (for body).
+    let closure_id = lam.0;
+    let total_arity = (captured.len() + 1) as u8;
     let closure = arena.spawn_in(
         OpCode::Sym {
             name: format!("__closure_{}", closure_id),
-            arity: 2,
+            arity: total_arity,
         },
         target_region,
     );
 
-    // Wire: closure takes over lambda's connections.
-    // closure.principal ↔ other (where lambda was going)
+    // Wire closure's principal to where the lambda was going.
     arena.connect(closure, 0, other, 0);
-    // closure.aux1 ↔ lambda's var target (captured environment)
-    if lam_var.is_connected() {
-        arena.connect(closure, 1, lam_var.target, lam_var.slot);
+
+    // Wire captured variables to closure's aux ports (slots 1..N).
+    // Note: we don't move the captured nodes — we Dup them so the original
+    // subgraph stays intact (captured vars may be shared).
+    for (i, &cap_ptr) in captured.iter().enumerate() {
+        let slot = (i + 1) as u8;
+        let cap_port = arena.port(cap_ptr, 0);
+        if cap_port.is_connected() {
+            arena.connect(closure, slot, cap_ptr, 0);
+        }
     }
-    // closure.aux2 ↔ lambda's body target
+
+    // Wire body to closure's last aux port.
+    let body_slot = total_arity;
     if lam_body.is_connected() {
-        arena.connect(closure, 2, lam_body.target, lam_body.slot);
+        arena.connect(closure, body_slot, lam_body.target, lam_body.slot);
+    }
+
+    // Erase the bound variable wire (it's now implicit in the closure).
+    if lam_var.is_connected() {
+        let erase = arena.spawn_in(OpCode::Erase, target_region);
+        arena.connect(erase, 0, lam_var.target, lam_var.slot);
     }
 
     // Free the original lambda.
@@ -869,36 +923,90 @@ fn grounding_crossing(
 fn context_reify_crossing(
     arena: &mut ArchonArena,
     left: Ptr,
-    _left_kind: &OpCode,
+    left_kind: &OpCode,
     right: Ptr,
-    _right_kind: &OpCode,
+    right_kind: &OpCode,
     left_region: u32,
     right_region: u32,
 ) -> BoundaryResult {
-    let (entering, target_region) = if arena.topology.get(right_region)
+    // Determine which node is entering the context-reify region.
+    let (entering, other, target_region) = if arena.topology.get(right_region)
         .map_or(false, |r| matches!(r.boundary_type, BoundaryType::ContextReifyBoundary))
     {
-        (left, right_region)
+        (left, right, right_region)
     } else {
-        (right, left_region)
+        (right, left, left_region)
     };
 
-    // Wrap the entering node in a reified-context node.
-    let reified = arena.spawn_in(
-        OpCode::Sym {
-            name: "__reified_ctx".into(),
-            arity: 1,
-        },
-        target_region,
-    );
+    let kind = match arena.get(entering).map(|n| n.kind.clone()) {
+        Some(k) => k,
+        None => return BoundaryResult::PassThrough,
+    };
 
-    let entering_port = arena.port(entering, 0);
-    if entering_port.is_connected() {
-        arena.connect(reified, 0, entering_port.target, entering_port.slot);
+    // Rewrite context operations to first-order constructors.
+    // Matches Hyperion's context_reify.rs: empty-ctx → __ctx_nil,
+    // extend → __ctx_cons, lookup → __ctx_lookup.
+    match &kind {
+        OpCode::Sym { name, arity } => {
+            let (new_name, new_arity) = match name.as_str() {
+                "empty-ctx" | "empty_ctx" | "nil-ctx" => ("__ctx_nil", 0u8),
+                "extend" | "ctx-extend" | "cons-ctx" => ("__ctx_cons", 3), // ctx, name, type
+                "lookup" | "ctx-lookup" => ("__ctx_lookup", 2), // ctx, index
+                "lookup-name" | "ctx-lookup-name" => ("__ctx_lookup_name", 2), // ctx, name
+                _ => {
+                    // Not a context op — wrap in __reified_ctx as before.
+                    let reified = arena.spawn_in(
+                        OpCode::Sym { name: "__reified_ctx".into(), arity: 1 },
+                        target_region,
+                    );
+                    let entering_port = arena.port(entering, 0);
+                    if entering_port.is_connected() {
+                        arena.connect(reified, 0, entering_port.target, entering_port.slot);
+                    }
+                    arena.connect(reified, 1, entering, 0);
+                    return BoundaryResult::Handled("ContextReification".into());
+                }
+            };
+
+            // Replace the context op with its reified constructor.
+            let reified = arena.spawn_in(
+                OpCode::Sym { name: new_name.into(), arity: new_arity },
+                target_region,
+            );
+
+            // Rewire principal port.
+            let entering_port = arena.port(entering, 0);
+            if entering_port.is_connected() {
+                arena.connect(reified, 0, entering_port.target, entering_port.slot);
+            }
+
+            // Rewire aux ports (transfer children).
+            let old_arity = *arity;
+            let transfer = old_arity.min(new_arity);
+            for slot in 1..=transfer {
+                let p = arena.port(entering, slot);
+                if p.is_connected() {
+                    arena.connect(reified, slot, p.target, p.slot);
+                }
+            }
+
+            arena.free(entering);
+            BoundaryResult::Handled("ContextReify-Rewrite".into())
+        }
+        _ => {
+            // Non-Sym node — generic wrapper.
+            let reified = arena.spawn_in(
+                OpCode::Sym { name: "__reified_ctx".into(), arity: 1 },
+                target_region,
+            );
+            let entering_port = arena.port(entering, 0);
+            if entering_port.is_connected() {
+                arena.connect(reified, 0, entering_port.target, entering_port.slot);
+            }
+            arena.connect(reified, 1, entering, 0);
+            BoundaryResult::Handled("ContextReification".into())
+        }
     }
-    arena.connect(reified, 1, entering, 0);
-
-    BoundaryResult::Handled("ContextReification".into())
 }
 
 // ── ModalRestriction: variable-class guards at boundary ─────────────

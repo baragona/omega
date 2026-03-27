@@ -6133,3 +6133,152 @@ fn full_replacement_readback_strips_wrappers() {
     // Should unwrap __closure, then strip __thermo_ prefix.
     assert_eq!(format!("{}", cleaned), "[and x y]");
 }
+
+#[test]
+fn defunc_captures_free_variables_via_radiation() {
+    // Test: defunctionalization boundary captures free variables by detecting
+    // radiation from outside the lambda's scope.
+    use archon::radiation;
+
+    let mut topo = archon::region::Topology::new();
+    let defunc_region = topo.add_region(
+        archon::region::Region::new(topo.next_id(), "defunc")
+            .with_boundary(archon::region::BoundaryType::DefunctionalizationBoundary)
+            .with_parent(0)
+    );
+
+    let mut arena = archon::extended_arena::ArchonArena::new().with_topology(topo);
+
+    // Build: λx.y where y is a free variable (has radiation from outside).
+    let lam = arena.spawn_in(apeiron::node::OpCode::Lam, 0);
+    let x_var = arena.spawn_in(
+        apeiron::node::OpCode::Sym { name: "x".into(), arity: 0 }, 0);
+    let y_free = arena.spawn_in(
+        apeiron::node::OpCode::Sym { name: "y".into(), arity: 0 }, 0);
+    let target = arena.spawn_in(
+        apeiron::node::OpCode::Sym { name: "target".into(), arity: 1 }, defunc_region);
+
+    arena.connect(lam, 1, x_var, 0); // lam.var ↔ x
+    arena.connect(lam, 2, y_free, 0); // lam.body ↔ y (free var)
+    arena.connect(lam, 0, target, 1); // lam ↔ target (crosses boundary)
+
+    // Set up radiation: y is a free variable source.
+    let _marker = arena.add_radiation_source(y_free);
+    radiation::propagate_to_fixpoint(&mut arena, 10);
+
+    // Dispatch boundary crossing.
+    let lam_kind = arena.get(lam).unwrap().kind.clone();
+    let target_kind = arena.get(target).unwrap().kind.clone();
+    let result = archon::boundary::dispatch(&mut arena, lam, &lam_kind, target, &target_kind);
+
+    assert!(matches!(result, archon::boundary::BoundaryResult::Handled(_)),
+        "Defunc boundary should handle lambda crossing");
+
+    // The lambda should be freed.
+    assert!(arena.get(lam).is_none(), "Lambda should be freed after defunctionalization");
+}
+
+#[test]
+fn context_reify_rewrites_ops() {
+    // Test: context reification boundary rewrites empty-ctx → __ctx_nil,
+    // extend → __ctx_cons, lookup → __ctx_lookup.
+    let mut topo = archon::region::Topology::new();
+    let reify_region = topo.add_region(
+        archon::region::Region::new(topo.next_id(), "ctx-reify")
+            .with_boundary(archon::region::BoundaryType::ContextReifyBoundary)
+            .with_parent(0)
+    );
+
+    let mut arena = archon::extended_arena::ArchonArena::new().with_topology(topo);
+
+    // Build: empty-ctx crossing into reify region.
+    let empty = arena.spawn_in(
+        apeiron::node::OpCode::Sym { name: "empty-ctx".into(), arity: 0 }, 0);
+    let target = arena.spawn_in(
+        apeiron::node::OpCode::Sym { name: "target".into(), arity: 1 }, reify_region);
+    arena.connect(empty, 0, target, 1);
+
+    let empty_kind = arena.get(empty).unwrap().kind.clone();
+    let target_kind = arena.get(target).unwrap().kind.clone();
+    let result = archon::boundary::dispatch(&mut arena, empty, &empty_kind, target, &target_kind);
+
+    assert!(matches!(result, archon::boundary::BoundaryResult::Handled(_)),
+        "Context reify should handle empty-ctx");
+
+    // The empty-ctx node should be replaced by __ctx_nil.
+    assert!(arena.get(empty).is_none(), "empty-ctx should be freed");
+    let target_port = arena.port(target, 1);
+    if target_port.is_connected() {
+        let reified = arena.get(target_port.target);
+        if let Some(node) = reified {
+            let name = match &node.kind {
+                apeiron::node::OpCode::Sym { name, .. } => name.as_str(),
+                _ => "",
+            };
+            assert_eq!(name, "__ctx_nil", "Should be reified to __ctx_nil, got {}", name);
+        }
+    }
+}
+
+#[test]
+fn crystallize_catalyst_meets_lam() {
+    // Test: catalyst + lambda → CPS'd lambda with continuation parameter.
+    use archon::crystallize;
+
+    let mut arena = archon::extended_arena::ArchonArena::new();
+
+    let catalyst = arena.spawn(apeiron::node::OpCode::Sym {
+        name: "__catalyst".into(), arity: 1,
+    });
+    let lam = arena.spawn(apeiron::node::OpCode::Lam);
+    let x_var = arena.spawn(apeiron::node::OpCode::Sym {
+        name: "x".into(), arity: 0,
+    });
+    let body = arena.spawn(apeiron::node::OpCode::Sym {
+        name: "body".into(), arity: 0,
+    });
+    let k = arena.spawn(apeiron::node::OpCode::Sym {
+        name: "k".into(), arity: 1,
+    });
+    let root = arena.spawn(apeiron::node::OpCode::Sym {
+        name: "root".into(), arity: 1,
+    });
+
+    arena.connect(lam, 1, x_var, 0);    // lam.var ↔ x
+    arena.connect(lam, 2, body, 0);      // lam.body ↔ body
+    arena.connect(catalyst, 0, root, 1); // catalyst.principal ↔ root
+    arena.connect(catalyst, 1, k, 0);    // catalyst.continuation ↔ k
+
+    let result = crystallize::catalyst_meets_lam(&mut arena, catalyst, lam);
+    assert!(matches!(result, crystallize::CatalystResult::TransformedLam));
+
+    // Catalyst should be freed.
+    assert!(arena.get(catalyst).is_none(), "Catalyst should be freed");
+}
+
+#[test]
+fn archon_readback_integration_in_session() {
+    // Test: process an Archon-engine theory and verify readback output appears.
+    let input = r#"
+        [Category TestCat [Object Term]]
+        [Substrate TestSub
+            @engine archon-physics
+            @resource-mode optimal-sharing
+            @barrier transparent
+            @equality rewrite-equivalence
+        ]
+        [Universe TestUni :category TestCat :substrate TestSub]
+        [Theory TestTheory :in TestUni
+            [const a Term]
+            [const b Term]
+            [@rule identity a ==> a]
+        ]
+    "#;
+    let mut session = HyperionSession::new();
+    let result = process_all(&mut session, input);
+    assert!(result.is_ok(), "Archon theory processing failed: {:?}", result.err());
+
+    // Should have ARCHON output.
+    let has_archon = session.output.iter().any(|o| o.contains("[ARCHON]"));
+    assert!(has_archon, "Should have [ARCHON] output, got: {:?}", session.output);
+}

@@ -1355,6 +1355,24 @@ impl HyperionSession {
             archon::physics::HaltReason::Error(_) => "invalid",
         };
 
+        // Readback: extract terms from arena and strip boundary wrappers.
+        // Find all ROOT anchor nodes and readback their terms.
+        let capacity = arena.inner.node_capacity();
+        for idx in 0..capacity {
+            let ptr = apeiron::node::Ptr(idx as u32);
+            if let Some(node) = arena.get(ptr) {
+                if matches!(&node.kind, apeiron::node::OpCode::Sym { name, .. } if name == "ROOT") {
+                    let result_port = arena.inner.port(ptr, 1);
+                    if result_port.is_connected() {
+                        let term = apeiron::readback::readback(&arena.inner, result_port.target);
+                        let raw_sexp = apeiron::rewrite::term_to_sexp(&term);
+                        let cleaned = archon::readback::strip_boundary_wrappers(&raw_sexp);
+                        self.output.push(format!("[ARCHON:READBACK] {}", cleaned));
+                    }
+                }
+            }
+        }
+
         let msg = format!(
             "[ARCHON] Theory '{}' processed via physics engine ({}, {} interactions, {} boundary crossings, {} radiation hops)",
             theory_name, pass_info, result.interactions, result.boundary_crossings, result.radiation_hops
@@ -1970,6 +1988,23 @@ impl HyperionSession {
             radiation_hops_per_tick: 1,
         };
         let result = archon::physics::run(&mut arena, &config);
+
+        // Readback from ROOT anchors and strip boundary wrappers.
+        let capacity = arena.inner.node_capacity();
+        for idx in 0..capacity {
+            let ptr = apeiron::node::Ptr(idx as u32);
+            if let Some(node) = arena.get(ptr) {
+                if matches!(&node.kind, apeiron::node::OpCode::Sym { name, .. } if name == "ROOT") {
+                    let result_port = arena.inner.port(ptr, 1);
+                    if result_port.is_connected() {
+                        let term = apeiron::readback::readback(&arena.inner, result_port.target);
+                        let raw_sexp = apeiron::rewrite::term_to_sexp(&term);
+                        let cleaned = archon::readback::strip_boundary_wrappers(&raw_sexp);
+                        self.output.push(format!("[ARCHON:READBACK] {}", cleaned));
+                    }
+                }
+            }
+        }
 
         let msg = format!(
             "[ARCHON] Proofs processed ({} interactions, {} boundary crossings)",

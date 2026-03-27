@@ -125,6 +125,70 @@ pub fn catalyst_meets_value(arena: &mut ArchonArena, catalyst: Ptr, value: Ptr) 
     CatalystResult::ReachedValue
 }
 
+/// Handle a catalyst meeting a Lam node.
+///
+/// CPS transform: [[λx.M]](k) = k(λx.λk'. [[M]](k'))
+///
+/// The lambda gets an extra continuation parameter. The body M gets
+/// a sub-catalyst with continuation k'. The whole thing is passed to k.
+pub fn catalyst_meets_lam(arena: &mut ArchonArena, catalyst: Ptr, lam: Ptr) -> CatalystResult {
+    let region = arena.region_of(catalyst);
+
+    let lam_var = arena.port(lam, 1);   // x
+    let lam_body = arena.port(lam, 2);  // M
+    let k_port = arena.port(catalyst, 1); // k
+
+    // Create the CPS'd lambda: λx.λk'.[[M]](k')
+    // We keep the outer lambda (for x), add an inner lambda (for k'),
+    // and inject a sub-catalyst into the body with continuation k'.
+
+    // Inner lambda for the continuation parameter k'.
+    let inner_lam = arena.spawn_in(OpCode::Lam, region);
+
+    // Sub-catalyst for the body M, carrying k' as continuation.
+    let sub_catalyst = arena.spawn_in(
+        OpCode::Sym {
+            name: "__catalyst".into(),
+            arity: 1,
+        },
+        region,
+    );
+
+    // Wire inner_lam's var port (k') to the sub-catalyst's continuation.
+    arena.connect(sub_catalyst, 1, inner_lam, 1); // k' ↔ sub_catalyst.aux1
+
+    // Wire sub-catalyst into the body.
+    if lam_body.is_connected() {
+        arena.connect(sub_catalyst, 0, lam_body.target, lam_body.slot);
+    }
+
+    // The inner_lam's body is the sub-catalyst's work area.
+    // (The sub-catalyst will transform M and produce the result.)
+    // Wire inner_lam.body ↔ sub_catalyst.principal ... but sub_catalyst.principal
+    // is already wired to M. Instead, inner_lam.body points to sub_catalyst.
+    arena.connect(inner_lam, 2, sub_catalyst, 0);
+
+    // The outer lambda keeps its variable (x) and its body becomes inner_lam.
+    // Rewire: lam.body → inner_lam
+    arena.connect(lam, 2, inner_lam, 0);
+
+    // Apply continuation k to the CPS'd lambda: k(λx.λk'.[[M]](k'))
+    if k_port.is_connected() {
+        let app = arena.spawn_in(OpCode::App, region);
+        arena.connect(app, 0, k_port.target, k_port.slot); // k
+        arena.connect(app, 1, lam, 0);                       // λx.λk'...
+
+        // The result goes wherever the catalyst's principal was.
+        let cat_principal = arena.port(catalyst, 0);
+        if cat_principal.is_connected() {
+            arena.connect(app, 2, cat_principal.target, cat_principal.slot);
+        }
+    }
+
+    arena.free(catalyst);
+    CatalystResult::TransformedLam
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
