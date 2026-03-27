@@ -50,7 +50,12 @@ pub fn compile_universe(
 /// Check if a substrate uses a first-order engine (VonNeumann, NetworkRpc, SystemIO, or Compiler).
 /// These engines bypass Apeiron and use direct rewrite-rule theories.
 pub fn is_first_order_engine(sub: &SubstrateDef) -> bool {
-    matches!(sub.engine, Engine::VonNeumann | Engine::NetworkRpc | Engine::SystemIO | Engine::ConcurrentGraph | Engine::ConcurrentIO | Engine::Compiler | Engine::LogicProgramming | Engine::SMTAssisted)
+    matches!(sub.engine, Engine::VonNeumann | Engine::NetworkRpc | Engine::SystemIO | Engine::ConcurrentGraph | Engine::ConcurrentIO | Engine::Compiler | Engine::LogicProgramming | Engine::SMTAssisted | Engine::ArchonPhysics)
+}
+
+/// Check if a substrate uses the Archon physics engine.
+pub fn is_archon(sub: &SubstrateDef) -> bool {
+    sub.engine == Engine::ArchonPhysics
 }
 
 /// Check if a substrate uses the Von Neumann engine.
@@ -77,6 +82,11 @@ pub fn is_system_io(sub: &SubstrateDef) -> bool {
 /// - **DependentCombinators**: non-lambda engine + topological-homotopy → dependent SKI
 fn check_compatibility(cat: &CategoryDef, sub: &SubstrateDef) -> Result<Vec<CompilationPass>> {
     let mut passes = Vec::new();
+
+    // Archon physics engine: all passes are physicalized as membrane boundaries.
+    // We still compute the pass list (for diagnostics and topology construction),
+    // but the engine handles everything natively.
+    let is_archon = sub.engine == Engine::ArchonPhysics;
 
     let needs_exponential = cat.has_exponential() || cat.has_evaluator();
     let needs_modal = cat.has_modal_operator() || cat.has_context();

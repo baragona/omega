@@ -1,0 +1,24 @@
+;; archon-linear.hyp — Archon physics with strictly-linear resource mode + bang modality.
+;;
+;; The BangModality compilation pass becomes a membrane boundary in the
+;; Archon topology.
+
+[Category LinearLambda
+  [Object Term]
+  [Morphism app :domain [Term Term] :codomain Term]
+  [Exponential lam :object Term]
+]
+
+[Substrate ArchonLinear
+  @engine archon-physics
+  @resource-mode strictly-linear
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Universe LinearU :category LinearLambda :substrate ArchonLinear]
+
+[Theory LinearCalc :in LinearU
+  ;; In strictly-linear mode, each variable must be used exactly once.
+  [@rule swap [app ?f ?x] ==> [app ?x ?f]]
+]

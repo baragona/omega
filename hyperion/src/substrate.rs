@@ -38,6 +38,11 @@ pub enum Engine {
     /// fragments (arithmetic, bitvectors, arrays). E-graph can inject Z3-proved
     /// equalities via one-way cooperative mode.
     SMTAssisted,
+    /// Archon physics engine: all compilation passes are physicalized as
+    /// membrane boundary interactions. No AST transforms, no external solvers.
+    /// Terms are implanted into a topological manifold and the physics engine
+    /// handles everything through emergent boundary crossings.
+    ArchonPhysics,
 }
 
 /// Resource management mode.
@@ -246,6 +251,7 @@ fn parse_engine(val: &str, substrate: &str) -> Result<Engine> {
         "concurrent-io" | "concurrentio" => Ok(Engine::ConcurrentIO),
         "logic-programming" | "prolog" => Ok(Engine::LogicProgramming),
         "smt-assisted" | "smt" => Ok(Engine::SMTAssisted),
+        "archon" | "archon-physics" | "physics" => Ok(Engine::ArchonPhysics),
         _ => Err(HyperionError::ParseError {
             block: "Substrate".into(),
             detail: format!(

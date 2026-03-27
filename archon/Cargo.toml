@@ -1,0 +1,12 @@
+[package]
+name = "archon"
+version = "0.1.0"
+edition = "2021"
+description = "Topological field theory engine — physicalizes Hyperion's compilation passes as membrane boundary interactions"
+
+[workspace]
+
+[dependencies]
+apeiron = { path = "../apeiron" }
+smallvec = "1.13"
+rand = "0.8"

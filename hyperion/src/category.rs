@@ -181,6 +181,17 @@ impl CategoryDef {
             .any(|s| matches!(s, CategoricalStructure::ModalOperator { .. }))
     }
 
+    /// Get names of all modal operators (barrier ops for saturation filtering).
+    pub fn modal_operator_names(&self) -> Vec<String> {
+        self.structure
+            .iter()
+            .filter_map(|s| match s {
+                CategoricalStructure::ModalOperator { name } => Some(name.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Check whether this category has any Context declarations.
     pub fn has_context(&self) -> bool {
         self.structure

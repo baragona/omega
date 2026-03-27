@@ -1,0 +1,39 @@
+;; archon-physics.hyp — First Hyperion example using the Archon physics engine.
+;;
+;; Instead of Apeiron's e-graph or Von Neumann rewriting, this theory
+;; runs through Archon's topological field theory engine. Compilation
+;; passes become membrane boundaries, and the physics engine handles
+;; all transformations as emergent interactions.
+
+[Category PeanoCategory
+  [Object Nat]
+  [Morphism z :domain [] :codomain Nat]
+  [Morphism s :domain [Nat] :codomain Nat]
+  [Morphism add :domain [Nat Nat] :codomain Nat]
+  [Morphism mul :domain [Nat Nat] :codomain Nat]
+]
+
+[Substrate ArchonNet
+  @engine archon-physics
+  @resource-mode optimal-sharing
+  @barrier transparent
+  @equality rewrite-equivalence
+]
+
+[Universe ArchonPeano :category PeanoCategory :substrate ArchonNet]
+
+[Theory PeanoArith :in ArchonPeano
+  [@rule add-zero  [add z ?n]    ==> ?n]
+  [@rule add-succ  [add [s ?m] ?n] ==> [s [add ?m ?n]]]
+  [@rule mul-zero  [mul z ?n]    ==> z]
+  [@rule mul-succ  [mul [s ?m] ?n] ==> [add ?n [mul ?m ?n]]]
+]
+
+[Proofs :in PeanoArith
+  ;; 1 + 1 = 2
+  [assert-eq one-plus-one [add [s z] [s z]] [s [s z]]]
+  ;; 2 + 1 = 3
+  [assert-eq two-plus-one [add [s [s z]] [s z]] [s [s [s z]]]]
+  ;; 0 * 3 = 0
+  [assert-eq zero-times-three [mul z [s [s [s z]]]] z]
+]

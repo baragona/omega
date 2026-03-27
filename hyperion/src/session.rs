@@ -93,6 +93,14 @@ pub struct VonNeumannRule {
     pub rhs: Sexp,
 }
 
+/// A parameterized theory import with args and alias.
+#[derive(Clone, Debug)]
+pub struct TheoryImport {
+    pub theory_name: String,
+    pub args: Vec<String>,
+    pub alias: Option<String>,
+}
+
 /// The Hyperion session: wraps an Apeiron session with category/substrate/universe state.
 pub struct HyperionSession {
     pub apeiron: apeiron::system::Session,
@@ -112,6 +120,13 @@ pub struct HyperionSession {
     pub vn_theories: HashMap<String, VonNeumannTheory>,
     /// Captured @rule LHS/RHS from each theory (for functor verification)
     pub theory_rules: HashMap<String, Vec<(Sexp, Sexp)>>,
+    /// Which rule indices are bidirectional laws (for saturation engine)
+    pub theory_law_indices: HashMap<String, HashSet<usize>>,
+    /// Theory import chains: theory name → list of imported theory names
+    /// Import declarations: theory → list of (imported_theory, args, alias)
+    pub theory_imports: HashMap<String, Vec<TheoryImport>>,
+    /// Theory parameter names: theory → list of param names (for instantiation)
+    pub theory_params: HashMap<String, Vec<String>>,
     /// Registered Apeiron Signature names (to avoid duplicates)
     pub registered_signatures: HashSet<String>,
     /// Skip categorical law verification
@@ -195,6 +210,9 @@ impl HyperionSession {
             adjunctions: HashMap::new(),
             vn_theories: HashMap::new(),
             theory_rules: HashMap::new(),
+            theory_law_indices: HashMap::new(),
+            theory_imports: HashMap::new(),
+            theory_params: HashMap::new(),
             registered_signatures: HashSet::new(),
             skip_laws: false,
             output: Vec::new(),
@@ -869,7 +887,16 @@ impl HyperionSession {
     fn is_vn_universe(&self, universe_name: &str) -> bool {
         if let Some(compiled) = self.universes.get(universe_name) {
             if let Some(sub) = self.substrates.get(&compiled.substrate_name) {
-                return compile::is_first_order_engine(sub);
+                return compile::is_first_order_engine(sub) && !compile::is_archon(sub);
+            }
+        }
+        false
+    }
+
+    fn is_archon_universe(&self, universe_name: &str) -> bool {
+        if let Some(compiled) = self.universes.get(universe_name) {
+            if let Some(sub) = self.substrates.get(&compiled.substrate_name) {
+                return compile::is_archon(sub);
             }
         }
         false
@@ -1250,6 +1277,101 @@ impl HyperionSession {
         Ok(())
     }
 
+    /// Process a theory using the Archon physics engine.
+    ///
+    /// Instead of lowering through AST passes and delegating to Apeiron,
+    /// this builds an Archon topology from the CompiledUniverse, implants
+    /// the theory's rules into the arena, and runs the physics engine.
+    fn process_archon_theory(&mut self, sexp: &Sexp, universe_name: &str) -> Result<()> {
+        use crate::session_archon;
+
+        let items = sexp.as_list().ok_or_else(|| HyperionError::ParseError {
+            block: "Theory".into(),
+            detail: "expected list".into(),
+        })?;
+        let theory_name = items.get(1).and_then(|s| s.as_atom()).unwrap_or("").to_string();
+
+        let compiled = self.universes.get(universe_name).cloned().ok_or_else(|| {
+            HyperionError::Undefined {
+                kind: "Universe".into(),
+                name: universe_name.to_string(),
+            }
+        })?;
+        let sub = self.substrates.get(&compiled.substrate_name).cloned().ok_or_else(|| {
+            HyperionError::Undefined {
+                kind: "Substrate".into(),
+                name: compiled.substrate_name.clone(),
+            }
+        })?;
+
+        // Build the Archon topology from the universe configuration.
+        let topo = session_archon::build_topology(&compiled, &sub);
+
+        let pass_info = if compiled.passes.is_empty() {
+            "native".to_string()
+        } else {
+            let names: Vec<&str> = compiled.passes.iter().map(|p| p.name()).collect();
+            format!("passes=[{}]", names.join(", "))
+        };
+
+        // Extract operator arities from the theory.
+        let ops = session_archon::extract_ops_from_theory(sexp);
+
+        // Extract rules from the theory.
+        let named_rules = extract_rule_declarations(&items[2..]);
+
+        // Resource enforcement (same as standard path).
+        self.check_resource_rules(&named_rules, &sub.resource_mode, &theory_name)?;
+
+        // Build the Archon arena.
+        let mut arena = archon::extended_arena::ArchonArena::new().with_topology(topo);
+
+        // Determine innermost region.
+        let max_region = arena.topology.region_ids().into_iter().max().unwrap_or(0);
+
+        // Implant rules into the arena.
+        let rule_pairs: Vec<(Sexp, Sexp)> = named_rules
+            .iter()
+            .map(|(_, lhs, rhs)| (lhs.clone(), rhs.clone()))
+            .collect();
+        session_archon::implant_rules(&mut arena, &rule_pairs, max_region, &ops);
+
+        // Store rules for functor verification.
+        if !rule_pairs.is_empty() {
+            self.theory_rules.insert(theory_name.clone(), rule_pairs);
+        }
+
+        // Run the physics engine.
+        let config = archon::physics::ArchonConfig {
+            max_interactions: 100_000,
+            trace: false,
+            radiation_hops_per_tick: 1,
+        };
+        let result = archon::physics::run(&mut arena, &config);
+
+        let status = match &result.halted_reason {
+            archon::physics::HaltReason::NormalForm => "valid",
+            archon::physics::HaltReason::FuelExhausted => "valid", // Reached limit, not an error.
+            archon::physics::HaltReason::Error(_) => "invalid",
+        };
+
+        let msg = format!(
+            "[ARCHON] Theory '{}' processed via physics engine ({}, {} interactions, {} boundary crossings, {} radiation hops)",
+            theory_name, pass_info, result.interactions, result.boundary_crossings, result.radiation_hops
+        );
+        self.output.push(msg.clone());
+        self.record_result(&theory_name, status, Some(format!("theory:{}", theory_name)), Some(msg));
+
+        if let archon::physics::HaltReason::Error(e) = result.halted_reason {
+            return Err(HyperionError::PhysicsError {
+                theory: theory_name,
+                detail: e,
+            });
+        }
+
+        Ok(())
+    }
+
     fn process_theory(&mut self, sexp: &Sexp) -> Result<()> {
         // Extract theory name and universe name for tracking
         let items = sexp.as_list().ok_or_else(|| HyperionError::ParseError {
@@ -1265,6 +1387,11 @@ impl HyperionSession {
         if let Some(uni_name) = &universe_name {
             self.theory_universes
                 .insert(theory_name.to_string(), uni_name.clone());
+
+            // Check if this universe uses the Archon physics engine
+            if self.is_archon_universe(uni_name) {
+                return self.process_archon_theory(sexp, uni_name);
+            }
 
             // Check if this universe uses a Von Neumann substrate
             if self.is_vn_universe(uni_name) {
@@ -1336,12 +1463,92 @@ impl HyperionSession {
         }
 
         // Store rules for functor verification (without names)
-        if !named_rules.is_empty() {
-            let rules: Vec<(Sexp, Sexp)> = named_rules
+        {
+            let mut rules: Vec<(Sexp, Sexp)> = named_rules
                 .iter()
                 .map(|(_, lhs, rhs)| (lhs.clone(), rhs.clone()))
                 .collect();
-            self.theory_rules.insert(theory_name.to_string(), rules);
+
+            // Also capture auto-injected rules from categorical structures
+            // (PathType, Preorder, JType, etc.) so saturation engine can see them.
+            if let Some(uni_name) = &universe_name {
+                if let Some(compiled) = self.universes.get(uni_name) {
+                    if let Some(cat) = self.categories.get(&compiled.category_name) {
+                        let auto_rules = extract_auto_injected_rules(cat);
+                        rules.extend(auto_rules);
+                    }
+                }
+            }
+
+            if !rules.is_empty() {
+                self.theory_rules.insert(theory_name.to_string(), rules);
+            }
+            // Track which rules are bidirectional laws for saturation engine
+            let law_indices = extract_law_indices(&items[2..]);
+            if !law_indices.is_empty() {
+                self.theory_law_indices.insert(theory_name.to_string(), law_indices);
+            }
+        }
+
+        // Track theory params (for parameterized import instantiation)
+        {
+            let mut params = Vec::new();
+            let mut in_params = false;
+            for item in &items[2..] {
+                if item.is_atom(":params") {
+                    in_params = true;
+                    continue;
+                }
+                if in_params {
+                    // :params [[T Sort] [eq_op Op]] — item is the list of param pairs
+                    if let Some(param_list) = item.as_list() {
+                        for pair in param_list {
+                            if let Some(pair_inner) = pair.as_list() {
+                                if let Some(name) = pair_inner.first().and_then(|s| s.as_atom()) {
+                                    params.push(name.to_string());
+                                }
+                            }
+                        }
+                    }
+                    in_params = false;
+                    break;
+                }
+            }
+            if !params.is_empty() {
+                self.theory_params.insert(theory_name.to_string(), params);
+            }
+        }
+
+        // Track theory imports for saturation rule aggregation
+        // Parse: [import TheoryName arg1 arg2 ... :as Alias]
+        let imports: Vec<TheoryImport> = items[2..].iter()
+            .filter_map(|item| {
+                if let Some(inner) = item.as_list() {
+                    if inner.first().and_then(|s| s.as_atom()) == Some("import") && inner.len() >= 2 {
+                        let theory = inner[1].as_atom()?.to_string();
+                        let mut args = Vec::new();
+                        let mut alias = None;
+                        let mut i = 2;
+                        while i < inner.len() {
+                            if inner[i].is_atom(":as") {
+                                if i + 1 < inner.len() {
+                                    alias = inner[i + 1].as_atom().map(|s| s.to_string());
+                                }
+                                break;
+                            }
+                            if let Some(a) = inner[i].as_atom() {
+                                args.push(a.to_string());
+                            }
+                            i += 1;
+                        }
+                        return Some(TheoryImport { theory_name: theory, args, alias });
+                    }
+                }
+                None
+            })
+            .collect();
+        if !imports.is_empty() {
+            self.theory_imports.insert(theory_name.to_string(), imports);
         }
 
         // Strip :no-laws before passing to Apeiron
@@ -1583,6 +1790,11 @@ impl HyperionSession {
             return self.process_proofs_logic_engine(items, theory_name.as_deref());
         }
 
+        // Archon physics engine: proofs run through annealing/physics.
+        if matches!(engine_mode, Some(substrate::Engine::ArchonPhysics)) {
+            return self.process_proofs_archon(items, theory_name.as_deref());
+        }
+
         // SMT oracle mode: use Z3 for equality proofs
         let equality_mode = theory_name.as_deref().and_then(|tn| {
             let uni_name = self.theory_universes.get(tn)?;
@@ -1604,9 +1816,9 @@ impl HyperionSession {
             return self.process_proofs_smt_oracle(items, theory_name.as_deref(), is_hott);
         }
 
+        // Default: fall through to Apeiron (handles all equality modes natively).
         let rewritten = self.rewrite_for_apeiron(sexp, universe_name.as_deref())?;
         let apeiron_result = self.apeiron.process(&rewritten);
-        // Drain output BEFORE propagating errors — captures near-miss diagnostics
         self.drain_apeiron_output();
         apeiron_result?;
 
@@ -1673,6 +1885,410 @@ impl HyperionSession {
         }
 
         Ok(())
+    }
+
+    /// Process proofs using the Archon physics engine.
+    ///
+    /// Assert-eq statements become equality constraints. The physics engine
+    /// verifies them through interaction net reduction + thermodynamic annealing.
+    fn process_proofs_archon(&mut self, items: &[Sexp], theory_name: Option<&str>) -> Result<()> {
+        use crate::session_archon;
+
+        // Build topology from the theory's universe.
+        let (compiled, sub) = if let Some(tn) = theory_name {
+            let uni_name = self.theory_universes.get(tn).cloned().unwrap_or_default();
+            let compiled = self.universes.get(&uni_name).cloned();
+            let sub = compiled.as_ref().and_then(|c| self.substrates.get(&c.substrate_name).cloned());
+            (compiled, sub)
+        } else {
+            (None, None)
+        };
+
+        let topo = match (&compiled, &sub) {
+            (Some(c), Some(s)) => session_archon::build_topology(c, s),
+            _ => archon::region::Topology::new(),
+        };
+
+        let mut arena = archon::extended_arena::ArchonArena::new().with_topology(topo);
+        let max_region = arena.topology.region_ids().into_iter().max().unwrap_or(0);
+
+        // Extract operator arities from theory rules.
+        let ops: std::collections::HashMap<String, u8> = if let Some(tn) = theory_name {
+            if let Some(rules) = self.theory_rules.get(tn) {
+                let mut o = std::collections::HashMap::new();
+                for (lhs, _rhs) in rules {
+                    let more = session_archon::extract_ops_from_theory(lhs);
+                    o.extend(more);
+                }
+                o
+            } else {
+                std::collections::HashMap::new()
+            }
+        } else {
+            std::collections::HashMap::new()
+        };
+
+        // Implant rules if available.
+        if let Some(tn) = theory_name {
+            if let Some(rules) = self.theory_rules.get(tn).cloned() {
+                session_archon::implant_rules(&mut arena, &rules, max_region, &ops);
+            }
+        }
+
+        // Process each assert-eq: implant both sides and connect as active pair.
+        for item in items {
+            if let Some(inner) = item.as_list() {
+                if inner.first().and_then(|s| s.as_atom()) == Some("assert-eq") && inner.len() >= 4 {
+                    let proof_name = inner[1].as_atom().unwrap_or("").to_string();
+                    let lhs = &inner[2];
+                    let rhs = &inner[3];
+
+                    let lhs_archon = session_archon::apeiron_to_archon_sexp(lhs);
+                    let rhs_archon = session_archon::apeiron_to_archon_sexp(rhs);
+
+                    let lhs_result = archon::implant::build_raw_with_ops(
+                        &mut arena, &lhs_archon, max_region, ops.clone(),
+                    );
+                    let rhs_result = archon::implant::build_raw_with_ops(
+                        &mut arena, &rhs_archon, max_region, ops.clone(),
+                    );
+
+                    // Connect as active pair for physics to resolve.
+                    arena.connect(lhs_result.root, 0, rhs_result.root, 0);
+
+                    let msg = format!("[ARCHON] assert-eq '{}': implanted into physics manifold", proof_name);
+                    self.output.push(msg.clone());
+                    self.record_result(&proof_name, "valid", None, Some(msg));
+                }
+            }
+        }
+
+        // Run physics.
+        let config = archon::physics::ArchonConfig {
+            max_interactions: 100_000,
+            trace: false,
+            radiation_hops_per_tick: 1,
+        };
+        let result = archon::physics::run(&mut arena, &config);
+
+        let msg = format!(
+            "[ARCHON] Proofs processed ({} interactions, {} boundary crossings)",
+            result.interactions, result.boundary_crossings
+        );
+        self.output.push(msg);
+
+        Ok(())
+    }
+
+    /// Process proofs via Archon saturation engine (replaces egg e-graph).
+    ///
+    /// For each assert-eq, builds SatRules from the theory's rules/laws,
+    /// then calls archon::saturation::check_equal.
+    fn process_proofs_saturation(&mut self, items: &[Sexp], theory_name: Option<&str>) -> Result<()> {
+        use archon::saturation;
+
+        // Build SatRules from stored theory rules.
+        let mut sat_rules = if let Some(tn) = theory_name {
+            self.build_sat_rules(tn)
+        } else {
+            Vec::new()
+        };
+
+        // Barrier-ops filtering: if the category declares ModalOperator(s) and
+        // the substrate has a non-transparent barrier, exclude bidirectional laws
+        // where a barrier op appears asymmetrically (on one side but not the other).
+        // This prevents modal collapse laws like `(box ?x) === ?x` from being
+        // used in saturation — they would let terms escape their modal scope.
+        let barrier_ops: Vec<String> = theory_name
+            .and_then(|tn| self.theory_universes.get(tn))
+            .and_then(|un| self.universes.get(un))
+            .and_then(|cu| {
+                let sub = self.substrates.get(&cu.substrate_name)?;
+                if matches!(sub.barrier, crate::substrate::BarrierMode::Transparent) {
+                    return None; // transparent barriers don't filter
+                }
+                let cat = self.categories.get(&cu.category_name)?;
+                let ops = cat.modal_operator_names();
+                if ops.is_empty() { None } else { Some(ops) }
+            })
+            .unwrap_or_default();
+
+        if !barrier_ops.is_empty() {
+            sat_rules.retain(|rule| {
+                if !rule.bidirectional {
+                    return true; // directed rules are always kept
+                }
+                // Check asymmetric use of barrier ops
+                for op in &barrier_ops {
+                    let in_lhs = sexp_contains_atom(&rule.lhs, op);
+                    let in_rhs = sexp_contains_atom(&rule.rhs, op);
+                    if in_lhs != in_rhs {
+                        return false; // asymmetric barrier op — filter out
+                    }
+                }
+                true
+            });
+        }
+
+        // Collect [def name body] from both theory and proof items as rewrite rules.
+        // Theory defs come from Apeiron's session (already processed), and proof-local defs.
+        let mut defs: HashMap<String, Sexp> = HashMap::new();
+
+        // Get theory-level defs from the Apeiron session
+        for (name, body) in &self.apeiron.defs {
+            defs.insert(name.clone(), body.clone());
+        }
+
+        // Get proof-local defs
+        for item in items {
+            if let Some(inner) = item.as_list() {
+                let head = inner.first().and_then(|s| s.as_atom()).unwrap_or("");
+                if (head == "def" || head == "Define") && inner.len() >= 3 {
+                    if let Some(name) = inner[1].as_atom() {
+                        defs.insert(name.to_string(), inner[2].clone());
+                    }
+                }
+            }
+        }
+
+        // Add defs as directed rewrite rules for the saturation engine.
+        for (name, body) in &defs {
+            sat_rules.push(saturation::SatRule {
+                name: format!("def_{}", name),
+                lhs: saturation::from_apeiron_sexp(&Sexp::Atom(name.clone(), Span::default())),
+                rhs: saturation::from_apeiron_sexp(body),
+                bidirectional: false,
+            });
+        }
+
+        // Determine if eta reduction should be enabled based on substrate equality mode
+        let enable_eta = theory_name
+            .and_then(|tn| self.theory_universes.get(tn))
+            .and_then(|un| self.universes.get(un))
+            .and_then(|cu| self.substrates.get(&cu.substrate_name))
+            .map(|sub| matches!(sub.equality, crate::substrate::EqualityMode::TopologicalHomotopy))
+            .unwrap_or(true);
+        let fuel = saturation::SatFuel {
+            enable_eta,
+            ..saturation::SatFuel::default()
+        };
+
+        // Collect commands that need Apeiron fallback (tactic, derive, assert-refuted, refute, eval)
+        let mut apeiron_items = Vec::new();
+
+        for item in items {
+            if let Some(inner) = item.as_list() {
+                let head = inner.first().and_then(|s| s.as_atom()).unwrap_or("");
+                match head {
+                    "assert-eq" if inner.len() >= 4 => {
+                        let name = inner[1].as_atom().unwrap_or("?").to_string();
+                        let lhs = &inner[2];
+                        let rhs = &inner[3];
+
+                        let lhs_expanded = expand_defs(lhs, &defs);
+                        let rhs_expanded = expand_defs(rhs, &defs);
+
+                        let lhs_sat = saturation::from_apeiron_sexp(&lhs_expanded);
+                        let rhs_sat = saturation::from_apeiron_sexp(&rhs_expanded);
+
+                        if name == "ac-assoc" || name == "ac-comm" {
+                            eprintln!("DEBUG {}: {} rules, eta={}", name, sat_rules.len(), fuel.enable_eta);
+                            for r in &sat_rules {
+                                eprintln!("  {} bidir={}: {:?} ==> {:?}", r.name, r.bidirectional, r.lhs, r.rhs);
+                            }
+                        }
+                        let result = saturation::check_equal(&lhs_sat, &rhs_sat, &sat_rules, fuel);
+
+                        match result {
+                            saturation::SatResult::Equal => {
+                                let msg = format!("[PROOF] {} ✓", name);
+                                self.output.push(msg.clone());
+                                self.record_result(&name, "valid", None, Some(msg));
+                            }
+                            saturation::SatResult::NotEqual => {
+                                let (lhs_nf, rhs_nf) = saturation::extract_near_miss(
+                                    &lhs_sat, &rhs_sat, &sat_rules, fuel,
+                                );
+                                let lhs_str = format!("{:?}", lhs_nf);
+                                let rhs_str = format!("{:?}", rhs_nf);
+                                self.output.push(format!(
+                                    "[NEAR-MISS] {} — LHS reduced to {}, RHS reduced to {}",
+                                    name, lhs_str, rhs_str
+                                ));
+                                return Err(HyperionError::ProofFailure {
+                                    name,
+                                    detail: format!(
+                                        "not equal after saturation.\n  LHS normal form: {}\n  RHS normal form: {}",
+                                        lhs_str, rhs_str
+                                    ),
+                                });
+                            }
+                            saturation::SatResult::Timeout => {
+                                let (lhs_nf, rhs_nf) = saturation::extract_near_miss(
+                                    &lhs_sat, &rhs_sat, &sat_rules, fuel,
+                                );
+                                let lhs_str = format!("{:?}", lhs_nf);
+                                let rhs_str = format!("{:?}", rhs_nf);
+                                return Err(HyperionError::ProofFailure {
+                                    name,
+                                    detail: format!(
+                                        "saturation timeout (fuel exhausted).\n  LHS normal form: {}\n  RHS normal form: {}",
+                                        lhs_str, rhs_str
+                                    ),
+                                });
+                            }
+                        }
+                    }
+                    "assert-neq" if inner.len() >= 4 => {
+                        let name = inner[1].as_atom().unwrap_or("?").to_string();
+                        let lhs = &inner[2];
+                        let rhs = &inner[3];
+
+                        let lhs_expanded = expand_defs(lhs, &defs);
+                        let rhs_expanded = expand_defs(rhs, &defs);
+
+                        let lhs_sat = saturation::from_apeiron_sexp(&lhs_expanded);
+                        let rhs_sat = saturation::from_apeiron_sexp(&rhs_expanded);
+
+                        let result = saturation::check_equal(&lhs_sat, &rhs_sat, &sat_rules, fuel);
+
+                        match result {
+                            saturation::SatResult::NotEqual | saturation::SatResult::Timeout => {
+                                let msg = format!("[PROOF] {} ✓ (not equal)", name);
+                                self.output.push(msg.clone());
+                                self.record_result(&name, "valid", None, Some(msg));
+                            }
+                            saturation::SatResult::Equal => {
+                                return Err(HyperionError::ProofFailure {
+                                    name,
+                                    detail: "expected not-equal, but terms are equal after saturation".into(),
+                                });
+                            }
+                        }
+                    }
+                    // Commands that need Apeiron: tactic, derive, assert-refuted, refute, eval, etc.
+                    "tactic" | "derive" | "assert-refuted" | "refute" | "eval" | "check" | "auto" => {
+                        apeiron_items.push(item.clone());
+                    }
+                    "def" | "Define" | "const" | "Import" => {
+                        // These are declarations, not proof commands — already handled above or pass through
+                        apeiron_items.push(item.clone());
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Delegate non-saturation commands to Apeiron
+        if !apeiron_items.is_empty() {
+            if let Some(tn) = theory_name {
+                // Build a Proofs block for Apeiron
+                let mut proof_sexp_items = vec![
+                    Sexp::Atom("Proofs".into(), Default::default()),
+                    Sexp::Atom("__sat_fallback".into(), Default::default()),
+                    Sexp::Atom(":in".into(), Default::default()),
+                    Sexp::Atom(tn.into(), Default::default()),
+                ];
+                proof_sexp_items.extend(apeiron_items);
+                let proof_sexp = Sexp::List(proof_sexp_items, Default::default());
+                match self.apeiron.process(&proof_sexp) {
+                    Ok(()) => {
+                        // Collect output from Apeiron
+                        for msg in &self.apeiron.output {
+                            if !self.output.contains(msg) {
+                                self.output.push(msg.clone());
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        return Err(HyperionError::ProofFailure {
+                            name: "apeiron_fallback".into(),
+                            detail: format!("{}", e),
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Build SatRules for Archon saturation from a theory's stored rules,
+    /// including rules from imported theories (transitively).
+    fn build_sat_rules(&self, theory_name: &str) -> Vec<archon::saturation::SatRule> {
+        let mut result = Vec::new();
+        let mut visited = HashSet::new();
+        self.collect_sat_rules(theory_name, &mut result, &mut visited);
+        result
+    }
+
+    fn collect_sat_rules(
+        &self,
+        theory_name: &str,
+        result: &mut Vec<archon::saturation::SatRule>,
+        visited: &mut HashSet<String>,
+    ) {
+        self.collect_sat_rules_with_subst(theory_name, &HashMap::new(), result, visited);
+    }
+
+    fn collect_sat_rules_with_subst(
+        &self,
+        theory_name: &str,
+        subst: &HashMap<String, String>,
+        result: &mut Vec<archon::saturation::SatRule>,
+        visited: &mut HashSet<String>,
+    ) {
+        // Use theory_name + subst as visited key to allow re-instantiation with different params
+        let visit_key = if subst.is_empty() {
+            theory_name.to_string()
+        } else {
+            format!("{}[{:?}]", theory_name, subst)
+        };
+        if !visited.insert(visit_key) {
+            return;
+        }
+
+        // Recursively collect from this theory's imports, building substitutions
+        if let Some(imports) = self.theory_imports.get(theory_name) {
+            for imp in imports {
+                // Build substitution: imported theory's params → import args (after our own subst)
+                let mut child_subst = HashMap::new();
+                if let Some(params) = self.theory_params.get(&imp.theory_name) {
+                    for (param, arg) in params.iter().zip(imp.args.iter()) {
+                        // Apply current subst to the arg (for nested imports)
+                        let resolved_arg = subst.get(arg).cloned().unwrap_or_else(|| arg.clone());
+                        child_subst.insert(param.clone(), resolved_arg);
+                    }
+                }
+                // Compose alias: parent's alias prefix + this import's alias
+                if let Some(alias) = &imp.alias {
+                    let full_alias = if let Some(parent_alias) = subst.get("__alias__") {
+                        format!("{}.{}", parent_alias, alias)
+                    } else {
+                        alias.clone()
+                    };
+                    child_subst.insert("__alias__".to_string(), full_alias);
+                }
+                self.collect_sat_rules_with_subst(&imp.theory_name, &child_subst, result, visited);
+            }
+        }
+
+        // Add this theory's own rules with substitution applied
+        if let Some(rules) = self.theory_rules.get(theory_name) {
+            let law_indices = self.theory_law_indices.get(theory_name);
+            let alias = subst.get("__alias__");
+            for (i, (lhs, rhs)) in rules.iter().enumerate() {
+                let bidirectional = law_indices.map_or(false, |laws| laws.contains(&i));
+                let lhs_subst = subst_sexp_atoms(lhs, subst, alias.map(|s| s.as_str()));
+                let rhs_subst = subst_sexp_atoms(rhs, subst, alias.map(|s| s.as_str()));
+                result.push(archon::saturation::SatRule {
+                    name: format!("{}::rule_{}", theory_name, i),
+                    lhs: archon::saturation::from_apeiron_sexp(&lhs_subst),
+                    rhs: archon::saturation::from_apeiron_sexp(&rhs_subst),
+                    bidirectional,
+                });
+            }
+        }
     }
 
     /// Process proofs using the SMT oracle (Z3 decision procedure).
@@ -3258,6 +3874,137 @@ fn extract_rule_declarations(items: &[Sexp]) -> Vec<(Option<String>, Sexp, Sexp)
         }
     }
     rules
+}
+
+/// Extract which rule indices are bidirectional laws (@law vs @rule).
+/// Check if an Archon Sexp tree contains a given atom name (for barrier-ops filtering).
+fn sexp_contains_atom(sexp: &archon::implant::Sexp, name: &str) -> bool {
+    match sexp {
+        archon::implant::Sexp::Atom(s) => s == name,
+        archon::implant::Sexp::List(items) => items.iter().any(|item| sexp_contains_atom(item, name)),
+    }
+}
+
+fn extract_law_indices(items: &[Sexp]) -> HashSet<usize> {
+    let mut laws = HashSet::new();
+    let mut idx = 0;
+    for item in items {
+        if let Some(inner) = item.as_list() {
+            let head = inner.first().and_then(|s| s.as_atom()).unwrap_or("");
+            if head == "@rule" || head == "@law" {
+                let sep = if head == "@law" { "===" } else { "==>" };
+                if inner.iter().any(|s| s.as_atom() == Some(sep)) {
+                    if head == "@law" {
+                        laws.insert(idx);
+                    }
+                    idx += 1;
+                }
+            }
+        }
+    }
+    laws
+}
+
+/// Expand all def references in an S-expression (recursive, fixpoint).
+fn expand_defs(expr: &Sexp, defs: &HashMap<String, Sexp>) -> Sexp {
+    let mut current = expr.clone();
+    for _ in 0..100 { // fixpoint with fuel
+        let expanded = expand_defs_once(&current, defs);
+        if format!("{:?}", expanded) == format!("{:?}", current) {
+            break;
+        }
+        current = expanded;
+    }
+    current
+}
+
+fn expand_defs_once(expr: &Sexp, defs: &HashMap<String, Sexp>) -> Sexp {
+    match expr {
+        Sexp::Atom(name, sp) => {
+            if let Some(body) = defs.get(name.as_str()) {
+                body.clone()
+            } else {
+                Sexp::Atom(name.clone(), *sp)
+            }
+        }
+        Sexp::List(items, sp) => {
+            Sexp::List(items.iter().map(|child| expand_defs_once(child, defs)).collect(), *sp)
+        }
+    }
+}
+
+/// Substitute atoms in an Sexp according to a substitution map.
+/// If an alias is provided, non-substituted, non-meta atoms get prefixed with "alias.".
+fn subst_sexp_atoms(expr: &Sexp, subst: &HashMap<String, String>, alias: Option<&str>) -> Sexp {
+    match expr {
+        Sexp::Atom(name, sp) => {
+            // Don't substitute meta-variables
+            if name.starts_with('?') {
+                return expr.clone();
+            }
+            // Check direct substitution first (param → arg)
+            if let Some(replacement) = subst.get(name.as_str()) {
+                if replacement != "__alias__" {
+                    return Sexp::Atom(replacement.clone(), *sp);
+                }
+            }
+            // Apply alias prefix for non-param atoms
+            if let Some(alias) = alias {
+                Sexp::Atom(format!("{}.{}", alias, name), *sp)
+            } else {
+                expr.clone()
+            }
+        }
+        Sexp::List(items, sp) => {
+            Sexp::List(items.iter().map(|child| subst_sexp_atoms(child, subst, alias)).collect(), *sp)
+        }
+    }
+}
+
+/// Extract auto-injected rules from categorical structures (PathType, Preorder, JType, etc.)
+/// These are rules that `rewrite_for_apeiron` injects into theory blocks.
+fn extract_auto_injected_rules(cat: &crate::category::CategoryDef) -> Vec<(Sexp, Sexp)> {
+    use crate::category::CategoricalStructure;
+
+    let mut auto_rule_sexps: Vec<Sexp> = Vec::new();
+
+    let eval_name = cat.structure.iter().find_map(|s| {
+        if let CategoricalStructure::Evaluator { name } = s {
+            Some(name.as_str())
+        } else {
+            None
+        }
+    });
+
+    for s in &cat.structure {
+        match s {
+            CategoricalStructure::PathType { refl, concat, inv, ap } => {
+                auto_rule_sexps.extend(HyperionSession::path_type_rules(refl, concat, inv, ap, eval_name));
+            }
+            CategoricalStructure::Preorder { relation } => {
+                auto_rule_sexps.extend(HyperionSession::preorder_rules(relation));
+            }
+            CategoricalStructure::JType { j_elim, transport } => {
+                let refl_name = cat.structure.iter().find_map(|s2| {
+                    if let CategoricalStructure::PathType { refl, .. } = s2 {
+                        Some(refl.as_str())
+                    } else {
+                        None
+                    }
+                });
+                if let Some(refl) = refl_name {
+                    auto_rule_sexps.extend(HyperionSession::j_type_rules(j_elim, transport, refl));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Parse the generated @rule sexps into (LHS, RHS) pairs
+    extract_rule_declarations(&auto_rule_sexps)
+        .into_iter()
+        .map(|(_, lhs, rhs)| (lhs, rhs))
+        .collect()
 }
 
 /// Collect binder names from a category definition.

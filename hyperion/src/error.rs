@@ -42,6 +42,8 @@ pub enum HyperionError {
         rule_name: Option<String>,
         detail: String,
     },
+    /// Archon physics engine error
+    PhysicsError { theory: String, detail: String },
     /// Apeiron error pass-through
     ApeironError(apeiron::error::ApeironError),
 }
@@ -130,6 +132,9 @@ impl fmt::Display for HyperionError {
                 } else {
                     write!(f, "totality violation in Theory '{}': {}", theory, detail)
                 }
+            }
+            HyperionError::PhysicsError { theory, detail } => {
+                write!(f, "Archon physics error in Theory '{}': {}", theory, detail)
             }
             HyperionError::ApeironError(e) => {
                 write!(f, "Apeiron error: {}", e)
