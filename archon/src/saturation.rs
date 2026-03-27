@@ -154,6 +154,8 @@ fn physical_equality_saturation(
     build_parent_index(&mut arena);
 
     // Saturation loop: apply laws, run physics, propagate congruence.
+    let mut prev_node_count = arena.node_count();
+
     for _round in 0..fuel.max_iterations {
         // Check if LHS and RHS are in the same e-class (via union-find).
         if arena.uf_same(lhs_term.0, rhs_term.0) {
@@ -162,7 +164,6 @@ fn physical_equality_saturation(
 
         // Apply all laws one round (graph-level pattern matching + superposition).
         let new_supers = apply_laws_one_round_saturating(&mut arena, laws, ops);
-        // Round completed.
 
         // Register newly created nodes in spatial index (merges duplicate atoms).
         register_new_nodes_in_spatial_index(&mut arena);
@@ -183,10 +184,18 @@ fn physical_equality_saturation(
             break;
         }
 
-        // Node count guard.
-        if arena.node_count() > fuel.max_nodes {
+        // Node count guard: absolute cap.
+        let current_count = arena.node_count();
+        if current_count > fuel.max_nodes {
             break;
         }
+
+        // Growth rate guard: if a single round more than doubled the graph,
+        // the law set is likely explosive — bail out before OOM.
+        if prev_node_count > 0 && current_count > prev_node_count * 3 {
+            break;
+        }
+        prev_node_count = current_count;
     }
 
     // Final check.

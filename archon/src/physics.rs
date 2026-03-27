@@ -219,14 +219,23 @@ fn dispatch_same_region(
         .map(|r| r.direction.clone())
         .unwrap_or(Direction::Forward);
 
-    // Check for catalyst interactions.
+    // Check for catalyst interactions (CPS wavefront).
     if crystallize::is_catalyst(arena, left) {
         match right_kind {
             OpCode::App => {
                 crystallize::catalyst_meets_app(arena, left, right);
                 return "Catalyst-App".into();
             }
-            OpCode::Sym { name, arity } if *arity == 0 && !name.starts_with("__archon_") => {
+            OpCode::Lam => {
+                crystallize::catalyst_meets_lam(arena, left, right);
+                return "Catalyst-Lam".into();
+            }
+            OpCode::Sym { name, arity } if *arity == 0 && !name.starts_with("__") => {
+                crystallize::catalyst_meets_value(arena, left, right);
+                return "Catalyst-Value".into();
+            }
+            // Non-zero arity Sym: treat as a value (constructor applied to args).
+            OpCode::Sym { name, .. } if !name.starts_with("__") => {
                 crystallize::catalyst_meets_value(arena, left, right);
                 return "Catalyst-Value".into();
             }
@@ -239,7 +248,15 @@ fn dispatch_same_region(
                 crystallize::catalyst_meets_app(arena, right, left);
                 return "Catalyst-App".into();
             }
-            OpCode::Sym { name, arity } if *arity == 0 && !name.starts_with("__archon_") => {
+            OpCode::Lam => {
+                crystallize::catalyst_meets_lam(arena, right, left);
+                return "Catalyst-Lam".into();
+            }
+            OpCode::Sym { name, arity } if *arity == 0 && !name.starts_with("__") => {
+                crystallize::catalyst_meets_value(arena, right, left);
+                return "Catalyst-Value".into();
+            }
+            OpCode::Sym { name, .. } if !name.starts_with("__") => {
                 crystallize::catalyst_meets_value(arena, right, left);
                 return "Catalyst-Value".into();
             }

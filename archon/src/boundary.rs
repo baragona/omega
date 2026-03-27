@@ -808,7 +808,75 @@ fn nominal_crossing(
         (right, left_region)
     };
 
-    // Wrap in a nominal scope node that tags the term with a fresh scope.
+    // Alpha-rename free names in the entering subgraph.
+    // Walk DFS from entering node, find Sym nodes with user-level names
+    // (not __prefixed), and rename them with a fresh scope suffix.
+    let scope_id = target_region; // Use region id as unique scope tag.
+    let mut stack = vec![entering];
+    let mut visited = std::collections::HashSet::new();
+    let mut renames: Vec<(Ptr, String)> = Vec::new();
+
+    while let Some(ptr) = stack.pop() {
+        if !visited.insert(ptr) {
+            continue;
+        }
+        if let Some(node) = arena.get(ptr) {
+            if let OpCode::Sym { ref name, arity } = node.kind {
+                // Rename user-level names (not internal __prefixed ones).
+                if !name.starts_with("__") && arity == 0 {
+                    renames.push((ptr, format!("{}$α{}", name, scope_id)));
+                }
+            }
+            // Walk aux ports to traverse subgraph.
+            let kind = node.kind.clone();
+            let n_ports = kind.port_count();
+            for slot in 1..n_ports {
+                let port = arena.port(ptr, slot as u8);
+                if port.is_connected() {
+                    stack.push(port.target);
+                }
+            }
+        }
+    }
+
+    // Apply renames — replace each Sym node in-place by spawning a new node
+    // and rewiring all connections.
+    let mut fresh_nodes: Vec<Ptr> = Vec::new();
+    for (ptr, new_name) in &renames {
+        let old_node = match arena.get(*ptr) {
+            Some(n) => n.kind.clone(),
+            None => continue,
+        };
+        if let OpCode::Sym { arity, .. } = old_node {
+            let fresh = arena.spawn_in(
+                OpCode::Sym { name: new_name.clone(), arity },
+                target_region,
+            );
+            fresh_nodes.push(fresh);
+            // Rewire principal port.
+            let p0 = arena.port(*ptr, 0);
+            if p0.is_connected() {
+                arena.connect(fresh, 0, p0.target, p0.slot);
+            }
+            // Rewire aux ports.
+            for slot in 1..=(arity as u8) {
+                let p = arena.port(*ptr, slot);
+                if p.is_connected() {
+                    arena.connect(fresh, slot, p.target, p.slot);
+                }
+            }
+            arena.free(*ptr);
+        }
+    }
+
+    // Move all visited nodes into the target region to prevent re-crossing.
+    for &ptr in &visited {
+        if arena.get(ptr).is_some() {
+            arena.move_to_region(ptr, target_region);
+        }
+    }
+
+    // Also wrap in a nominal scope node for readback provenance.
     let scope = arena.spawn_in(
         OpCode::Sym {
             name: format!("__nominal_scope_{}", target_region),
