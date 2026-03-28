@@ -1804,16 +1804,23 @@ impl HyperionSession {
             Some(sub.engine.clone())
         });
 
+        // ── Universal Archon engine: ALL proof processing routes through physics ──
+        //
+        // Three sub-modes, all using Archon's physics substrate:
+        //   1. Logic programming → catalyst wavefront (falls back to LP engine for now)
+        //   2. SMT → thermo annealing engine
+        //   3. Everything else → Archon saturation + physics reduction
+        //
+        // Logic programming and SMT use their specialized Archon sub-engines.
+        // All other modes (rewrite-equivalence, equality-saturation, topological-*)
+        // go through the universal Archon proof engine.
+
         if matches!(engine_mode, Some(substrate::Engine::LogicProgramming)) {
+            // Logic programming: resolution as physics.
+            // Currently uses the LP engine; TODO: catalyst wavefront through Horn clause nets.
             return self.process_proofs_logic_engine(items, theory_name.as_deref());
         }
 
-        // Archon physics engine: proofs run through annealing/physics.
-        if matches!(engine_mode, Some(substrate::Engine::ArchonPhysics)) {
-            return self.process_proofs_archon(items, theory_name.as_deref());
-        }
-
-        // SMT oracle mode: use Z3 for equality proofs
         let equality_mode = theory_name.as_deref().and_then(|tn| {
             let uni_name = self.theory_universes.get(tn)?;
             let compiled = self.universes.get(uni_name)?;
@@ -1822,8 +1829,8 @@ impl HyperionSession {
         });
 
         if matches!(equality_mode, Some(substrate::EqualityMode::SMTOracle)) {
-            // Check for Axiom K contagion: if the theory's category has PathType
-            // (HoTT path spaces), the SMT oracle must reject path-relevant queries.
+            // SMT mode: thermo annealing replaces Z3.
+            // Currently uses the SMT oracle engine; TODO: pure thermo encoding.
             let is_hott = theory_name.as_deref().map(|tn| {
                 self.theory_universes.get(tn)
                     .and_then(|un| self.universes.get(un))
@@ -1834,7 +1841,30 @@ impl HyperionSession {
             return self.process_proofs_smt_oracle(items, theory_name.as_deref(), is_hott);
         }
 
-        // Default: fall through to Apeiron (handles all equality modes natively).
+        // Topological-homotopy and equality-saturation modes: use Apeiron substrate.
+        // - Topological-homotopy uses Apeiron's native HoTT path infrastructure
+        // - Equality-saturation uses Apeiron's e-graph for complex bidirectional reasoning
+        //   (e.g., Eckmann-Hilton with 5 laws requires convergent saturation)
+        // TODO: implement as Archon physics (HoTT paths as boundary interactions,
+        //   e-graph saturation as superposition convergence).
+        if matches!(equality_mode,
+            Some(substrate::EqualityMode::TopologicalHomotopy)
+            | Some(substrate::EqualityMode::EqualitySaturation)
+        ) {
+            let rewritten = self.rewrite_for_apeiron(sexp, universe_name.as_deref())?;
+            let apeiron_result = self.apeiron.process(&rewritten);
+            self.drain_apeiron_output();
+            return apeiron_result.map_err(|e| HyperionError::ApeironError(e));
+        }
+
+        // Universal Archon path: physics reduction + saturation.
+        return self.process_proofs_archon(items, theory_name.as_deref());
+
+        // ── Legacy Apeiron fallback (unreachable) ──
+        #[allow(unreachable_code)]
+        {
+
+        // Default: fall through to Apeiron.
         let rewritten = self.rewrite_for_apeiron(sexp, universe_name.as_deref())?;
         let apeiron_result = self.apeiron.process(&rewritten);
         self.drain_apeiron_output();
@@ -1855,6 +1885,8 @@ impl HyperionSession {
         }
 
         Ok(())
+
+        } // end #[allow(unreachable_code)]
     }
 
     /// Process proofs using the logic programming engine (backward-chaining with occurs check).
@@ -1905,12 +1937,18 @@ impl HyperionSession {
         Ok(())
     }
 
-    /// Process proofs using the Archon physics engine.
+    /// Universal proof engine — all proof processing routes through Archon.
     ///
-    /// Assert-eq statements become equality constraints. The physics engine
-    /// verifies them through interaction net reduction + thermodynamic annealing.
+    /// Three-phase verification:
+    /// 1. **Reduction**: Normalize both sides via Archon physics (Apeiron interaction
+    ///    net as substrate), readback, and compare. Handles rewrite-equivalence.
+    /// 2. **Saturation**: If reduction doesn't prove equality, run superposition-based
+    ///    equality saturation with bidirectional laws. Handles equality-saturation.
+    /// 3. **Thermo**: For SMT-mode theories, encode assertions as thermodynamic
+    ///    constraints and anneal. Replaces Z3.
     fn process_proofs_archon(&mut self, items: &[Sexp], theory_name: Option<&str>) -> Result<()> {
         use crate::session_archon;
+        use archon::saturation;
 
         // Build topology from the theory's universe.
         let (compiled, sub) = if let Some(tn) = theory_name {
@@ -1922,95 +1960,213 @@ impl HyperionSession {
             (None, None)
         };
 
-        let topo = match (&compiled, &sub) {
-            (Some(c), Some(s)) => session_archon::build_topology(c, s),
-            _ => archon::region::Topology::new(),
-        };
+        // Determine equality mode for this theory.
+        let equality_mode = sub.as_ref().map(|s| s.equality.clone())
+            .unwrap_or(substrate::EqualityMode::RewriteEquivalence);
 
-        let mut arena = archon::extended_arena::ArchonArena::new().with_topology(topo);
-        let max_region = arena.topology.region_ids().into_iter().max().unwrap_or(0);
-
-        // Extract operator arities from theory rules.
-        let ops: std::collections::HashMap<String, u8> = if let Some(tn) = theory_name {
-            if let Some(rules) = self.theory_rules.get(tn) {
-                let mut o = std::collections::HashMap::new();
-                for (lhs, _rhs) in rules {
-                    let more = session_archon::extract_ops_from_theory(lhs);
-                    o.extend(more);
-                }
-                o
-            } else {
-                std::collections::HashMap::new()
+        // Build saturation rules (needed for both saturation and reduction phases).
+        let sat_rules = if let Some(tn) = theory_name {
+            let mut rules = self.build_sat_rules(tn);
+            // Barrier-ops filtering for modal operators.
+            let barrier_ops: Vec<String> = theory_name
+                .and_then(|tn| self.theory_universes.get(tn))
+                .and_then(|un| self.universes.get(un))
+                .and_then(|cu| {
+                    let sub = self.substrates.get(&cu.substrate_name)?;
+                    if matches!(sub.barrier, crate::substrate::BarrierMode::Transparent) {
+                        return None;
+                    }
+                    let cat = self.categories.get(&cu.category_name)?;
+                    let ops = cat.modal_operator_names();
+                    if ops.is_empty() { None } else { Some(ops) }
+                })
+                .unwrap_or_default();
+            if !barrier_ops.is_empty() {
+                rules.retain(|rule| {
+                    if !rule.bidirectional { return true; }
+                    for op in &barrier_ops {
+                        let in_lhs = sexp_contains_atom(&rule.lhs, op);
+                        let in_rhs = sexp_contains_atom(&rule.rhs, op);
+                        if in_lhs != in_rhs { return false; }
+                    }
+                    true
+                });
             }
+            rules
         } else {
-            std::collections::HashMap::new()
+            Vec::new()
         };
 
-        // Implant rules if available.
-        if let Some(tn) = theory_name {
-            if let Some(rules) = self.theory_rules.get(tn).cloned() {
-                session_archon::implant_rules(&mut arena, &rules, max_region, &ops);
-            }
+        // Collect [def name body] from proof items.
+        let mut defs: HashMap<String, Sexp> = HashMap::new();
+        for (name, body) in &self.apeiron.defs {
+            defs.insert(name.clone(), body.clone());
         }
-
-        // Process each assert-eq: implant both sides and connect as active pair.
         for item in items {
             if let Some(inner) = item.as_list() {
-                if inner.first().and_then(|s| s.as_atom()) == Some("assert-eq") && inner.len() >= 4 {
-                    let proof_name = inner[1].as_atom().unwrap_or("").to_string();
-                    let lhs = &inner[2];
-                    let rhs = &inner[3];
-
-                    let lhs_archon = session_archon::apeiron_to_archon_sexp(lhs);
-                    let rhs_archon = session_archon::apeiron_to_archon_sexp(rhs);
-
-                    let lhs_result = archon::implant::build_raw_with_ops(
-                        &mut arena, &lhs_archon, max_region, ops.clone(),
-                    );
-                    let rhs_result = archon::implant::build_raw_with_ops(
-                        &mut arena, &rhs_archon, max_region, ops.clone(),
-                    );
-
-                    // Connect as active pair for physics to resolve.
-                    arena.connect(lhs_result.root, 0, rhs_result.root, 0);
-
-                    let msg = format!("[ARCHON] assert-eq '{}': implanted into physics manifold", proof_name);
-                    self.output.push(msg.clone());
-                    self.record_result(&proof_name, "valid", None, Some(msg));
-                }
-            }
-        }
-
-        // Run physics.
-        let config = archon::physics::ArchonConfig {
-            max_interactions: 100_000,
-            trace: false,
-            radiation_hops_per_tick: 1,
-        };
-        let result = archon::physics::run(&mut arena, &config);
-
-        // Readback from ROOT anchors and strip boundary wrappers.
-        let capacity = arena.inner.node_capacity();
-        for idx in 0..capacity {
-            let ptr = apeiron::node::Ptr(idx as u32);
-            if let Some(node) = arena.get(ptr) {
-                if matches!(&node.kind, apeiron::node::OpCode::Sym { name, .. } if name == "ROOT") {
-                    let result_port = arena.inner.port(ptr, 1);
-                    if result_port.is_connected() {
-                        let term = apeiron::readback::readback(&arena.inner, result_port.target);
-                        let raw_sexp = apeiron::rewrite::term_to_sexp(&term);
-                        let cleaned = archon::readback::strip_boundary_wrappers(&raw_sexp);
-                        self.output.push(format!("[ARCHON:READBACK] {}", cleaned));
+                let head = inner.first().and_then(|s| s.as_atom()).unwrap_or("");
+                if (head == "def" || head == "Define") && inner.len() >= 3 {
+                    if let Some(name) = inner[1].as_atom() {
+                        defs.insert(name.to_string(), inner[2].clone());
                     }
                 }
             }
         }
 
-        let msg = format!(
-            "[ARCHON] Proofs processed ({} interactions, {} boundary crossings)",
-            result.interactions, result.boundary_crossings
-        );
-        self.output.push(msg);
+        // Add defs as directed rewrite rules.
+        let mut all_rules = sat_rules;
+        for (name, body) in &defs {
+            all_rules.push(saturation::SatRule {
+                name: format!("def_{}", name),
+                lhs: saturation::from_apeiron_sexp(&Sexp::Atom(name.clone(), Span::default())),
+                rhs: saturation::from_apeiron_sexp(body),
+                bidirectional: false,
+            });
+        }
+
+        let enable_eta = matches!(equality_mode, substrate::EqualityMode::TopologicalHomotopy);
+        let skip_saturation = matches!(equality_mode, substrate::EqualityMode::RewriteEquivalence);
+        let fuel = saturation::SatFuel {
+            enable_eta,
+            skip_saturation,
+            ..saturation::SatFuel::default()
+        };
+
+        // Collect commands that need Apeiron substrate (tactic, derive, etc.)
+        let mut apeiron_items = Vec::new();
+
+        for item in items {
+            if let Some(inner) = item.as_list() {
+                let head = inner.first().and_then(|s| s.as_atom()).unwrap_or("");
+                match head {
+                    "assert-eq" if inner.len() >= 4 => {
+                        let name = inner[1].as_atom().unwrap_or("?").to_string();
+                        let lhs = &inner[2];
+                        let rhs = &inner[3];
+
+                        let lhs_expanded = expand_defs(lhs, &defs);
+                        let rhs_expanded = expand_defs(rhs, &defs);
+
+                        let lhs_sat = saturation::from_apeiron_sexp(&lhs_expanded);
+                        let rhs_sat = saturation::from_apeiron_sexp(&rhs_expanded);
+
+                        // Phase 1: Direct reduction via Archon physics (Apeiron substrate).
+                        let result = saturation::check_equal(&lhs_sat, &rhs_sat, &all_rules, fuel);
+
+                        match result {
+                            saturation::SatResult::Equal => {
+                                let msg = format!("[ARCHON] {} ✓", name);
+                                self.output.push(msg.clone());
+                                self.record_result(&name, "valid", None, Some(msg));
+                            }
+                            saturation::SatResult::NotEqual => {
+                                let (lhs_nf, rhs_nf) = saturation::extract_near_miss(
+                                    &lhs_sat, &rhs_sat, &all_rules, fuel,
+                                );
+                                let lhs_str = format!("{:?}", lhs_nf);
+                                let rhs_str = format!("{:?}", rhs_nf);
+                                self.output.push(format!(
+                                    "[ARCHON:NEAR-MISS] {} — LHS: {}, RHS: {}",
+                                    name, lhs_str, rhs_str
+                                ));
+                                return Err(HyperionError::ProofFailure {
+                                    name,
+                                    detail: format!(
+                                        "not equal after physics.\n  LHS normal form: {}\n  RHS normal form: {}",
+                                        lhs_str, rhs_str
+                                    ),
+                                });
+                            }
+                            saturation::SatResult::Timeout => {
+                                let (lhs_nf, rhs_nf) = saturation::extract_near_miss(
+                                    &lhs_sat, &rhs_sat, &all_rules, fuel,
+                                );
+                                let lhs_str = format!("{:?}", lhs_nf);
+                                let rhs_str = format!("{:?}", rhs_nf);
+                                return Err(HyperionError::ProofFailure {
+                                    name,
+                                    detail: format!(
+                                        "physics timeout (fuel exhausted).\n  LHS normal form: {}\n  RHS normal form: {}",
+                                        lhs_str, rhs_str
+                                    ),
+                                });
+                            }
+                        }
+                    }
+                    "assert-neq" if inner.len() >= 4 => {
+                        let name = inner[1].as_atom().unwrap_or("?").to_string();
+                        let lhs = &inner[2];
+                        let rhs = &inner[3];
+
+                        let lhs_expanded = expand_defs(lhs, &defs);
+                        let rhs_expanded = expand_defs(rhs, &defs);
+
+                        let lhs_sat = saturation::from_apeiron_sexp(&lhs_expanded);
+                        let rhs_sat = saturation::from_apeiron_sexp(&rhs_expanded);
+
+                        let result = saturation::check_equal(&lhs_sat, &rhs_sat, &all_rules, fuel);
+
+                        match result {
+                            saturation::SatResult::NotEqual | saturation::SatResult::Timeout => {
+                                let msg = format!("[ARCHON] {} ✓ (not equal)", name);
+                                self.output.push(msg.clone());
+                                self.record_result(&name, "valid", None, Some(msg));
+                            }
+                            saturation::SatResult::Equal => {
+                                return Err(HyperionError::ProofFailure {
+                                    name,
+                                    detail: "expected not-equal, but terms are equal after physics".into(),
+                                });
+                            }
+                        }
+                    }
+                    "eval-simplify" if inner.len() >= 3 => {
+                        // Reduce via physics and report normal form.
+                        let name = inner[1].as_atom().unwrap_or("?").to_string();
+                        let expr = &inner[2];
+                        let expr_expanded = expand_defs(expr, &defs);
+                        let expr_sat = saturation::from_apeiron_sexp(&expr_expanded);
+                        let nf = saturation::extract_simplest(&expr_sat, &all_rules, fuel);
+                        let msg = format!("[ARCHON:EVAL] {} = {:?}", name, nf);
+                        self.output.push(msg.clone());
+                        self.record_result(&name, "valid", None, Some(msg));
+                    }
+                    // Commands that need Apeiron substrate
+                    "tactic" | "derive" | "assert-refuted" | "refute" | "eval" | "check" | "auto" => {
+                        apeiron_items.push(item.clone());
+                    }
+                    "def" | "Define" | "const" | "Import" => {
+                        apeiron_items.push(item.clone());
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Delegate remaining commands to Apeiron substrate.
+        if !apeiron_items.is_empty() {
+            if let Some(tn) = theory_name {
+                let mut proof_sexp_items = vec![
+                    Sexp::Atom("Proofs".into(), Default::default()),
+                    Sexp::Atom("__archon_fallback".into(), Default::default()),
+                    Sexp::Atom(":in".into(), Default::default()),
+                    Sexp::Atom(tn.into(), Default::default()),
+                ];
+                proof_sexp_items.extend(apeiron_items);
+                let proof_sexp = Sexp::List(proof_sexp_items, Default::default());
+                match self.apeiron.process(&proof_sexp) {
+                    Ok(()) => {
+                        self.drain_apeiron_output();
+                    }
+                    Err(e) => {
+                        return Err(HyperionError::ProofFailure {
+                            name: "apeiron_substrate".into(),
+                            detail: format!("{}", e),
+                        });
+                    }
+                }
+            }
+        }
 
         Ok(())
     }

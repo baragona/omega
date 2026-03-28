@@ -47,6 +47,9 @@ pub struct SatFuel {
     pub max_interactions: u64,
     /// Whether to perform eta reduction during normalization.
     pub enable_eta: bool,
+    /// Skip physical equality saturation (bidirectional law application).
+    /// Used for rewrite-equivalence mode where only directed reduction applies.
+    pub skip_saturation: bool,
 }
 
 impl Default for SatFuel {
@@ -56,6 +59,7 @@ impl Default for SatFuel {
             max_nodes: 10_000,
             max_interactions: 100_000,
             enable_eta: true,
+            skip_saturation: false,
         }
     }
 }
@@ -106,9 +110,43 @@ pub fn check_equal(
         return SatResult::Equal;
     }
 
+    // Phase 1.5: AC normalization fixpoint — alternate AC-canonicalization
+    // and directed reduction until stable. Identity elements are detected
+    // from directed rules and stripped during flattening.
+    let ac_ops = detect_ac_operators(rules);
+    if !ac_ops.is_empty() {
+        let ids = detect_identity_elements(rules);
+        let mut lhs_cur = lhs_nf.clone();
+        let mut rhs_cur = rhs_nf.clone();
+        for _ in 0..5 {
+            lhs_cur = ac_normalize_with_ids(&lhs_cur, &ac_ops, &ids);
+            rhs_cur = ac_normalize_with_ids(&rhs_cur, &ac_ops, &ids);
+            if lhs_cur == rhs_cur {
+                return SatResult::Equal;
+            }
+            let lhs_red = reduce_via_graph(&lhs_cur, &graph_rules, &ops, fuel.max_interactions, fuel.enable_eta);
+            let rhs_red = reduce_via_graph(&rhs_cur, &graph_rules, &ops, fuel.max_interactions, fuel.enable_eta);
+            if lhs_red == lhs_cur && rhs_red == rhs_cur {
+                break; // fixpoint
+            }
+            lhs_cur = lhs_red;
+            rhs_cur = rhs_red;
+        }
+        // Final AC check after fixpoint.
+        let lhs_final = ac_normalize_with_ids(&lhs_cur, &ac_ops, &ids);
+        let rhs_final = ac_normalize_with_ids(&rhs_cur, &ac_ops, &ids);
+        if lhs_final == rhs_final {
+            return SatResult::Equal;
+        }
+    }
+
     // Phase 2: Physical equality saturation via graph-level superposition.
     // Implant both normal forms into one arena, run law application +
     // physics + congruence closure until the roots merge or fuel runs out.
+    // Skip saturation for rewrite-equivalence mode (directed reduction only).
+    if fuel.skip_saturation {
+        return SatResult::NotEqual;
+    }
     let has_laws = rules.iter().any(|r| r.bidirectional);
     if !has_laws {
         return SatResult::NotEqual;
@@ -190,9 +228,12 @@ fn physical_equality_saturation(
             break;
         }
 
-        // Growth rate guard: if a single round more than doubled the graph,
-        // the law set is likely explosive — bail out before OOM.
-        if prev_node_count > 0 && current_count > prev_node_count * 3 {
+        // Growth rate guard: bail out if graph is growing too fast.
+        if prev_node_count > 10 && current_count > prev_node_count * 3 {
+            break;
+        }
+        // Hard cap to prevent stack overflow in readback.
+        if current_count > 5000 {
             break;
         }
         prev_node_count = current_count;
@@ -410,6 +451,198 @@ pub fn extract_near_miss(
     let lhs_nf = reduce_via_graph(lhs, &graph_rules, &ops, fuel.max_interactions, fuel.enable_eta);
     let rhs_nf = reduce_via_graph(rhs, &graph_rules, &ops, fuel.max_interactions, fuel.enable_eta);
     (lhs_nf, rhs_nf)
+}
+
+// ── AC normalization ──────────────────────────────────────────────────
+
+/// Detect identity elements for operators from directed rules.
+/// Pattern: `op(e, ?x) ==> ?x` means `e` is a left-identity for `op`.
+fn detect_identity_elements(rules: &[SatRule]) -> HashMap<String, HashSet<String>> {
+    let mut identities: HashMap<String, HashSet<String>> = HashMap::new();
+    for rule in rules {
+        if rule.bidirectional { continue; }
+        // op(e, ?x) ==> ?x
+        if let Sexp::List(lhs) = &rule.lhs {
+            if lhs.len() == 3 {
+                if let Sexp::Atom(ref op) = lhs[0] {
+                    if let Sexp::Atom(ref maybe_id) = lhs[1] {
+                        if !maybe_id.starts_with('?') {
+                            if let Sexp::Atom(ref rhs_var) = rule.rhs {
+                                if let Sexp::Atom(ref lhs_var) = lhs[2] {
+                                    if rhs_var == lhs_var && lhs_var.starts_with('?') {
+                                        identities.entry(op.clone()).or_default()
+                                            .insert(maybe_id.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Also check: op(?x, e) ==> ?x
+                    if let Sexp::Atom(ref maybe_id) = lhs[2] {
+                        if !maybe_id.starts_with('?') {
+                            if let Sexp::Atom(ref rhs_var) = rule.rhs {
+                                if let Sexp::Atom(ref lhs_var) = lhs[1] {
+                                    if rhs_var == lhs_var && lhs_var.starts_with('?') {
+                                        identities.entry(op.clone()).or_default()
+                                            .insert(maybe_id.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    identities
+}
+
+/// Detect operators that have both commutativity and associativity laws.
+fn detect_ac_operators(rules: &[SatRule]) -> HashSet<String> {
+    let mut commutative: HashSet<String> = HashSet::new();
+    let mut associative: HashSet<String> = HashSet::new();
+
+    for rule in rules {
+        if !rule.bidirectional { continue; }
+        if let (Sexp::List(lhs), Sexp::List(rhs)) = (&rule.lhs, &rule.rhs) {
+            if lhs.len() == 3 && rhs.len() == 3 {
+                if let (Sexp::Atom(lop), Sexp::Atom(rop)) = (&lhs[0], &rhs[0]) {
+                    if lop == rop {
+                        // Commutativity: op(?x, ?y) === op(?y, ?x)
+                        if is_meta(&lhs[1]) && is_meta(&lhs[2])
+                            && lhs[1] == rhs[2] && lhs[2] == rhs[1]
+                        {
+                            commutative.insert(lop.clone());
+                        }
+                        // Associativity: op(op(?x,?y),?z) === op(?x,op(?y,?z))
+                        if let Sexp::List(il) = &lhs[1] {
+                            if il.len() == 3 {
+                                if let Sexp::Atom(ref iop) = il[0] {
+                                    if iop == lop {
+                                        if let Sexp::List(ir) = &rhs[2] {
+                                            if ir.len() == 3 {
+                                                if matches!(&ir[0], Sexp::Atom(ref o) if o == rop) {
+                                                    associative.insert(lop.clone());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // Also: op(?x,op(?y,?z)) === op(op(?x,?y),?z)
+                        if let Sexp::List(il) = &lhs[2] {
+                            if il.len() == 3 {
+                                if let Sexp::Atom(ref iop) = il[0] {
+                                    if iop == lop {
+                                        if let Sexp::List(ir) = &rhs[1] {
+                                            if ir.len() == 3 {
+                                                if matches!(&ir[0], Sexp::Atom(ref o) if o == rop) {
+                                                    associative.insert(lop.clone());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    commutative.intersection(&associative).cloned().collect()
+}
+
+fn is_meta(s: &Sexp) -> bool {
+    matches!(s, Sexp::Atom(name) if name.starts_with('?'))
+}
+
+/// AC-normalize: flatten nested AC operator applications into sorted multisets,
+/// strip identity elements, then rebuild as right-associated canonical form.
+fn ac_normalize(expr: &Sexp, ac_ops: &HashSet<String>) -> Sexp {
+    ac_normalize_with_ids(expr, ac_ops, &HashMap::new())
+}
+
+fn ac_normalize_with_ids(expr: &Sexp, ac_ops: &HashSet<String>, ids: &HashMap<String, HashSet<String>>) -> Sexp {
+    match expr {
+        Sexp::Atom(_) => expr.clone(),
+        Sexp::List(items) => {
+            if items.len() >= 3 {
+                if let Sexp::Atom(ref op) = items[0] {
+                    if ac_ops.contains(op) {
+                        let mut children = Vec::new();
+                        ac_flatten_with_ids(expr, op, &mut children, ac_ops, ids);
+                        // Strip identity elements for this operator.
+                        if let Some(id_set) = ids.get(op) {
+                            children.retain(|c| {
+                                !matches!(c, Sexp::Atom(ref a) if id_set.contains(a))
+                            });
+                        }
+                        if children.is_empty() {
+                            // All children were identities — return the identity.
+                            if let Some(id_set) = ids.get(op) {
+                                if let Some(id) = id_set.iter().next() {
+                                    return Sexp::Atom(id.clone());
+                                }
+                            }
+                            return expr.clone();
+                        }
+                        children.sort_by(|a, b| format!("{:?}", a).cmp(&format!("{:?}", b)));
+                        return ac_rebuild(op, &children);
+                    }
+                }
+            }
+            Sexp::List(items.iter().map(|c| ac_normalize_with_ids(c, ac_ops, ids)).collect())
+        }
+    }
+}
+
+fn ac_flatten_with_ids(expr: &Sexp, op: &str, children: &mut Vec<Sexp>, ac_ops: &HashSet<String>, ids: &HashMap<String, HashSet<String>>) {
+    match expr {
+        Sexp::List(items) if items.len() >= 3 => {
+            if let Sexp::Atom(ref head) = items[0] {
+                if head == op {
+                    for child in &items[1..] {
+                        ac_flatten_with_ids(child, op, children, ac_ops, ids);
+                    }
+                    return;
+                }
+            }
+            children.push(ac_normalize_with_ids(expr, ac_ops, ids));
+        }
+        _ => children.push(ac_normalize_with_ids(expr, ac_ops, ids)),
+    }
+}
+
+fn ac_flatten(expr: &Sexp, op: &str, children: &mut Vec<Sexp>, ac_ops: &HashSet<String>) {
+    match expr {
+        Sexp::List(items) if items.len() >= 3 => {
+            if let Sexp::Atom(ref head) = items[0] {
+                if head == op {
+                    for child in &items[1..] {
+                        ac_flatten(child, op, children, ac_ops);
+                    }
+                    return;
+                }
+            }
+            children.push(ac_normalize(expr, ac_ops));
+        }
+        _ => children.push(ac_normalize(expr, ac_ops)),
+    }
+}
+
+fn ac_rebuild(op: &str, children: &[Sexp]) -> Sexp {
+    match children.len() {
+        0 => unreachable!(),
+        1 => children[0].clone(),
+        2 => Sexp::List(vec![Sexp::Atom(op.into()), children[0].clone(), children[1].clone()]),
+        _ => Sexp::List(vec![
+            Sexp::Atom(op.into()),
+            children[0].clone(),
+            ac_rebuild(op, &children[1..]),
+        ]),
+    }
 }
 
 // ── Graph-level reduction ──────────────────────────────────────────────
@@ -1123,5 +1356,15 @@ mod tests {
         )];
         let filtered = filter_barrier_rules(&rules, &["box".to_string()]);
         assert_eq!(filtered.len(), 1);
+    }
+
+    #[test]
+    fn ac_normalize_comm_assoc() {
+        let a = atom("a"); let b = atom("b"); let c = atom("c");
+        // op(a, op(b, c)) and op(op(c, a), b) should normalize to the same form.
+        let lhs = list(vec![atom("op"), a.clone(), list(vec![atom("op"), b.clone(), c.clone()])]);
+        let rhs = list(vec![atom("op"), list(vec![atom("op"), c.clone(), a.clone()]), b.clone()]);
+        let ac_ops: HashSet<String> = vec!["op".to_string()].into_iter().collect();
+        assert_eq!(super::ac_normalize(&lhs, &ac_ops), super::ac_normalize(&rhs, &ac_ops));
     }
 }

@@ -57,6 +57,30 @@
 ;;;   22. Proton ⊬ trapped                          (mass too low)
 ;;;   23. Trapped ⊬ can-escape                      (classical: no escape)
 ;;;   24. Trapped ⊬ hawking                          (need CI for quantum)
+;;;
+;;;   ACT IX — Classical Information:
+;;;   25. CNOT measures: e(1)⊗γ(0) → e(1)⊗γ(1)    (bit copy via gate)
+;;;   26. Erasure: e(1)⊗γ(0) → e(0)⊗γ(1)          (Landauer SWAP)
+;;;   27. CNOT involution: CNOT(CNOT(x)) = x        (reversibility)
+;;;   28. Tagged proton generates stress-energy       (cross-layer!)
+;;;
+;;;   ACT X — Information-Theoretic Impossibilities:
+;;;   29. No magical cooling: e(1) ⊬ e(0)           (Landauer's principle)
+;;;   30. No info destruction: e(1)⊗γ(0) ⊬ e(0)⊗γ(0) (second law)
+;;;   31. Tagged photon can't gravitate               (mass 0, bits don't help)
+;;;
+;;;   ACT XI — Matter-Energy Conversion (E=mc²):
+;;;   32. e⁻ + e⁺ → 2γ                              (annihilation works)
+;;;   33. 2γ ⊬ e⁻ + e⁺                              (no spontaneous pairs)
+;;;
+;;;   ACT XII — Cosmic Censorship:
+;;;   34. CI+DP ⊬ trapped ∧ vac                      (no naked singularities)
+;;;
+;;;   ACT XIII — GUT Prediction (Proton Decay):
+;;;   35. p → e⁺ + 2γ                                (proton is unstable!)
+;;;
+;;;   ACT XIV — Arrow of Time:
+;;;   36. γ ⊬ e⁻                                     (no free mass creation)
 
 (theory RuliadGUT
   ;; Structural mode: linearity enforced by rule structure
@@ -343,7 +367,94 @@
   ;; CLASSICAL ESCAPE: below Schwarzschild → information propagates freely
   (rule not-trapped-escape
     :premises ((holds (ml ?R)) (bh-eq (check-schwarzschild ?R) bh-no))
-    :conclusion (holds (can-escape ?R))))
+    :conclusion (holds (can-escape ?R)))
+
+  ;; ═════════════════════════════════════════════════════════════
+  ;; §17  CLASSICAL INFORMATION — Bits, Gates, and Landauer
+  ;; ═════════════════════════════════════════════════════════════
+  ;; Classical bits attached to particles. A tagged(b, p) resource
+  ;; carries bit state b on particle p. Mass is preserved:
+  ;; the bit is pure information, weightless.
+  ;;
+  ;; Gates are REVERSIBLE (bijective on bit pairs):
+  ;;   CNOT:  flips target if control = 1  (classical XOR)
+  ;;   RCNOT: flips control if target = 1  (reverse CNOT)
+  ;;
+  ;; Erasure = CNOT + RCNOT (Landauer's principle: information
+  ;; is conserved in reversible computation, but can be MOVED
+  ;; between particles — never created or destroyed for free).
+
+  (sort Bit)
+  (constructor b0 : Bit)   ;; classical 0
+  (constructor b1 : Bit)   ;; classical 1
+
+  ;; Tagged particle: carries a classical bit
+  (constructor tagged : (-> Bit Particle Resource))
+
+  ;; Mass of tagged = mass of underlying particle (bits are weightless)
+  (rewrite trm-tagged (total-rest-mass (tagged ?b ?p)) (rest-mass ?p))
+
+  ;; CNOT gate: control, target → control, target XOR control
+  ;; Operates on a tensor pair of tagged particles.
+  ;; Reversible: CNOT(CNOT(x)) = x.
+  (rule gate-cnot-00
+    :premises ((has (tensor (tagged b0 ?p) (tagged b0 ?q))))
+    :conclusion (has (tensor (tagged b0 ?p) (tagged b0 ?q))))
+  (rule gate-cnot-01
+    :premises ((has (tensor (tagged b0 ?p) (tagged b1 ?q))))
+    :conclusion (has (tensor (tagged b0 ?p) (tagged b1 ?q))))
+  (rule gate-cnot-10
+    :premises ((has (tensor (tagged b1 ?p) (tagged b1 ?q))))
+    :conclusion (has (tensor (tagged b1 ?p) (tagged b0 ?q))))
+  (rule gate-cnot-11
+    :premises ((has (tensor (tagged b1 ?p) (tagged b0 ?q))))
+    :conclusion (has (tensor (tagged b1 ?p) (tagged b1 ?q))))
+
+  ;; RCNOT gate: reverse CNOT — flips control if target = 1
+  (rule gate-rcnot-00
+    :premises ((has (tensor (tagged b0 ?p) (tagged b0 ?q))))
+    :conclusion (has (tensor (tagged b0 ?p) (tagged b0 ?q))))
+  (rule gate-rcnot-01
+    :premises ((has (tensor (tagged b0 ?p) (tagged b1 ?q))))
+    :conclusion (has (tensor (tagged b1 ?p) (tagged b1 ?q))))
+  (rule gate-rcnot-10
+    :premises ((has (tensor (tagged b1 ?p) (tagged b0 ?q))))
+    :conclusion (has (tensor (tagged b1 ?p) (tagged b0 ?q))))
+  (rule gate-rcnot-11
+    :premises ((has (tensor (tagged b1 ?p) (tagged b1 ?q))))
+    :conclusion (has (tensor (tagged b0 ?p) (tagged b1 ?q))))
+
+  ;; ═════════════════════════════════════════════════════════════
+  ;; §18  REACTIONS — Annihilation & Proton Decay
+  ;; ═════════════════════════════════════════════════════════════
+  ;; Mass-checked particle reactions beyond beta decay.
+
+  ;; ANNIHILATION: e⁻ + e⁺ → 2γ
+  ;; Mass check: electron(1) + positron(1) = 2 >= photon(0) + photon(0) = 0.
+  ;; Matter converts to radiation. E = mc².
+  (rule annihilation
+    :premises (
+      (has (tensor (particle electron) (particle positron)))
+      (mass-eq
+        (check-mass
+          (total-rest-mass (tensor (particle electron) (particle positron)))
+          (total-rest-mass (tensor (particle photon) (particle photon))))
+        mass-ok))
+    :conclusion (has (tensor (particle photon) (particle photon))))
+
+  ;; PROTON DECAY: p → e⁺ + 2γ  (GUT prediction)
+  ;; Mass check: proton(5) >= positron(1) + photon(0) + photon(0) = 1.
+  ;; No baryon number conservation — this IS a Grand Unified Theory.
+  (rule proton-decay-channel
+    :premises (
+      (has (particle proton))
+      (mass-eq
+        (check-mass (rest-mass proton)
+          (total-rest-mass (tensor (particle positron)
+            (tensor (particle photon) (particle photon)))))
+        mass-ok))
+    :conclusion (has (tensor (particle positron)
+      (tensor (particle photon) (particle photon))))))
 
 (check-theory RuliadGUT)
 
@@ -798,3 +909,240 @@
     (holds (trapped (tensor (particle proton) (particle proton)))))
   :goal (holds (hawking (tensor (particle proton) (particle proton))))
   :depth 3)
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;;          ACT IX — CLASSICAL INFORMATION
+;;; ═══════════════════════════════════════════════════════════
+;;; Bits ride on particles. Gates are reversible bijections on
+;;; bit pairs. Information is conserved — it can be MOVED
+;;; between particles (erasure = CNOT + RCNOT) but never
+;;; created from nothing or destroyed for free.
+
+
+;;; Proof 25: CNOT MEASURES — copies control bit to target
+;;; An electron with bit=1 and a photon with bit=0.
+;;; CNOT(1, 0) → (1, 1): the photon now "records" the electron's state.
+;;; This is classical measurement: information flows, nothing lost.
+
+(proof cnot-measures
+  :theory RuliadGUT
+  :assumptions ((has (tensor (tagged b1 electron) (tagged b0 photon))))
+  :goal (has (tensor (tagged b1 electron) (tagged b1 photon)))
+  :derivation (gate-cnot-11 (assumption)))
+
+
+;;; Proof 26: LANDAUER ERASURE — CNOT then RCNOT = SWAP of bits
+;;; Start: electron=1, photon=0.
+;;; CNOT(1, 0) → (1, 1): copy to photon.
+;;; RCNOT(1, 1) → (0, 1): flip control since target=1.
+;;; Result: electron=0, photon=1. The bit MOVED — not destroyed.
+;;; This is Landauer's principle: erasure requires a heat sink.
+;;; The photon IS the heat sink — it carries away the entropy.
+
+(proof landauer-erasure
+  :theory RuliadGUT
+  :assumptions ((has (tensor (tagged b1 electron) (tagged b0 photon))))
+  :goal (has (tensor (tagged b0 electron) (tagged b1 photon)))
+  :derivation (gate-rcnot-11 (gate-cnot-11 (assumption))))
+
+
+;;; Proof 27: CNOT IS AN INVOLUTION — CNOT(CNOT(x)) = x
+;;; Start: electron=1, photon=0.
+;;; CNOT(1, 0) → (1, 1). CNOT(1, 1) → (1, 0). Back to start.
+;;; Every reversible gate is its own inverse. No information lost.
+
+(proof cnot-involution
+  :theory RuliadGUT
+  :assumptions ((has (tensor (tagged b1 electron) (tagged b0 photon))))
+  :goal (has (tensor (tagged b1 electron) (tagged b0 photon)))
+  :derivation (gate-cnot-10 (gate-cnot-11 (assumption))))
+
+
+;;; Proof 28: TAGGED PROTON GENERATES STRESS-ENERGY — Cross-layer!
+;;; A proton carrying a bit still has mass 5 (bits are weightless:
+;;; trm-tagged normalizes to rest-mass proton = 5).
+;;; Mass >= 1 → matter-generates-T fires.
+;;; This proves that INFORMATION-CARRYING particles curve spacetime
+;;; just like bare particles do. Bits don't add gravity.
+
+(proof tagged-proton-stress-energy
+  :theory RuliadGUT
+  :assumptions ((has (tagged b1 proton)))
+  :goal (holds (has-T (tagged b1 proton)))
+  :derivation (matter-generates-T (assumption) (mass-refl)))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;;     ACT X — INFORMATION-THEORETIC IMPOSSIBILITIES
+;;; ═══════════════════════════════════════════════════════════
+;;; These refutations encode fundamental limits of classical
+;;; information theory — proved by exhaustive search.
+
+
+;;; Refutation 29: NO MAGICAL COOLING — Landauer's Principle
+;;; An electron in state 1 cannot spontaneously become state 0.
+;;; There is no rule that takes has(tagged(b1, electron)) and
+;;; produces has(tagged(b0, electron)). You need a PARTNER
+;;; particle to absorb the entropy (see Proof 26).
+;;; This is the computational irreversibility principle:
+;;; you can't erase a bit without dumping heat somewhere.
+
+(refute no-magical-cooling
+  :theory RuliadGUT
+  :assumptions ((has (tagged b1 electron)))
+  :goal (has (tagged b0 electron))
+  :depth 4)
+
+
+;;; Refutation 30: NO INFORMATION DESTRUCTION — Second Law
+;;; A pair (electron=1, photon=0) cannot evolve into (electron=0,
+;;; photon=0). That would destroy a bit — the "1" disappears.
+;;; CNOT produces (1,1). RCNOT produces (1,0) or (0,1).
+;;; No sequence of reversible gates can map (1,0) → (0,0).
+;;; This is the second law of thermodynamics: total information
+;;; (entropy) is conserved in reversible dynamics.
+
+(refute no-info-destruction
+  :theory RuliadGUT
+  :assumptions ((has (tensor (tagged b1 electron) (tagged b0 photon))))
+  :goal (has (tensor (tagged b0 electron) (tagged b0 photon)))
+  :depth 4)
+
+
+;;; Refutation 31: TAGGED PHOTON CAN'T GRAVITATE
+;;; A photon with a bit still has mass 0 (trm-tagged → rest-mass
+;;; photon → 0). Bits don't add mass. check-mass(0, 1) → mass-fail.
+;;; matter-generates-T can't fire. Information is weightless.
+
+(refute tagged-photon-no-gravity
+  :theory RuliadGUT
+  :assumptions ((has (tagged b0 photon)))
+  :goal (holds (has-T (tagged b0 photon)))
+  :depth 4)
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;;     ACT XI — MATTER-ENERGY CONVERSION (E=mc²)
+;;; ═══════════════════════════════════════════════════════════
+;;; Annihilation: matter converts to radiation. The mass check
+;;; confirms the products are lighter than the reactants.
+;;; The "missing" mass becomes kinetic energy of the photons.
+
+
+;;; Proof 32: ANNIHILATION — e⁻ + e⁺ → 2γ
+;;; Electron(1) + Positron(1) = 2 >= Photon(0) + Photon(0) = 0.
+;;; Mass is "lost" — converted to radiation energy.
+;;; check-mass(2, 0) → mass-ok (trivially: anything >= 0).
+
+(proof electron-positron-annihilation
+  :theory RuliadGUT
+  :assumptions ((has (tensor (particle electron) (particle positron))))
+  :goal (has (tensor (particle photon) (particle photon)))
+  :derivation (annihilation (assumption) (mass-refl)))
+
+
+;;; Refutation 33: NO SPONTANEOUS PAIR PRODUCTION
+;;; Two photons (mass 0+0=0) cannot become e⁻ + e⁺ (mass 1+1=2).
+;;; check-mass(0, 2) → mass-fail. No rule produces massive
+;;; particles from massless ones. The vacuum is stable against
+;;; spontaneous materialization of matter-antimatter pairs.
+;;; (In real physics, pair production requires a catalyst —
+;;; a nucleus or another photon with sufficient center-of-mass energy.)
+
+(refute no-spontaneous-pairs
+  :theory RuliadGUT
+  :assumptions ((has (tensor (particle photon) (particle photon))))
+  :goal (has (tensor (particle electron) (particle positron)))
+  :depth 4)
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;;        ACT XII — COSMIC CENSORSHIP
+;;; ═══════════════════════════════════════════════════════════
+;;; The Cosmic Censorship Conjecture (Penrose, 1969): every
+;;; singularity is hidden behind an event horizon.
+;;;
+;;; In our model: a "naked singularity" would be a region that
+;;; is BOTH trapped (singularity exists) AND vacuum (no matter
+;;; curvature). But trapped requires mass >= 10 (Schwarzschild),
+;;; and vacuum Einstein requires mass < 1 (flat curvature).
+;;; These are mutually exclusive — the singularity is always
+;;; "clothed" in the curvature of matter.
+;;;
+;;; We prove this by showing that two protons (the canonical
+;;; trapped resource, mass 10) cannot satisfy BOTH trapped
+;;; AND vacuum Einstein simultaneously.
+
+
+;;; Refutation 34: NO NAKED SINGULARITIES
+;;; Given CI + DP for the two-proton system, we try to derive
+;;; both trapped(2p) and vac(2p) as a conjunction.
+;;;   - trapped(2p) IS derivable (mass 10 >= Schwarzschild 10)
+;;;   - vac(2p) is NOT derivable (mass 10 → positive curvature,
+;;;     not flat, so check-flat fails, blocking vacuum Einstein)
+;;; The conjunction fails because vac is underivable.
+;;; Gravity hides the singularity behind matter curvature.
+
+(refute cosmic-censorship
+  :theory RuliadGUT
+  :assumptions (
+    (holds (ci (tensor (particle proton) (particle proton))))
+    (holds (dp (tensor (particle proton) (particle proton)))))
+  :goal (holds (and-p
+    (trapped (tensor (particle proton) (particle proton)))
+    (vac (tensor (particle proton) (particle proton)))))
+  :depth 4)
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;;     ACT XIII — THE GUT PREDICTION (Proton Decay)
+;;; ═══════════════════════════════════════════════════════════
+;;; In the Standard Model, protons are stable because Baryon
+;;; Number is conserved. But Grand Unified Theories (SU(5),
+;;; SO(10), E₈) unify quarks and leptons into single multiplets,
+;;; allowing transitions between them.
+;;;
+;;; RuliadGUT IS a Grand Unified Theory: it checks Mass but
+;;; has NO baryon number conservation. Therefore, proton decay
+;;; is allowed: p(5) → e⁺(1) + 2γ(0).
+;;;
+;;; This is the signature prediction of GUTs. Current bounds
+;;; (Super-Kamiokande): τ_p > 10³⁴ years. If this is ever
+;;; observed, it confirms the unification of forces.
+
+
+;;; Proof 35: PROTON DECAY IS PROVABLE
+;;; rest-mass(proton) = 5 >= total-rest-mass(e⁺ ⊗ γ ⊗ γ) = 1.
+;;; check-mass(5, 1) → check-mass(4, 0) → mass-ok.
+;;; The proton evaporates into a positron and radiation.
+
+(proof proton-decay
+  :theory RuliadGUT
+  :assumptions ((has (particle proton)))
+  :goal (has (tensor (particle positron)
+    (tensor (particle photon) (particle photon))))
+  :derivation (proton-decay-channel (assumption) (mass-refl)))
+
+
+;;; ═══════════════════════════════════════════════════════════
+;;;      ACT XIV — ARROW OF TIME (No Free Mass)
+;;; ═══════════════════════════════════════════════════════════
+;;; Mass cannot be created from nothing. A photon (mass 0)
+;;; cannot become an electron (mass 1). No rule in the theory
+;;; allows upward mass transitions without a source.
+;;; This is the thermodynamic arrow of time: entropy increases,
+;;; mass-energy flows downhill, never uphill for free.
+
+
+;;; Refutation 36: NO FREE MASS CREATION
+;;; A photon cannot spontaneously gain mass and become an electron.
+;;; All reaction rules (beta-decay, annihilation, proton-decay)
+;;; require specific particle inputs that don't match a lone photon.
+;;; tensor-intro only combines, never transmutes.
+
+(refute no-free-mass
+  :theory RuliadGUT
+  :assumptions ((has (particle photon)))
+  :goal (has (particle electron))
+  :depth 4)

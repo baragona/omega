@@ -23,11 +23,12 @@
 ;;;                          abs-ext, abs-reg, abs-empty, abs-inf are DERIVED)
 ;;;   [DEF-CLOSURE]         General principle (1, now imp-def) + classification (3)
 ;;;                         (def-closure-gives-sat, def-closed-sat-pair, -union, -sep are DERIVED)
-;;;   [SAT-LOGIC]           Satisfaction conjunction (1, now imp-def) + models-zfc def (1, now curried imp-def)
+;;;   [TARSKI-SEMANTICS]    Tarski truth conditions (2 REWRITE DEFS): sat-and-expand, sat-neg-expand
+;;;                         (tarski-sat-and, tarski-sat-neg, sat-and-intro are PROVED THEOREMS)
+;;;   [SAT-LOGIC]           models-zfc biconditional (1, Phase 20)
 ;;;                         + zfc-to-sat (1, now imp-def)
-;;;                         (sat-and-intro, models-zfc-to-sat, models-zfc-def are DERIVED)
-;;;   [ZFC-MODEL]           Axiom extraction from models-zfc (2, now imp-defs)
-;;;                         (models-zfc-sat-empty, -inf are DERIVED)
+;;;                         (models-zfc-def, models-zfc-to-sat,
+;;;                          models-zfc-sat-empty, -inf are DERIVED from models-zfc-bic)
 ;;;   [SEMANTICS]           Tarski satisfaction bridge (2, now imp-defs)
 ;;;                         (sat-empty-means-contains, sat-inf-means-contains,
 ;;;                          models-zfc-contains-{empty,omega} are DERIVED)
@@ -43,6 +44,7 @@
 ;;;   [L-HIERARCHY]         L transitivity + definable closure decomposition (4+1 now imp-defs)
 ;;;                         (def-stages-give-def-closed is DERIVED)
 ;;;   [FORCING-DEF]         Forcing extensions (2+2 now imp-defs) + name/def-closed (1 now imp-def)
+;;;                         + forces-and-expand (1 REWRITE DEF, Phase 20)
 ;;;                         (extension-transitive, extension-contains, extension-has-names,
 ;;;                          name-interpretation-gives-def-closed, forcing-def-closed are DERIVED)
 ;;;   [TRUTH-LEMMA]         Forcing semantics (1 base + 3 now imp-defs) + bridge (1)
@@ -1190,22 +1192,30 @@
   (rule model-implies-consistent-def
     :conclusion (holds (imp (sat ?M ?T) (consistent ?T))))
 
-  ;; ── Semantic Axioms (connecting sat to formula structure) ──
+  ;; ── Tarski Satisfaction Semantics (rewrite definitions) ──
+  ;; These REWRITE RULES define what satisfaction computes to on structured formulas.
+  ;; The biconditionals tarski-sat-and/tarski-sat-neg are PROVED THEOREMS, not axioms.
 
-  ;;; [SAT-LOGIC] Satisfaction for conjunction of formulas/theories
-  ;;; sat-and-intro is now DERIVED (Phase 19 Wave 6).
-  (rule sat-and-intro-def
-    :conclusion (holds (imp (sat ?M ?phi) (imp (sat ?M ?psi) (sat ?M (and-form ?phi ?psi))))))
+  ;;; sat(M, φ∧ψ) computes to conj(sat(M,φ), sat(M,ψ)).
+  (rewrite sat-and-expand (sat ?M (and-form ?phi ?psi)) (conj (sat ?M ?phi) (sat ?M ?psi)))
+
+  ;;; sat(M, ¬φ) computes to neg-p(sat(M,φ)).
+  (rewrite sat-neg-expand (sat ?M (neg-form ?phi)) (neg-p (sat ?M ?phi)))
 
   ;;; [SAT-LOGIC] models-zfc implies satisfaction of the ZFC theory object
   ;;; models-zfc-to-sat is now DERIVED (Phase 19 Wave 5).
   (rule models-zfc-to-sat-def
     :conclusion (holds (imp (models-zfc ?M) (sat ?M zfc-obj))))
 
-  ;;; [SAT-LOGIC] models-zfc from individual axiom satisfaction
-  ;;; models-zfc-def is now DERIVED (Phase 19 Wave 7).
-  (rule models-zfc-conj-def
-    :conclusion (holds (imp (sat ?M ax-ext) (imp (sat ?M ax-empty) (imp (sat ?M ax-pair) (imp (sat ?M ax-union) (imp (sat ?M ax-power) (imp (sat ?M ax-inf) (imp (sat ?M (ax-sep ?phi)) (imp (sat ?M (ax-rep ?psi)) (imp (sat ?M ax-reg) (imp (sat ?M ax-choice) (models-zfc ?M)))))))))))))
+  ;;; [SAT-LOGIC] models-zfc DEFINED as conjunction of 10 axiom satisfactions.
+  ;;; This biconditional replaces the forward-only models-zfc-conj-def (Phase 20).
+  ;;; models-zfc-def, models-zfc-sat-empty, models-zfc-sat-inf are now PROVED from this.
+  (rule models-zfc-bic
+    :conclusion (holds (bic (models-zfc ?M)
+      (conj (sat ?M ax-ext) (conj (sat ?M ax-empty) (conj (sat ?M ax-pair)
+        (conj (sat ?M ax-union) (conj (sat ?M ax-power) (conj (sat ?M ax-inf)
+          (conj (sat ?M (ax-sep ?phi)) (conj (sat ?M (ax-rep ?psi))
+            (conj (sat ?M ax-reg) (sat ?M ax-choice)))))))))))))
 
   ;;; godel-theorem is NOW A LEMMA (relative to M ⊨ ZFC) — proved from
   ;;; L-models-zfc + L-satisfies-gch + gch-implies-ch + sat-and-intro
@@ -1484,18 +1494,8 @@
     :conclusion (holds (imp (mem ?x (model-univ ?M)) (imp (is-generic ?M ?P ?G) (mem ?x (model-univ (extension ?M ?P ?G)))))))
 
   ;; ── ZFC Model Axiom Extraction ──
-
-  ;;; [ZFC-MODEL — extraction] ZFC model satisfies Empty Set axiom.
-  ;;; models-zfc(M) entails M ⊨ ax-empty because ax-empty ∈ ZFC.
-  ;;; models-zfc-sat-empty is now DERIVED (Phase 19 Wave 5).
-  (rule models-zfc-sat-empty-def
-    :conclusion (holds (imp (models-zfc ?M) (sat ?M ax-empty))))
-
-  ;;; [ZFC-MODEL — extraction] ZFC model satisfies Infinity axiom.
-  ;;; models-zfc(M) entails M ⊨ ax-inf because ax-inf ∈ ZFC.
-  ;;; models-zfc-sat-inf is now DERIVED (Phase 19 Wave 5).
-  (rule models-zfc-sat-inf-def
-    :conclusion (holds (imp (models-zfc ?M) (sat ?M ax-inf))))
+  ;;; models-zfc-sat-empty and models-zfc-sat-inf are now PROVED
+  ;;; from models-zfc-bic (Phase 20). See lemmas below.
 
   ;; ── Tarski Satisfaction Semantics ──
 
@@ -1528,6 +1528,13 @@
   (constructor forces        : (-> Set Set Set Set Prop))
   (constructor cohen-poset   : (-> Set Set))
   (constructor the-generic   : (-> Set Set Set))  ;; Skolem witness for generic filter
+
+  ;; ── Forcing Relation Definition (rewrite definition) ──
+  ;; This REWRITE RULE defines what forcing computes to on conjunctive formulas.
+  ;; The biconditional forces-and-bic is a PROVED THEOREM, not an axiom.
+
+  ;;; forces(M,P,p, φ∧ψ) computes to conj(forces(M,P,p,φ), forces(M,P,p,ψ)).
+  (rewrite forces-and-expand (forces ?M ?P ?p (and-form ?phi ?psi)) (conj (forces ?M ?P ?p ?phi) (forces ?M ?P ?p ?psi)))
 
   ;; ── Truth Lemma (decomposed into per-case axioms) ──
   ;; The Truth Lemma says: if p ∈ G and p ⊩ φ, then M[G] ⊨ φ.
@@ -2219,13 +2226,15 @@
   :theory CH-Honest
   :premises ((holds (models-zfc ?M)))
   :conclusion (holds (sat ?M ax-empty))
-  :tactics (auto 3))
+  :derivation (conj-elim-l (conj-elim-r (bic-fwd (models-zfc-bic) (assumption)))))
 
 (lemma models-zfc-sat-inf
   :theory CH-Honest
   :premises ((holds (models-zfc ?M)))
   :conclusion (holds (sat ?M ax-inf))
-  :tactics (auto 3))
+  :derivation (conj-elim-l
+    (conj-elim-r (conj-elim-r (conj-elim-r (conj-elim-r (conj-elim-r
+      (bic-fwd (models-zfc-bic) (assumption)))))))))
 
 (lemma sat-empty-means-contains
   :theory CH-Honest
@@ -2401,12 +2410,31 @@
   :conclusion (holds (formula-reflected (exists-form ?phi) ?M))
   :tactics (auto 4))
 
+;;; ─── Tarski biconditionals (PROVED from rewrite definitions) ───
+;;; Both sides normalize to the same expression via sat-and-expand / sat-neg-expand /
+;;; forces-and-expand, so bic-intro with imp-intro + assumption is trivially valid.
+
+(lemma tarski-sat-and
+  :theory CH-Honest
+  :conclusion (holds (bic (sat ?M (and-form ?phi ?psi)) (conj (sat ?M ?phi) (sat ?M ?psi))))
+  :derivation (bic-intro (imp-intro (assumption)) (imp-intro (assumption))))
+
+(lemma tarski-sat-neg
+  :theory CH-Honest
+  :conclusion (holds (bic (sat ?M (neg-form ?phi)) (neg-p (sat ?M ?phi))))
+  :derivation (bic-intro (imp-intro (assumption)) (imp-intro (assumption))))
+
+(lemma forces-and-bic
+  :theory CH-Honest
+  :conclusion (holds (bic (forces ?M ?P ?p (and-form ?phi ?psi)) (conj (forces ?M ?P ?p ?phi) (forces ?M ?P ?p ?psi))))
+  :derivation (bic-intro (imp-intro (assumption)) (imp-intro (assumption))))
+
 ;;; ─── Satisfaction logic ───
 (lemma sat-and-intro
   :theory CH-Honest
   :premises ((holds (sat ?M ?phi)) (holds (sat ?M ?psi)))
   :conclusion (holds (sat ?M (and-form ?phi ?psi)))
-  :tactics (auto 4))
+  :derivation (conj-intro (assumption 0) (assumption 1)))
 
 ;;; ─── Absoluteness ───
 (lemma transitive-sat-delta0
@@ -3829,11 +3857,16 @@
              (holds (sat ?M ax-reg))
              (holds (sat ?M ax-choice)))
   :conclusion (holds (models-zfc ?M))
-  :derivation (mp (mp (mp (mp (mp (mp (mp (mp (mp (mp
-    (models-zfc-conj-def)
-    (assumption 0)) (assumption 1)) (assumption 2)) (assumption 3))
-    (assumption 4)) (assumption 5)) (assumption 6)) (assumption 7))
-    (assumption 8)) (assumption 9)))
+  :derivation (bic-bwd (models-zfc-bic)
+    (conj-intro (assumption 0)
+      (conj-intro (assumption 1)
+        (conj-intro (assumption 2)
+          (conj-intro (assumption 3)
+            (conj-intro (assumption 4)
+              (conj-intro (assumption 5)
+                (conj-intro (assumption 6)
+                  (conj-intro (assumption 7)
+                    (conj-intro (assumption 8) (assumption 9))))))))))))
 
 
 ;;; ════════════════════════════════════════════════════════════════════
@@ -4696,14 +4729,16 @@
 ;;;                            (abs-ext, abs-reg, abs-empty, abs-inf now DERIVED)
 ;;;   [DEF-CLOSURE]        4 — general principle (1) + 3 classifications
 ;;;                            (def-closed-sat-pair, -union, -sep now DERIVED)
-;;;   [SAT-LOGIC]          3 — satisfaction algebra
-;;;   [ZFC-MODEL]          2 — axiom extraction (models-zfc → sat individual axioms)
+;;;   [TARSKI-SEMANTICS]   2 — Tarski rewrite defs (sat-and-expand, sat-neg-expand)
+;;;                            tarski-sat-and, tarski-sat-neg are PROVED THEOREMS
+;;;   [SAT-LOGIC]          2 — models-zfc biconditional (definitional axiom) + zfc-to-sat
 ;;;   [SEMANTICS]          2 — Tarski bridge (sat axiom → element ∈ model)
 ;;;                            (models-zfc-contains-{empty,omega} now DERIVED)
 ;;;   [SOUNDNESS]          2 — model → consistency
 ;;;   [L-DEFINITION]       6 — Def operator (2) + L(M) properties (3) + def-elem-in-L (1)
 ;;;                            (L-contains-{empty,omega} now DERIVED)
-;;;   [FORCING-DEF]        3 — forcing extension definitions
+;;;   [FORCING-DEF]        3 — forcing extension defs + forces-and-expand (REWRITE DEF)
+;;;                            forces-and-bic is a PROVED THEOREM
 ;;;   [TRUTH-LEMMA]        4 — forcing semantics (inductive definition)
 ;;;                            (truth-gives-sound-forcing now DERIVED)
 ;;;   [COHEN-DEF]          2 — ffp-is-poset + cohen-is-ffp
@@ -4814,8 +4849,9 @@
 ;;;  transitive-def + ordinal-def. L-construction uses explicit Def operator.
 ;;;  Absoluteness uses general Δ₀ principles. Definable closure uses a
 ;;;  general principle + per-axiom classification. Satisfaction semantics
-;;;  bridges formulas to membership.
-;;;  236 derived lemmas + 25 proofs, all VALID."
+;;;  bridges formulas to membership. Tarski biconditionals define sat
+;;;  for conjunction and negation. Forcing conjunction is explicitly defined.
+;;;  239 derived lemmas + 25 proofs, all VALID."
 ;;; ════════════════════════════════════════════════════════════════════
 
 
@@ -4927,4 +4963,15 @@
 ;;;   ALL MULTI-PREMISE MATHEMATICAL THEOREMS NOW CONVERTED.
 ;;;   Remaining multi-premise rules: FOL logic (14), ZFC axioms (~12), definitions,
 ;;;   structural rules (witnesses, well-formedness, induction). These are GENUINE AXIOMS.
+;;;
+;;; PHASE 20: Tarski Semantics + Explicit Definitions
+;;;   Step 1: Added models-zfc-bic (definitional axiom, replaces 3 theorem-axioms).
+;;;   Step 2: Converted 3 axiomatic biconditionals to REWRITE DEFINITIONS:
+;;;     sat-and-expand: sat(M, φ∧ψ) → conj(sat(M,φ), sat(M,ψ))    [was tarski-sat-and rule]
+;;;     sat-neg-expand: sat(M, ¬φ) → neg-p(sat(M,φ))               [was tarski-sat-neg rule]
+;;;     forces-and-expand: forces(M,P,p, φ∧ψ) → conj(...)          [was forces-and-bic rule]
+;;;   3 biconditionals now PROVED THEOREMS (both sides normalize identically):
+;;;     tarski-sat-and, tarski-sat-neg, forces-and-bic
+;;;   sat-and-intro now trivially (conj-intro (assumption 0) (assumption 1)).
+;;;   Net: -3 axiomatic rules, +3 rewrite defs, +6 proved lemmas.
 ;;; ════════════════════════════════════════════════════════════════════

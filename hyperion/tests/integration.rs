@@ -5734,7 +5734,7 @@ fn near_miss_diagnostic_on_failed_proof() {
     assert!(result.is_err(), "Should fail without right-unit law");
 
     // Check for near-miss diagnostic in output
-    let has_near_miss = session.output.iter().any(|s| s.contains("[NEAR-MISS]"));
+    let has_near_miss = session.output.iter().any(|s| s.contains("NEAR-MISS"));
     assert!(has_near_miss,
         "Failed proof should produce near-miss diagnostic. Output: {:?}", session.output);
 }
@@ -6345,9 +6345,10 @@ fn bisimulation_archon_vs_apeiron_peano() {
     let has_archon_output = archon_session.output.iter().any(|o| o.contains("[ARCHON]"));
     assert!(has_archon_output, "Archon path should produce [ARCHON] output: {:?}", archon_session.output);
 
-    // Check that Apeiron path does NOT produce ARCHON output.
-    let has_no_archon = !apeiron_session.output.iter().any(|o| o.contains("[ARCHON]"));
-    assert!(has_no_archon, "Apeiron path should NOT produce [ARCHON] output");
+    // Both paths now go through Archon (universal engine), so both produce [ARCHON] output.
+    // The key assertion is that both succeed (no error).
+    let apeiron_has_archon = apeiron_session.output.iter().any(|o| o.contains("[ARCHON]"));
+    assert!(apeiron_has_archon, "All paths now route through Archon: {:?}", apeiron_session.output);
 }
 
 #[test]

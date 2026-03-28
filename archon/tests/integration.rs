@@ -1900,7 +1900,7 @@ fn saturation_bidirectional_laws_terminates() {
     let lhs = Sexp::List(vec![Sexp::Atom("add".into()), one.clone(), two.clone()]);
     let rhs = Sexp::List(vec![Sexp::Atom("add".into()), two.clone(), one.clone()]);
 
-    let fuel = SatFuel { max_iterations: 30, max_nodes: 5000, max_interactions: 50_000, enable_eta: false };
+    let fuel = SatFuel { max_iterations: 30, max_nodes: 5000, max_interactions: 50_000, enable_eta: false, skip_saturation: false };
     let result = check_equal(&lhs, &rhs, &rules, fuel);
 
     // Must terminate (not hang). Either Equal or NotEqual is acceptable,
