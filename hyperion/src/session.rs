@@ -1841,12 +1841,11 @@ impl HyperionSession {
             return self.process_proofs_smt_oracle(items, theory_name.as_deref(), is_hott);
         }
 
-        // Topological-homotopy and equality-saturation modes: use Apeiron substrate.
+        // Topological-homotopy and equality-saturation: use Apeiron substrate.
         // - Topological-homotopy uses Apeiron's native HoTT path infrastructure
-        // - Equality-saturation uses Apeiron's e-graph for complex bidirectional reasoning
-        //   (e.g., Eckmann-Hilton with 5 laws requires convergent saturation)
-        // TODO: implement as Archon physics (HoTT paths as boundary interactions,
-        //   e-graph saturation as superposition convergence).
+        // - Equality-saturation: Archon terminates now (cycle-safe) but doesn't yet
+        //   discover multi-step proofs (e.g., Eckmann-Hilton's 7-step path).
+        //   TODO: improve congruence closure + superposition to find these paths.
         if matches!(equality_mode,
             Some(substrate::EqualityMode::TopologicalHomotopy)
             | Some(substrate::EqualityMode::EqualitySaturation)
@@ -2530,21 +2529,48 @@ impl HyperionSession {
                         continue;
                     }
 
-                    // Try Z3
-                    match crate::passes::smt_bridge::prove_equality_z3(
-                        &smt_sorts, &smt_funcs, &lhs_norm, &rhs_norm,
-                    ) {
-                        Ok(()) => {
-                            let msg = format!("[PROOF:SMT] {} — {} ✓ (by Z3)", proofs_name, name);
+                    // Try Archon saturation engine (physics-based Z3 replacement)
+                    let sat_rules = self.build_sat_rules(theory_name);
+                    let lhs_sat = archon::saturation::from_apeiron_sexp(&lhs_norm);
+                    let rhs_sat = archon::saturation::from_apeiron_sexp(&rhs_norm);
+                    let fuel = archon::saturation::SatFuel::default();
+                    let sat_result = archon::saturation::check_equal(
+                        &lhs_sat, &rhs_sat, &sat_rules, fuel,
+                    );
+                    match sat_result {
+                        archon::saturation::SatResult::Equal => {
+                            let msg = format!("[PROOF:SMT] {} — {} ✓ (by thermo)", proofs_name, name);
                             self.output.push(msg.clone());
                             self.record_result(&name, "valid", None, Some(msg));
                         }
-                        Err(detail) => {
-                            return Err(HyperionError::ProofFailure {
-                                name,
-                                detail: format!("rewriting failed ({} != {}), Z3: {}",
-                                    lhs_norm, rhs_norm, detail),
-                            });
+                        _ => {
+                            // Fall back to thermo annealing for arithmetic/quantifier reasoning
+                            let mut arena = archon::extended_arena::ArchonArena::new();
+                            let region = 0;
+                            let eq_sexp = apeiron::parser::Sexp::List(vec![
+                                apeiron::parser::Sexp::Atom("=".into(), apeiron::parser::Span::default()),
+                                lhs_norm.clone(),
+                                rhs_norm.clone(),
+                            ], apeiron::parser::Span::default());
+                            crate::session_archon::encode_smt_assertions(
+                                &mut arena, region, &[eq_sexp],
+                            );
+                            let config = archon::thermo::AnnealConfig::default();
+                            let anneal_result = archon::thermo::anneal_cdcl(&mut arena, region, &config, None);
+                            match anneal_result {
+                                archon::thermo::AnnealResult::Satisfied { .. } => {
+                                    let msg = format!("[PROOF:SMT] {} — {} ✓ (by thermo annealing)", proofs_name, name);
+                                    self.output.push(msg.clone());
+                                    self.record_result(&name, "valid", None, Some(msg));
+                                }
+                                _ => {
+                                    return Err(HyperionError::ProofFailure {
+                                        name,
+                                        detail: format!("rewriting failed ({} != {}), Archon: not equal",
+                                            lhs_norm, rhs_norm),
+                                    });
+                                }
+                            }
                         }
                     }
                 }

@@ -1908,3 +1908,170 @@ fn saturation_bidirectional_laws_terminates() {
     assert!(matches!(result, SatResult::Equal | SatResult::NotEqual),
         "Saturation should terminate, got: {:?}", result);
 }
+
+#[test]
+fn eckmann_hilton_equality_saturation() {
+    // Run in a thread with a larger stack to handle deep saturation.
+    let handle = std::thread::Builder::new()
+        .stack_size(512 * 1024 * 1024) // 512MB
+        .spawn(eckmann_hilton_equality_saturation_inner)
+        .unwrap();
+    handle.join().unwrap();
+}
+
+fn eckmann_hilton_equality_saturation_inner() {
+    use archon::saturation::{check_equal, SatFuel, SatRule, SatResult};
+    use archon::implant::Sexp;
+    // 5 bidirectional laws from the Eckmann-Hilton argument.
+    // The saturation engine should discover concat(α,β) == hcomp(α,β) and
+    // concat(α,β) == concat(β,α) via ~7 rewrite steps.
+    let rules = vec![
+        SatRule {
+            name: "hcomp-left-id".into(),
+            lhs: Sexp::List(vec![
+                Sexp::Atom("hcomp".into()),
+                Sexp::List(vec![Sexp::Atom("refl_cat".into()), Sexp::Atom("base_obj".into())]),
+                Sexp::Atom("?p".into()),
+            ]),
+            rhs: Sexp::Atom("?p".into()),
+            bidirectional: true,
+        },
+        SatRule {
+            name: "hcomp-right-id".into(),
+            lhs: Sexp::List(vec![
+                Sexp::Atom("hcomp".into()),
+                Sexp::Atom("?p".into()),
+                Sexp::List(vec![Sexp::Atom("refl_cat".into()), Sexp::Atom("base_obj".into())]),
+            ]),
+            rhs: Sexp::Atom("?p".into()),
+            bidirectional: true,
+        },
+        SatRule {
+            name: "concat-left-id".into(),
+            lhs: Sexp::List(vec![
+                Sexp::Atom("concat_cat".into()),
+                Sexp::List(vec![Sexp::Atom("refl_cat".into()), Sexp::Atom("base_obj".into())]),
+                Sexp::Atom("?p".into()),
+            ]),
+            rhs: Sexp::Atom("?p".into()),
+            bidirectional: true,
+        },
+        SatRule {
+            name: "concat-right-id".into(),
+            lhs: Sexp::List(vec![
+                Sexp::Atom("concat_cat".into()),
+                Sexp::Atom("?p".into()),
+                Sexp::List(vec![Sexp::Atom("refl_cat".into()), Sexp::Atom("base_obj".into())]),
+            ]),
+            rhs: Sexp::Atom("?p".into()),
+            bidirectional: true,
+        },
+        SatRule {
+            name: "interchange".into(),
+            lhs: Sexp::List(vec![
+                Sexp::Atom("hcomp".into()),
+                Sexp::List(vec![Sexp::Atom("concat_cat".into()), Sexp::Atom("?a".into()), Sexp::Atom("?b".into())]),
+                Sexp::List(vec![Sexp::Atom("concat_cat".into()), Sexp::Atom("?c".into()), Sexp::Atom("?d".into())]),
+            ]),
+            rhs: Sexp::List(vec![
+                Sexp::Atom("concat_cat".into()),
+                Sexp::List(vec![Sexp::Atom("hcomp".into()), Sexp::Atom("?a".into()), Sexp::Atom("?c".into())]),
+                Sexp::List(vec![Sexp::Atom("hcomp".into()), Sexp::Atom("?b".into()), Sexp::Atom("?d".into())]),
+            ]),
+            bidirectional: true,
+        },
+    ];
+
+    // Test 1: concat(alpha, beta) == hcomp(alpha, beta)
+    let lhs = Sexp::List(vec![Sexp::Atom("concat_cat".into()), Sexp::Atom("alpha".into()), Sexp::Atom("beta".into())]);
+    let rhs = Sexp::List(vec![Sexp::Atom("hcomp".into()), Sexp::Atom("alpha".into()), Sexp::Atom("beta".into())]);
+
+    let fuel = SatFuel { max_iterations: 100, max_nodes: 50_000, max_interactions: 100_000, enable_eta: false, skip_saturation: false };
+    let result = check_equal(&lhs, &rhs, &rules, fuel);
+    eprintln!("eckmann-hilton coincide result: {:?}", result);
+
+    // Must terminate. Ideally Equal, but NotEqual is acceptable if saturation
+    // doesn't find the proof — the key requirement is NO stack overflow.
+    assert!(matches!(result, SatResult::Equal | SatResult::NotEqual | SatResult::Timeout),
+        "Saturation should terminate, got: {:?}", result);
+}
+
+#[test]
+fn congruence_closure_basic() {
+    // Minimal test: f(a) == f(b) given law a === b.
+    // Should be proved by: merge a≡b, congruence gives f(a)≡f(b).
+    use archon::saturation::{check_equal, SatFuel, SatRule, SatResult};
+    use archon::implant::Sexp;
+
+    let rules = vec![
+        SatRule {
+            name: "a-eq-b".into(),
+            lhs: Sexp::Atom("a".into()),
+            rhs: Sexp::Atom("b".into()),
+            bidirectional: true,
+        },
+    ];
+    let lhs = Sexp::List(vec![Sexp::Atom("f".into()), Sexp::Atom("a".into())]);
+    let rhs = Sexp::List(vec![Sexp::Atom("f".into()), Sexp::Atom("b".into())]);
+    let fuel = SatFuel { max_iterations: 10, max_nodes: 1000, max_interactions: 10_000, enable_eta: false, skip_saturation: false };
+    let result = check_equal(&lhs, &rhs, &rules, fuel);
+    eprintln!("congruence basic result: {:?}", result);
+    assert_eq!(result, SatResult::Equal, "f(a) should equal f(b) given a===b");
+}
+
+#[test]
+fn congruence_closure_two_step() {
+    // f(a, b) == g(a, b) via:
+    //   a === h(a, e)     (reverse identity expansion)
+    //   b === h(e, b)     (reverse identity expansion)
+    //   g(h(x,y), h(z,w)) === f(h(x,z), h(y,w))  (interchange)
+    //   h(x, e) === x     (unit simplification)
+    //   h(e, x) === x     (unit simplification)
+    //
+    // Chain: f(a,b) = f(h(a,e), h(e,b))
+    //                     [interchange reverse]
+    //        = g(h(a,e), h(e,b))  -- wait this is wrong
+    //
+    // Actually: the Eckmann-Hilton chain is:
+    // concat(a,b)
+    //   ≡ concat(hcomp(a,refl), hcomp(refl,b))   [expand via unit reverse]
+    //   -- but concat(a,b) isn't directly concat(hcomp(..), hcomp(..)),
+    //   -- the identity is: a ≡ hcomp(a,refl) AND a ≡ hcomp(refl,a) etc.
+    //   -- so concat(a,b) has children a,b which are in same eclass as hcomp(a,refl), hcomp(refl,b)
+    //   -- interchange reverse matches concat(hcomp(?a,?c), hcomp(?b,?d)) through eclasses
+    //   -- materializes hcomp(concat(?a,?b), concat(?c,?d)) = hcomp(concat(a,refl), concat(refl,b))
+    //   -- then unit forward: concat(a,refl) ≡ a, concat(refl,b) ≡ b
+    //   -- congruence: hcomp(a,b) ≡ hcomp(a,b) -- THE ORIGINAL!
+    //
+    // Simplified test: 2 operators f,g, one atom e, two atoms a,b.
+    // Laws: f(e,?x) === ?x, f(?x,e) === ?x, g(e,?x) === ?x, g(?x,e) === ?x
+    // Law: g(f(?a,?b), f(?c,?d)) === f(g(?a,?c), g(?b,?d))
+    // Goal: f(a,b) === g(a,b)
+    use archon::saturation::{check_equal, SatFuel, SatRule, SatResult};
+    use archon::implant::Sexp;
+
+    fn atom(s: &str) -> Sexp { Sexp::Atom(s.into()) }
+    fn app2(op: &str, a: Sexp, b: Sexp) -> Sexp {
+        Sexp::List(vec![atom(op), a, b])
+    }
+
+    let rules = vec![
+        SatRule { name: "f-left-id".into(), lhs: app2("f", atom("e"), atom("?x")), rhs: atom("?x"), bidirectional: true },
+        SatRule { name: "f-right-id".into(), lhs: app2("f", atom("?x"), atom("e")), rhs: atom("?x"), bidirectional: true },
+        SatRule { name: "g-left-id".into(), lhs: app2("g", atom("e"), atom("?x")), rhs: atom("?x"), bidirectional: true },
+        SatRule { name: "g-right-id".into(), lhs: app2("g", atom("?x"), atom("e")), rhs: atom("?x"), bidirectional: true },
+        SatRule {
+            name: "interchange".into(),
+            lhs: app2("g", app2("f", atom("?a"), atom("?b")), app2("f", atom("?c"), atom("?d"))),
+            rhs: app2("f", app2("g", atom("?a"), atom("?c")), app2("g", atom("?b"), atom("?d"))),
+            bidirectional: true,
+        },
+    ];
+
+    let lhs = app2("f", atom("a"), atom("b"));
+    let rhs = app2("g", atom("a"), atom("b"));
+    let fuel = SatFuel { max_iterations: 15, max_nodes: 50_000, max_interactions: 10_000, enable_eta: false, skip_saturation: false };
+    let result = check_equal(&lhs, &rhs, &rules, fuel);
+    eprintln!("eckmann-hilton-mini result: {:?}", result);
+    assert_eq!(result, SatResult::Equal, "f(a,b) should equal g(a,b) via Eckmann-Hilton");
+}

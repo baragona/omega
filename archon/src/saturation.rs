@@ -191,7 +191,43 @@ fn physical_equality_saturation(
     // Build initial parent index for all nodes in the arena.
     build_parent_index(&mut arena);
 
-    // Saturation loop: apply laws, run physics, propagate congruence.
+    // Debug: dump initial graph
+    {
+        let cap = arena.inner.node_capacity();
+        for idx in 0..cap {
+            let ptr = Ptr(idx as u32);
+            if let Some(node) = arena.get(ptr) {
+                let kind = format!("{:?}", node.kind);
+                let ports: Vec<String> = (0..node.kind.port_count())
+                    .map(|s| {
+                        let p = arena.inner.port(ptr, s as u8);
+                        if p.is_connected() { format!("{}:{}", p.target.0, p.slot) } else { "X".into() }
+                    })
+                    .collect();
+                eprintln!("[INIT] node={} kind={} ports=[{}]", idx, kind, ports.join(", "));
+            }
+        }
+    }
+
+    // Snapshot of original e-class roots — used to restrict bare-variable
+    // reverse matching (expansion laws like ?p => wrapper(?p)) to only bind
+    // against original terms, preventing combinatorial blowup.
+    let original_eclasses: HashSet<u32> = {
+        let cap = arena.inner.node_capacity();
+        (0..cap)
+            .filter(|&idx| {
+                let ptr = Ptr(idx as u32);
+                arena.get(ptr).is_some()
+                    && !superposition::is_superposition(&arena, ptr)
+            })
+            .map(|idx| arena.uf_find_immut(idx as u32))
+            .collect()
+    };
+
+    // Initial rebuild: register nodes in spatial index, merge duplicate atoms.
+    rebuild_to_fixpoint(&mut arena);
+
+    // Saturation loop: apply laws, rebuild, congruence closure, physics.
     let mut prev_node_count = arena.node_count();
 
     for _round in 0..fuel.max_iterations {
@@ -201,13 +237,34 @@ fn physical_equality_saturation(
         }
 
         // Apply all laws one round (graph-level pattern matching + superposition).
-        let new_supers = apply_laws_one_round_saturating(&mut arena, laws, ops);
+        // Bare-variable expansion laws (like ?p => hcomp(refl, ?p)) only run in
+        // the first 2 rounds to seed the search space, then are disabled to prevent
+        // exponential nesting of identity wrappers.
+        let new_supers = apply_laws_one_round_saturating(
+            &mut arena, laws, ops, &original_eclasses, _round,
+        );
 
-        // Register newly created nodes in spatial index (merges duplicate atoms).
-        register_new_nodes_in_spatial_index(&mut arena);
+        // Rebuild to fixpoint: populate spatial index, detect congruences,
+        // propagate merges, repeat until stable.
+        let congruence_merges = rebuild_to_fixpoint(&mut arena);
 
-        // Propagate congruence closure (the shockwave cascade).
-        let congruence_merges = superposition::propagate_congruence(&mut arena);
+        // Count e-classes
+        let cap = arena.inner.node_capacity();
+        let mut eclass_roots: HashSet<u32> = HashSet::new();
+        for idx in 0..cap {
+            if arena.get(Ptr(idx as u32)).is_some() {
+                eclass_roots.insert(arena.uf_find_immut(idx as u32));
+            }
+        }
+        let lhs_root = arena.uf_find_immut(lhs_term.0);
+        let rhs_root = arena.uf_find_immut(rhs_term.0);
+        // Count how many nodes are in each e-class
+        let lhs_members: usize = (0..cap).filter(|&i| arena.get(Ptr(i as u32)).is_some() && arena.uf_find_immut(i as u32) == lhs_root).count();
+        let rhs_members: usize = (0..cap).filter(|&i| arena.get(Ptr(i as u32)).is_some() && arena.uf_find_immut(i as u32) == rhs_root).count();
+        eprintln!("[SAT] round={} supers={} cong={} nodes={} eclasses={} spatial={} lhs_ec={}({}) rhs_ec={}({})",
+            _round, new_supers, congruence_merges, arena.node_count(),
+            eclass_roots.len(), arena.spatial_index.len(),
+            lhs_root, lhs_members, rhs_root, rhs_members);
 
         // Run a short burst of physics (beta, dup/erase propagation).
         let config = physics::ArchonConfig {
@@ -229,17 +286,12 @@ fn physical_equality_saturation(
         }
 
         // Growth rate guard: bail out if graph is growing too fast.
-        if prev_node_count > 10 && current_count > prev_node_count * 3 {
-            break;
-        }
-        // Hard cap to prevent stack overflow in readback.
-        if current_count > 5000 {
+        if prev_node_count > 100 && current_count > prev_node_count * 4 {
             break;
         }
         prev_node_count = current_count;
     }
 
-    // Final check.
     // Final check via union-find.
     if arena.uf_same(lhs_term.0, rhs_term.0) {
         return SatResult::Equal;
@@ -254,16 +306,25 @@ fn physical_equality_saturation(
 ///
 /// Deduplication: uses a set of (matched_readback, law_index, direction) to
 /// avoid re-applying the same law to structurally identical subgraphs.
+/// Check if a pattern is a bare meta-variable (e.g., `?p`).
+/// These require restricted reverse matching to avoid combinatorial blowup.
+fn is_bare_meta(sexp: &Sexp) -> bool {
+    matches!(sexp, Sexp::Atom(name) if name.starts_with('?'))
+}
+
 fn apply_laws_one_round_saturating(
     arena: &mut ArchonArena,
     laws: &[&SatRule],
     ops: &HashMap<String, u8>,
+    original_eclasses: &HashSet<u32>,
+    round: usize,
 ) -> usize {
+    // After the expansion phase (first 2 rounds), disable bare-variable
+    // reverse matching to prevent exponential identity wrapper nesting.
+    let expansion_phase = round < 2;
     let mut new_supers = 0;
     let capacity = arena.inner.node_capacity();
     // Track which (binding_e-class_roots, law_name, direction) combos we've already done.
-    // Using binding e-class roots instead of matched node readback means that
-    // two e-class members with the same bindings (up to UF) won't both get law applied.
     let mut applied: HashSet<(Vec<u32>, usize, bool)> = HashSet::new();
 
     // Match against all non-super nodes. Using BTreeSet for deterministic iteration.
@@ -276,13 +337,28 @@ fn apply_laws_one_round_saturating(
         .map(|idx| idx as u32)
         .collect();
 
+    // For bare-variable reverse matching, only match against nodes whose
+    // e-class root is in the original set. This prevents expansion laws
+    // like ?p => wrapper(?p) from firing on intermediary noise.
+    let original_nodes: BTreeSet<u32> = existing_nodes.iter()
+        .filter(|&&idx| original_eclasses.contains(&arena.uf_find_immut(idx)))
+        .copied()
+        .collect();
+
     for (law_idx, law) in laws.iter().enumerate() {
         // Forward: match LHS, materialize RHS, superpose.
-        let matches_fwd = find_pattern_matches_filtered(arena, &law.lhs, &existing_nodes);
+        // Skip bare-meta matches after expansion phase (prevents identity nesting).
+        let fwd_bare = is_bare_meta(&law.lhs);
+        let matches_fwd = if fwd_bare && !expansion_phase {
+            vec![]
+        } else {
+            let fwd_nodes = if fwd_bare { &original_nodes } else { &existing_nodes };
+            find_pattern_matches_filtered(arena, &law.lhs, fwd_nodes)
+        };
+        if !matches_fwd.is_empty() {
+            eprintln!("[MATCH-FWD] law={} matches={}", law.name, matches_fwd.len());
+        }
         for (matched_root, bindings) in &matches_fwd {
-            // Dedup by binding e-class roots: if another match bound the same
-            // variables to the same e-classes, the materialized result would be
-            // structurally identical — skip it.
             let binding_key = binding_eclass_key(arena, bindings);
             if !applied.insert((binding_key, law_idx, true)) {
                 continue;
@@ -291,12 +367,28 @@ fn apply_laws_one_round_saturating(
             if let Some(mat_root) = materialize_with_bindings(arena, &law.rhs, bindings, ops, 0) {
                 if try_superpose_new(arena, *matched_root, mat_root) {
                     new_supers += 1;
+                    if law.name.contains("interchange") {
+                        eprintln!("[LAW-FWD] {} matched node {} bindings={:?}",
+                            law.name, matched_root.0,
+                            bindings.iter().map(|(k,v)| (k.clone(), v.0)).collect::<Vec<_>>());
+                    }
                 }
             }
         }
 
         // Reverse: match RHS, materialize LHS, superpose.
-        let matches_rev = find_pattern_matches_filtered(arena, &law.rhs, &existing_nodes);
+        // When RHS is a bare meta-variable (?p), restrict to original e-classes
+        // to prevent unbounded expansion.
+        let rev_bare = is_bare_meta(&law.rhs);
+        let matches_rev = if rev_bare && !expansion_phase {
+            vec![]
+        } else {
+            let rev_nodes = if rev_bare { &original_nodes } else { &existing_nodes };
+            find_pattern_matches_filtered(arena, &law.rhs, rev_nodes)
+        };
+        if !matches_rev.is_empty() {
+            eprintln!("[MATCH-REV] law={} matches={}", law.name, matches_rev.len());
+        }
         for (matched_root, bindings) in &matches_rev {
             let binding_key = binding_eclass_key(arena, bindings);
             if !applied.insert((binding_key, law_idx, false)) {
@@ -306,6 +398,11 @@ fn apply_laws_one_round_saturating(
             if let Some(mat_root) = materialize_with_bindings(arena, &law.lhs, bindings, ops, 0) {
                 if try_superpose_new(arena, *matched_root, mat_root) {
                     new_supers += 1;
+                    if law.name.contains("interchange") {
+                        eprintln!("[LAW-REV] {} matched node {} bindings={:?}",
+                            law.name, matched_root.0,
+                            bindings.iter().map(|(k,v)| (k.clone(), v.0)).collect::<Vec<_>>());
+                    }
                 }
             }
         }
@@ -333,41 +430,35 @@ fn build_parent_index(arena: &mut ArchonArena) {
     }
 }
 
-/// Register all nodes in the spatial index with fresh signatures (clearing stale
-/// entries first), merge collisions, and propagate congruence. Processes bottom-up
-/// by arity so atom merges update UF before parent signatures are computed.
-fn register_new_nodes_in_spatial_index(arena: &mut ArchonArena) {
-    // Clear stale spatial index — UF changes invalidate old signatures.
-    arena.spatial_index.clear();
+/// Rebuild the e-graph to a fixpoint: populate spatial index, detect congruences,
+/// propagate merges, and repeat until no new merges occur.
+///
+/// This is the standard "rebuild" phase from egg-style equality saturation.
+/// It must loop because:
+/// - Populating the spatial index can discover congruences (hashcons collisions)
+/// - Congruence propagation can merge nodes, invalidating spatial index signatures
+/// - New merges may reveal further congruences in a cascade
+fn rebuild_to_fixpoint(arena: &mut ArchonArena) -> usize {
+    let mut total_merges = 0;
+    let max_rebuild_rounds = 100;
 
-    let capacity = arena.inner.node_capacity();
-    let mut by_arity: HashMap<u8, Vec<Ptr>> = HashMap::new();
-    for idx in 0..capacity {
-        let ptr = Ptr(idx as u32);
-        if let Some(node) = arena.inner.get(ptr) {
-            if !superposition::is_superposition(arena, ptr) {
-                let arity = match &node.kind {
-                    OpCode::Sym { arity, .. } => *arity,
-                    _ => 0,
-                };
-                by_arity.entry(arity).or_default().push(ptr);
-            }
-        }
-    }
+    for _rebuild_round in 0..max_rebuild_rounds {
+        eprintln!("[REBUILD] round={} queue={} nodes={}", _rebuild_round, arena.shockwave_queue.len(), arena.node_count());
+        // Step A: Clear and populate the spatial index from scratch.
+        arena.spatial_index.clear();
+        let mut round_merges = 0;
 
-    let mut arities: Vec<u8> = by_arity.keys().cloned().collect();
-    arities.sort();
-
-    for arity in arities {
-        let ptrs = match by_arity.get(&arity) {
-            Some(v) => v.clone(),
-            None => continue,
-        };
-
-        for ptr in ptrs {
+        let capacity = arena.inner.node_capacity();
+        for idx in 0..capacity {
+            let ptr = Ptr(idx as u32);
             if arena.get(ptr).is_none() {
                 continue;
             }
+            if superposition::is_superposition(arena, ptr) {
+                continue;
+            }
+
+            // Step B: Insert into spatial index; catch collisions.
             if let Some(existing) = arena.register_in_spatial_index(ptr) {
                 if arena.uf_same(existing.0, ptr.0) {
                     continue;
@@ -382,12 +473,22 @@ fn register_new_nodes_in_spatial_index(arena: &mut ArchonArena) {
                 arena.record_parent(existing, sup);
                 arena.record_parent(ptr, sup);
                 arena.shockwave_queue.push(sup);
+                round_merges += 1;
             }
         }
-        // After each arity layer, propagate congruence so UF is up-to-date
-        // for the next layer's signature computations.
-        superposition::propagate_congruence(arena);
+
+        // Step C: Drain the shockwave queue (congruence closure).
+        // propagate_congruence uses the now-fully-populated spatial index.
+        round_merges += superposition::propagate_congruence(arena);
+
+        // Step D: If no merges, the graph is canonical — done.
+        total_merges += round_merges;
+        if round_merges == 0 {
+            break;
+        }
     }
+
+    total_merges
 }
 
 /// Update parent index and spatial index after creating a superposition.
@@ -407,6 +508,14 @@ fn update_indices_after_superpose(
 
 /// Recursively record parent relationships for a newly materialized subtree.
 fn record_subtree_parents(arena: &mut ArchonArena, root: Ptr) {
+    let mut visited = HashSet::new();
+    record_subtree_parents_inner(arena, root, &mut visited);
+}
+
+fn record_subtree_parents_inner(arena: &mut ArchonArena, root: Ptr, visited: &mut HashSet<u32>) {
+    if !visited.insert(root.0) {
+        return;
+    }
     let node = match arena.inner.get(root) {
         Some(n) => n,
         None => return,
@@ -421,7 +530,7 @@ fn record_subtree_parents(arena: &mut ArchonArena, root: Ptr) {
         }
     }
     for child in children {
-        record_subtree_parents(arena, child);
+        record_subtree_parents_inner(arena, child, visited);
     }
 }
 
@@ -636,12 +745,19 @@ fn ac_rebuild(op: &str, children: &[Sexp]) -> Sexp {
     match children.len() {
         0 => unreachable!(),
         1 => children[0].clone(),
-        2 => Sexp::List(vec![Sexp::Atom(op.into()), children[0].clone(), children[1].clone()]),
-        _ => Sexp::List(vec![
-            Sexp::Atom(op.into()),
-            children[0].clone(),
-            ac_rebuild(op, &children[1..]),
-        ]),
+        _ => {
+            // Build right-associated tree iteratively to avoid stack overflow
+            // on large flattened lists.
+            let mut result = children[children.len() - 1].clone();
+            for i in (0..children.len() - 1).rev() {
+                result = Sexp::List(vec![
+                    Sexp::Atom(op.into()),
+                    children[i].clone(),
+                    result,
+                ]);
+            }
+            result
+        }
     }
 }
 
@@ -711,9 +827,11 @@ fn run_physics_rewrite_loop(
     enable_eta: bool,
 ) {
     let mut total_interactions = 0u64;
+    let max_rewrites = max_interactions; // Secondary fuel for non-physics steps.
+    let mut total_rewrites = 0u64;
 
     loop {
-        if total_interactions >= max_interactions {
+        if total_interactions >= max_interactions || total_rewrites >= max_rewrites {
             break;
         }
 
@@ -740,6 +858,11 @@ fn run_physics_rewrite_loop(
         } else {
             false
         };
+
+        // Count non-physics work toward fuel to prevent infinite rewrite loops.
+        if rewrite_fired || eta_fired {
+            total_rewrites += 1;
+        }
 
         // If nothing made progress, we've hit fixpoint.
         if !physics_did_work && !rewrite_fired && !eta_fired {
@@ -802,6 +925,14 @@ fn try_eta_scan(arena: &mut apeiron::arena::Arena) -> bool {
                     lam_principal.target, lam_principal.slot,
                     app_function.target, app_function.slot,
                 );
+            } else if lam_principal.is_connected() {
+                // App function not connected — erase the dangling lam peer.
+                let era = arena.spawn(OpCode::Erase);
+                arena.connect(lam_principal.target, lam_principal.slot, era, 0);
+            } else if app_function.is_connected() {
+                // Lam principal not connected — erase the dangling app function peer.
+                let era = arena.spawn(OpCode::Erase);
+                arena.connect(app_function.target, app_function.slot, era, 0);
             }
             arena.free(ptr);
             arena.free(body_target);
@@ -857,20 +988,8 @@ fn try_superpose_new(
     // Register the materialized subtree's parents.
     record_subtree_parents(arena, mat_root);
 
-    // Register in spatial index bottom-up to merge duplicate atoms/ops.
-    // This may merge mat_root into matched_root's e-class via congruence.
-    register_new_nodes_in_spatial_index(arena);
-
-    // After registration + congruence, check if already merged.
+    // Quick check: if already in same e-class, skip.
     if arena.uf_same(matched_root.0, mat_root.0) {
-        return false;
-    }
-
-    // Also check readback identity (handles cases spatial index misses).
-    let match_sexp = readback_clean(arena, matched_root, 100);
-    let mat_sexp = readback_clean(arena, mat_root, 100);
-    if mat_sexp == match_sexp {
-        arena.free(mat_root);
         return false;
     }
 
@@ -896,6 +1015,8 @@ fn binding_eclass_key(arena: &ArchonArena, bindings: &HashMap<String, Ptr>) -> V
 }
 
 /// Find pattern matches, but only scan nodes in the given set.
+/// Returns ALL valid binding sets per starting node (multiple e-class peers
+/// at any depth can produce different bindings that lead to different materializations).
 fn find_pattern_matches_filtered(
     arena: &ArchonArena,
     pattern: &Sexp,
@@ -909,8 +1030,9 @@ fn find_pattern_matches_filtered(
             continue;
         }
 
-        let mut bindings = HashMap::new();
-        if match_pattern(arena, ptr, pattern, &mut bindings) {
+        // Collect ALL valid binding sets for this node.
+        let all_bindings = match_pattern_all_bindings(arena, ptr, pattern, 64);
+        for bindings in all_bindings {
             results.push((ptr, bindings));
         }
     }
@@ -965,68 +1087,183 @@ fn resolve_through_super(arena: &ArchonArena, mut ptr: Ptr) -> Ptr {
 }
 
 /// Try to match a pattern S-expression against a subgraph rooted at `ptr`.
-fn match_pattern(
+/// E-class aware: when ptr doesn't directly match, tries all e-class members
+/// that share the same union-find root, enabling pattern matching through
+/// superposition nodes.
+/// Multi-valued e-class-aware pattern matching: returns ALL valid binding sets
+/// for matching `pattern` against `ptr`'s e-class. Different e-class peers at
+/// any depth can produce different bindings that lead to distinct materializations.
+fn match_pattern_all_bindings(
     arena: &ArchonArena,
     ptr: Ptr,
     pattern: &Sexp,
-    bindings: &mut HashMap<String, Ptr>,
-) -> bool {
+    depth: usize,
+) -> Vec<HashMap<String, Ptr>> {
+    if depth == 0 { return vec![]; }
+
+    let mut results = Vec::new();
+
+    // Collect all candidate nodes: ptr itself + e-class peers with matching head.
+    let mut candidates = vec![ptr];
+    if let Sexp::List(items) = pattern {
+        if let Some(Sexp::Atom(head)) = items.first() {
+            if !head.starts_with('?') {
+                let root = arena.uf_find_immut(ptr.0);
+                let cap = arena.inner.node_capacity();
+                for idx in 0..cap {
+                    let peer = Ptr(idx as u32);
+                    if peer == ptr { continue; }
+                    if arena.get(peer).is_none() { continue; }
+                    if superposition::is_superposition(arena, peer) { continue; }
+                    if arena.uf_find_immut(peer.0) != root { continue; }
+                    candidates.push(peer);
+                }
+            }
+        }
+    }
+
+    for candidate in candidates {
+        let new_bindings = match_direct_all(arena, candidate, pattern, &HashMap::new(), depth);
+        results.extend(new_bindings);
+    }
+
+    results
+}
+
+/// Direct pattern match against a specific node, returning ALL valid binding sets.
+/// For compound patterns, enumerates all combinations of child binding sets.
+fn match_direct_all(
+    arena: &ArchonArena,
+    ptr: Ptr,
+    pattern: &Sexp,
+    base_bindings: &HashMap<String, Ptr>,
+    depth: usize,
+) -> Vec<HashMap<String, Ptr>> {
+    if depth == 0 { return vec![]; }
     let node = match arena.get(ptr) {
         Some(n) => n,
-        None => return false,
+        None => return vec![],
     };
 
     match pattern {
         Sexp::Atom(name) => {
             if name.starts_with('?') {
-                if let Some(&bound) = bindings.get(name.as_str()) {
-                    bound == ptr
+                if let Some(&bound) = base_bindings.get(name.as_str()) {
+                    if arena.uf_find_immut(bound.0) == arena.uf_find_immut(ptr.0) {
+                        vec![base_bindings.clone()]
+                    } else {
+                        vec![]
+                    }
                 } else {
-                    bindings.insert(name.clone(), ptr);
-                    true
+                    let mut b = base_bindings.clone();
+                    b.insert(name.clone(), ptr);
+                    vec![b]
                 }
             } else {
-                matches!(&node.kind, OpCode::Sym { name: n, arity: 0 } if n == name)
+                if matches!(&node.kind, OpCode::Sym { name: n, arity: 0 } if n == name) {
+                    vec![base_bindings.clone()]
+                } else {
+                    vec![]
+                }
             }
         }
         Sexp::List(items) => {
             if items.is_empty() {
-                return false;
+                return vec![];
             }
             let head = match &items[0] {
                 Sexp::Atom(name) => name.as_str(),
-                _ => return false,
+                _ => return vec![],
             };
 
             let (node_name, node_arity) = match &node.kind {
                 OpCode::Sym { name, arity } => (name.as_str(), *arity as usize),
                 OpCode::App => ("app", 2),
                 OpCode::Lam => ("lam", 2),
-                _ => return false,
+                _ => return vec![],
             };
 
             if head != node_name {
-                return false;
+                return vec![];
             }
 
             let args = &items[1..];
             if args.len() != node_arity {
-                return false;
+                return vec![];
             }
+
+            // For each child, recursively collect all binding sets,
+            // then take the Cartesian product across children.
+            let mut current_binding_sets = vec![base_bindings.clone()];
 
             for (i, arg_pat) in args.iter().enumerate() {
                 let port = arena.port(ptr, (i + 1) as u8);
                 if !port.is_connected() {
-                    return false;
+                    return vec![];
                 }
-                if !match_pattern(arena, port.target, arg_pat, bindings) {
-                    return false;
+
+                let mut next_binding_sets = Vec::new();
+                for bs in &current_binding_sets {
+                    // Get all binding sets for this child, starting from current bindings.
+                    let child_results = match_child_all(arena, port.target, arg_pat, bs, depth - 1);
+                    next_binding_sets.extend(child_results);
+                }
+                current_binding_sets = next_binding_sets;
+                if current_binding_sets.is_empty() {
+                    return vec![];
+                }
+                // Cap combinatorial explosion.
+                if current_binding_sets.len() > 32 {
+                    current_binding_sets.truncate(8);
                 }
             }
 
-            true
+            current_binding_sets
         }
     }
+}
+
+/// Match a child node against a pattern, considering all e-class peers.
+/// Returns all valid binding sets (extending `base_bindings`).
+fn match_child_all(
+    arena: &ArchonArena,
+    ptr: Ptr,
+    pattern: &Sexp,
+    base_bindings: &HashMap<String, Ptr>,
+    depth: usize,
+) -> Vec<HashMap<String, Ptr>> {
+    if depth == 0 { return vec![]; }
+
+    let mut results = Vec::new();
+
+    // Direct match.
+    results.extend(match_direct_all(arena, ptr, pattern, base_bindings, depth));
+
+    // E-class peer matches (for compound patterns).
+    if let Sexp::List(items) = pattern {
+        if let Some(Sexp::Atom(head)) = items.first() {
+            if !head.starts_with('?') {
+                let root = arena.uf_find_immut(ptr.0);
+                let cap = arena.inner.node_capacity();
+                for idx in 0..cap {
+                    let peer = Ptr(idx as u32);
+                    if peer == ptr { continue; }
+                    if arena.get(peer).is_none() { continue; }
+                    if superposition::is_superposition(arena, peer) { continue; }
+                    if arena.uf_find_immut(peer.0) != root { continue; }
+
+                    results.extend(match_direct_all(arena, peer, pattern, base_bindings, depth));
+                }
+            }
+        }
+    }
+
+    // Cap results to prevent combinatorial explosion.
+    if results.len() > 32 {
+        results.truncate(8);
+    }
+
+    results
 }
 
 /// Materialize an S-expression template with meta-variable bindings.
@@ -1085,7 +1322,23 @@ fn materialize_with_bindings(
 }
 
 /// Clone a subgraph rooted at `ptr`, creating fresh nodes with the same structure.
+/// Uses a visited map to handle cycles in the interaction net graph.
 fn clone_subgraph(arena: &mut ArchonArena, ptr: Ptr, ops: &HashMap<String, u8>, region: u32) -> Ptr {
+    let mut visited: HashMap<u32, Ptr> = HashMap::new();
+    clone_subgraph_inner(arena, ptr, ops, region, &mut visited)
+}
+
+fn clone_subgraph_inner(
+    arena: &mut ArchonArena,
+    ptr: Ptr,
+    ops: &HashMap<String, u8>,
+    region: u32,
+    visited: &mut HashMap<u32, Ptr>,
+) -> Ptr {
+    if let Some(&already) = visited.get(&ptr.0) {
+        return already;
+    }
+
     let node = match arena.get(ptr) {
         Some(n) => n,
         None => return arena.spawn_in(OpCode::Sym { name: "_dead".into(), arity: 0 }, region),
@@ -1093,6 +1346,7 @@ fn clone_subgraph(arena: &mut ArchonArena, ptr: Ptr, ops: &HashMap<String, u8>, 
     let kind = node.kind.clone();
     let port_count = kind.port_count();
     let new_node = arena.spawn_in(kind, region);
+    visited.insert(ptr.0, new_node);
 
     // Recursively clone children (aux ports, skip principal port 0).
     for slot in 1..port_count {
@@ -1100,11 +1354,9 @@ fn clone_subgraph(arena: &mut ArchonArena, ptr: Ptr, ops: &HashMap<String, u8>, 
         if port.is_connected() {
             // Skip if child is a Superposition (don't clone e-class hubs).
             if superposition::is_superposition(arena, port.target) {
-                // Connect to the superposition directly (shared).
-                // This is safe because we connect to a non-principal port.
                 continue;
             }
-            let child_clone = clone_subgraph(arena, port.target, ops, region);
+            let child_clone = clone_subgraph_inner(arena, port.target, ops, region, visited);
             arena.connect(new_node, slot as u8, child_clone, 0);
         }
     }

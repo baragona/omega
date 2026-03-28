@@ -4560,7 +4560,7 @@ fn smt_oracle_rewriting_proofs() {
 
 #[test]
 fn smt_oracle_z3_proves_uninterpreted_equality() {
-    // Z3 proves x = x for uninterpreted sort — pure SMT, no rewriting
+    // Thermo engine proves x = x for uninterpreted sort (no Z3 dependency)
     let mut session = HyperionSession::new();
     let input = r#"
         [Category UF [Object S]
@@ -4572,21 +4572,34 @@ fn smt_oracle_z3_proves_uninterpreted_equality() {
           [assert-eq reflexive a a]
         ]
     "#;
-    let result = process_all(&mut session, input);
-    // If Z3 is available, it should prove a = a (unsat on negation)
-    // If Z3 is not available, it will fail with an error — that's OK
-    match result {
-        Ok(()) => {
-            let output = session.output.join("\n");
-            assert!(output.contains("[PROOF:SMT]"), "Output: {}", output);
-        }
-        Err(e) => {
-            let msg = format!("{}", e);
-            // Z3 not available is acceptable
-            assert!(msg.contains("Z3") || msg.contains("z3") || msg.contains("spawn"),
-                "Unexpected error: {}", msg);
-        }
-    }
+    process_all(&mut session, input).unwrap();
+    let output = session.output.join("\n");
+    assert!(output.contains("[PROOF:SMT]"), "Output: {}", output);
+    // a=a is trivially equal by rewriting; thermo is fallback for harder cases
+}
+
+#[test]
+fn smt_oracle_thermo_replaces_z3() {
+    // Thermo engine proves equality that requires rule application (not just string comparison)
+    let mut session = HyperionSession::new();
+    let input = r#"
+        [Category Arith2 [Object Nat] [Object Prop]
+          [Morphism plus :domain [Nat Nat] :codomain Nat]
+          [Morphism succ :domain [Nat] :codomain Nat]
+          [Morphism eq-nat :domain [Nat Nat] :codomain Prop]
+        ]
+        [Universe SMTWorld2 :category Arith2 :substrate SMTBackend]
+        [Theory SMTArith2 :in SMTWorld2
+          [@rule plus-zero [plus zero ?n] ==> ?n]
+          [@rule plus-succ [plus [succ ?m] ?n] ==> [succ [plus ?m ?n]]]
+        ]
+        [Proofs SMTTest2 :in SMTArith2
+          [assert-eq commute-base [plus zero [succ zero]] [succ [plus zero zero]]]
+        ]
+    "#;
+    process_all(&mut session, input).unwrap();
+    let output = session.output.join("\n");
+    assert!(output.contains("[PROOF:SMT]"), "Output: {}", output);
 }
 
 #[test]
