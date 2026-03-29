@@ -62,6 +62,9 @@ pub struct ArchonArena {
     /// Parent index: node → set of nodes that reference it as a child (via aux ports).
     /// Enables upward traversal for congruence propagation.
     pub parent_index: HashMap<u32, HashSet<u32>>,
+    /// Inverted e-class index: UF root → member node indices.
+    /// Rebuilt after each round's merges settle.
+    pub eclass_index: HashMap<u32, Vec<u32>>,
 }
 
 /// A structural fingerprint of a node based on its opcode and child e-class roots.
@@ -101,6 +104,7 @@ impl ArchonArena {
             spatial_index: HashMap::new(),
             shockwave_queue: Vec::new(),
             parent_index: HashMap::new(),
+            eclass_index: HashMap::new(),
         }
     }
 
@@ -403,6 +407,27 @@ impl ArchonArena {
     /// Find the e-class root for a node via the union-find.
     pub fn find_eclass_root(&self, ptr: Ptr) -> Ptr {
         Ptr(self.uf_find_immut(ptr.0))
+    }
+
+    /// Rebuild the inverted e-class index from scratch.
+    pub fn rebuild_eclass_index(&mut self) {
+        self.eclass_index.clear();
+        let cap = self.inner.node_capacity();
+        for idx in 0..cap {
+            let ptr = Ptr(idx as u32);
+            if self.inner.get(ptr).is_some() {
+                let root = self.uf_find_immut(idx as u32);
+                self.eclass_index.entry(root).or_default().push(idx as u32);
+            }
+        }
+    }
+
+    /// O(1) lookup of all member node indices for a given UF root.
+    pub fn eclass_members_by_root(&self, root: u32) -> &[u32] {
+        match self.eclass_index.get(&root) {
+            Some(v) => v.as_slice(),
+            None => &[],
+        }
     }
 }
 

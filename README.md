@@ -37,6 +37,7 @@ Four layers, each a conservative extension of the one below. Every layer adds a 
 |:------|:-------|:---------|:-------|
 | 0 | **Omega** | How do we write proofs? | ~7,400 LOC Rust, zero deps |
 | 1 | **Apeiron** | How do we run them on interaction nets? | ~6,000 LOC Rust, 1 dep (egg) |
+| 1.5 | **Archon** | How do we physicalize proof search? | Topological field theory — regions, radiation, thermo annealing, equality saturation |
 | 2 | **Hyperion** | How do we decouple math from physics? | ~7,600 LOC Rust — categories + substrates + compilation passes + CatLab + e-graphs |
 | 3 | **Metacosm** | How do we reason about moving between worlds? | Typed epistemic profiles + tactic prover |
 
@@ -216,6 +217,36 @@ Categories and substrates are just data. Nothing stops you from defining a categ
 ```
 
 70 examples spanning CatLab cubical types, compilation passes, distributed actors, Eckmann-Hilton, algebraic handlers, reflective tactics, HoTT transport, and adversarial stress tests. See [`hyperion/README.md`](hyperion/README.md).
+
+---
+
+## Archon
+
+**Topological field theory engine.** Physicalizes Hyperion's compilation passes as membrane boundary interactions. Where Apeiron provides optimal-sharing interaction nets, Archon adds the physics layer: regions with resource modes, radiation-based variable tracking, thermodynamic annealing for SAT/SMT, and equality saturation via superposition particles.
+
+### Key Capabilities
+
+- **Equality saturation** via graph-level superposition particles + congruence closure — proves the Eckmann-Hilton argument (the "final boss" of e-graph implementations)
+- **Thermodynamic annealing** (CDCL + simulated annealing) for SAT/SMT proof obligations
+- **Region-aware physics**: strictly linear, affine, and optimal-sharing resource modes per membrane
+- **Radiation tracking**: topological variable-scope propagation via gauge fields
+- **Fixpoint rebuild**: egg-style hashcons + congruence cascade loop, order-independent across rebuild rounds
+
+### Architecture Invariants
+
+The equality saturation engine has several non-obvious invariants discovered through hard debugging. **If you are modifying the saturation code, read these first:**
+
+1. **Fixpoint rebuild, not layered-arity rebuild.** You cannot interleave spatial index construction and congruence propagation in a single unidirectional pass. The correct algorithm is: clear spatial index → register ALL nodes → drain congruence queue → repeat until no new merges. This is `rebuild_to_fixpoint()`.
+
+2. **O(N) arena scans in pattern matching are load-bearing.** The pattern matcher (`match_pattern_all_bindings`, `match_child_all`) scans all arena nodes with live `uf_find_immut` calls. This is O(N) per match but **cannot be replaced with a pre-built inverted e-class index** because intra-round law application creates UF unions that later laws in the same round must see. A pre-built index goes stale the moment `try_superpose_new` fires. To fix this, you would need to incrementally update the index on every `uf_union` call.
+
+3. **Expansion phase scheduling prevents the E-Graph Death Spiral.** Bare-variable reverse laws (`?p => wrapper(?p)`) only fire during the first N rounds (`expansion_rounds` on `SatFuel`). Without this, reverse-identity laws create exponentially nested wrappers that starve the engine.
+
+4. **Multi-valued pattern matching is required for Eckmann-Hilton.** Single-valued matching (returning only the first binding set) produces tautological bindings where the materialized result simplifies back to the starting term. The Cartesian product over e-class peers at each child position is what finds the productive bindings. The cap (currently 8 per child) is a pragmatic bound on this combinatorial search.
+
+5. **Law ordering within a round is NOT independent.** Because laws mutate the arena inline (not read-then-write), later laws see peers created by earlier laws. This is currently relied upon for convergence. A true read/write phase separation requires either (a) incrementally-updated e-class index, or (b) iterative micro-rounds with rebuild between each.
+
+106 tests (61 unit + 45 integration).
 
 ---
 

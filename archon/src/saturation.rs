@@ -50,6 +50,8 @@ pub struct SatFuel {
     /// Skip physical equality saturation (bidirectional law application).
     /// Used for rewrite-equivalence mode where only directed reduction applies.
     pub skip_saturation: bool,
+    /// Number of initial rounds where bare-variable expansion laws are allowed.
+    pub expansion_rounds: usize,
 }
 
 impl Default for SatFuel {
@@ -60,6 +62,7 @@ impl Default for SatFuel {
             max_interactions: 100_000,
             enable_eta: true,
             skip_saturation: false,
+            expansion_rounds: 2,
         }
     }
 }
@@ -191,24 +194,6 @@ fn physical_equality_saturation(
     // Build initial parent index for all nodes in the arena.
     build_parent_index(&mut arena);
 
-    // Debug: dump initial graph
-    {
-        let cap = arena.inner.node_capacity();
-        for idx in 0..cap {
-            let ptr = Ptr(idx as u32);
-            if let Some(node) = arena.get(ptr) {
-                let kind = format!("{:?}", node.kind);
-                let ports: Vec<String> = (0..node.kind.port_count())
-                    .map(|s| {
-                        let p = arena.inner.port(ptr, s as u8);
-                        if p.is_connected() { format!("{}:{}", p.target.0, p.slot) } else { "X".into() }
-                    })
-                    .collect();
-                eprintln!("[INIT] node={} kind={} ports=[{}]", idx, kind, ports.join(", "));
-            }
-        }
-    }
-
     // Snapshot of original e-class roots — used to restrict bare-variable
     // reverse matching (expansion laws like ?p => wrapper(?p)) to only bind
     // against original terms, preventing combinatorial blowup.
@@ -228,8 +213,6 @@ fn physical_equality_saturation(
     rebuild_to_fixpoint(&mut arena);
 
     // Saturation loop: apply laws, rebuild, congruence closure, physics.
-    let mut prev_node_count = arena.node_count();
-
     for _round in 0..fuel.max_iterations {
         // Check if LHS and RHS are in the same e-class (via union-find).
         if arena.uf_same(lhs_term.0, rhs_term.0) {
@@ -241,30 +224,13 @@ fn physical_equality_saturation(
         // the first 2 rounds to seed the search space, then are disabled to prevent
         // exponential nesting of identity wrappers.
         let new_supers = apply_laws_one_round_saturating(
-            &mut arena, laws, ops, &original_eclasses, _round,
+            &mut arena, laws, ops, &original_eclasses, _round, fuel,
         );
 
         // Rebuild to fixpoint: populate spatial index, detect congruences,
         // propagate merges, repeat until stable.
         let congruence_merges = rebuild_to_fixpoint(&mut arena);
 
-        // Count e-classes
-        let cap = arena.inner.node_capacity();
-        let mut eclass_roots: HashSet<u32> = HashSet::new();
-        for idx in 0..cap {
-            if arena.get(Ptr(idx as u32)).is_some() {
-                eclass_roots.insert(arena.uf_find_immut(idx as u32));
-            }
-        }
-        let lhs_root = arena.uf_find_immut(lhs_term.0);
-        let rhs_root = arena.uf_find_immut(rhs_term.0);
-        // Count how many nodes are in each e-class
-        let lhs_members: usize = (0..cap).filter(|&i| arena.get(Ptr(i as u32)).is_some() && arena.uf_find_immut(i as u32) == lhs_root).count();
-        let rhs_members: usize = (0..cap).filter(|&i| arena.get(Ptr(i as u32)).is_some() && arena.uf_find_immut(i as u32) == rhs_root).count();
-        eprintln!("[SAT] round={} supers={} cong={} nodes={} eclasses={} spatial={} lhs_ec={}({}) rhs_ec={}({})",
-            _round, new_supers, congruence_merges, arena.node_count(),
-            eclass_roots.len(), arena.spatial_index.len(),
-            lhs_root, lhs_members, rhs_root, rhs_members);
 
         // Run a short burst of physics (beta, dup/erase propagation).
         let config = physics::ArchonConfig {
@@ -280,16 +246,9 @@ fn physical_equality_saturation(
         }
 
         // Node count guard: absolute cap.
-        let current_count = arena.node_count();
-        if current_count > fuel.max_nodes {
+        if arena.node_count() > fuel.max_nodes {
             break;
         }
-
-        // Growth rate guard: bail out if graph is growing too fast.
-        if prev_node_count > 100 && current_count > prev_node_count * 4 {
-            break;
-        }
-        prev_node_count = current_count;
     }
 
     // Final check via union-find.
@@ -318,10 +277,11 @@ fn apply_laws_one_round_saturating(
     ops: &HashMap<String, u8>,
     original_eclasses: &HashSet<u32>,
     round: usize,
+    fuel: &SatFuel,
 ) -> usize {
-    // After the expansion phase (first 2 rounds), disable bare-variable
-    // reverse matching to prevent exponential identity wrapper nesting.
-    let expansion_phase = round < 2;
+    // After the expansion phase, disable bare-variable reverse matching
+    // to prevent exponential identity wrapper nesting.
+    let expansion_phase = round < fuel.expansion_rounds;
     let mut new_supers = 0;
     let capacity = arena.inner.node_capacity();
     // Track which (binding_e-class_roots, law_name, direction) combos we've already done.
@@ -338,8 +298,7 @@ fn apply_laws_one_round_saturating(
         .collect();
 
     // For bare-variable reverse matching, only match against nodes whose
-    // e-class root is in the original set. This prevents expansion laws
-    // like ?p => wrapper(?p) from firing on intermediary noise.
+    // e-class root is in the original set.
     let original_nodes: BTreeSet<u32> = existing_nodes.iter()
         .filter(|&&idx| original_eclasses.contains(&arena.uf_find_immut(idx)))
         .copied()
@@ -347,7 +306,6 @@ fn apply_laws_one_round_saturating(
 
     for (law_idx, law) in laws.iter().enumerate() {
         // Forward: match LHS, materialize RHS, superpose.
-        // Skip bare-meta matches after expansion phase (prevents identity nesting).
         let fwd_bare = is_bare_meta(&law.lhs);
         let matches_fwd = if fwd_bare && !expansion_phase {
             vec![]
@@ -355,30 +313,19 @@ fn apply_laws_one_round_saturating(
             let fwd_nodes = if fwd_bare { &original_nodes } else { &existing_nodes };
             find_pattern_matches_filtered(arena, &law.lhs, fwd_nodes)
         };
-        if !matches_fwd.is_empty() {
-            eprintln!("[MATCH-FWD] law={} matches={}", law.name, matches_fwd.len());
-        }
         for (matched_root, bindings) in &matches_fwd {
             let binding_key = binding_eclass_key(arena, bindings);
             if !applied.insert((binding_key, law_idx, true)) {
                 continue;
             }
-
             if let Some(mat_root) = materialize_with_bindings(arena, &law.rhs, bindings, ops, 0) {
                 if try_superpose_new(arena, *matched_root, mat_root) {
                     new_supers += 1;
-                    if law.name.contains("interchange") {
-                        eprintln!("[LAW-FWD] {} matched node {} bindings={:?}",
-                            law.name, matched_root.0,
-                            bindings.iter().map(|(k,v)| (k.clone(), v.0)).collect::<Vec<_>>());
-                    }
                 }
             }
         }
 
         // Reverse: match RHS, materialize LHS, superpose.
-        // When RHS is a bare meta-variable (?p), restrict to original e-classes
-        // to prevent unbounded expansion.
         let rev_bare = is_bare_meta(&law.rhs);
         let matches_rev = if rev_bare && !expansion_phase {
             vec![]
@@ -386,23 +333,14 @@ fn apply_laws_one_round_saturating(
             let rev_nodes = if rev_bare { &original_nodes } else { &existing_nodes };
             find_pattern_matches_filtered(arena, &law.rhs, rev_nodes)
         };
-        if !matches_rev.is_empty() {
-            eprintln!("[MATCH-REV] law={} matches={}", law.name, matches_rev.len());
-        }
         for (matched_root, bindings) in &matches_rev {
             let binding_key = binding_eclass_key(arena, bindings);
             if !applied.insert((binding_key, law_idx, false)) {
                 continue;
             }
-
             if let Some(mat_root) = materialize_with_bindings(arena, &law.lhs, bindings, ops, 0) {
                 if try_superpose_new(arena, *matched_root, mat_root) {
                     new_supers += 1;
-                    if law.name.contains("interchange") {
-                        eprintln!("[LAW-REV] {} matched node {} bindings={:?}",
-                            law.name, matched_root.0,
-                            bindings.iter().map(|(k,v)| (k.clone(), v.0)).collect::<Vec<_>>());
-                    }
                 }
             }
         }
@@ -443,7 +381,6 @@ fn rebuild_to_fixpoint(arena: &mut ArchonArena) -> usize {
     let max_rebuild_rounds = 100;
 
     for _rebuild_round in 0..max_rebuild_rounds {
-        eprintln!("[REBUILD] round={} queue={} nodes={}", _rebuild_round, arena.shockwave_queue.len(), arena.node_count());
         // Step A: Clear and populate the spatial index from scratch.
         arena.spatial_index.clear();
         let mut round_merges = 0;
@@ -481,7 +418,10 @@ fn rebuild_to_fixpoint(arena: &mut ArchonArena) -> usize {
         // propagate_congruence uses the now-fully-populated spatial index.
         round_merges += superposition::propagate_congruence(arena);
 
-        // Step D: If no merges, the graph is canonical — done.
+        // Step D: Rebuild the inverted e-class index after merges settle.
+        arena.rebuild_eclass_index();
+
+        // Step E: If no merges, the graph is canonical — done.
         total_merges += round_merges;
         if round_merges == 0 {
             break;
@@ -1213,7 +1153,7 @@ fn match_direct_all(
                     return vec![];
                 }
                 // Cap combinatorial explosion.
-                if current_binding_sets.len() > 32 {
+                if current_binding_sets.len() > 8 {
                     current_binding_sets.truncate(8);
                 }
             }
@@ -1259,7 +1199,7 @@ fn match_child_all(
     }
 
     // Cap results to prevent combinatorial explosion.
-    if results.len() > 32 {
+    if results.len() > 8 {
         results.truncate(8);
     }
 

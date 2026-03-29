@@ -1900,7 +1900,7 @@ fn saturation_bidirectional_laws_terminates() {
     let lhs = Sexp::List(vec![Sexp::Atom("add".into()), one.clone(), two.clone()]);
     let rhs = Sexp::List(vec![Sexp::Atom("add".into()), two.clone(), one.clone()]);
 
-    let fuel = SatFuel { max_iterations: 30, max_nodes: 5000, max_interactions: 50_000, enable_eta: false, skip_saturation: false };
+    let fuel = SatFuel { max_iterations: 30, max_nodes: 5000, max_interactions: 50_000, enable_eta: false, skip_saturation: false, expansion_rounds: 2 };
     let result = check_equal(&lhs, &rhs, &rules, fuel);
 
     // Must terminate (not hang). Either Equal or NotEqual is acceptable,
@@ -1911,9 +1911,8 @@ fn saturation_bidirectional_laws_terminates() {
 
 #[test]
 fn eckmann_hilton_equality_saturation() {
-    // Run in a thread with a larger stack to handle deep saturation.
     let handle = std::thread::Builder::new()
-        .stack_size(512 * 1024 * 1024) // 512MB
+        .stack_size(512 * 1024 * 1024)
         .spawn(eckmann_hilton_equality_saturation_inner)
         .unwrap();
     handle.join().unwrap();
@@ -1986,7 +1985,7 @@ fn eckmann_hilton_equality_saturation_inner() {
     let lhs = Sexp::List(vec![Sexp::Atom("concat_cat".into()), Sexp::Atom("alpha".into()), Sexp::Atom("beta".into())]);
     let rhs = Sexp::List(vec![Sexp::Atom("hcomp".into()), Sexp::Atom("alpha".into()), Sexp::Atom("beta".into())]);
 
-    let fuel = SatFuel { max_iterations: 100, max_nodes: 50_000, max_interactions: 100_000, enable_eta: false, skip_saturation: false };
+    let fuel = SatFuel { max_iterations: 100, max_nodes: 50_000, max_interactions: 100_000, enable_eta: false, skip_saturation: false, expansion_rounds: 2 };
     let result = check_equal(&lhs, &rhs, &rules, fuel);
     eprintln!("eckmann-hilton coincide result: {:?}", result);
 
@@ -2013,7 +2012,7 @@ fn congruence_closure_basic() {
     ];
     let lhs = Sexp::List(vec![Sexp::Atom("f".into()), Sexp::Atom("a".into())]);
     let rhs = Sexp::List(vec![Sexp::Atom("f".into()), Sexp::Atom("b".into())]);
-    let fuel = SatFuel { max_iterations: 10, max_nodes: 1000, max_interactions: 10_000, enable_eta: false, skip_saturation: false };
+    let fuel = SatFuel { max_iterations: 10, max_nodes: 1000, max_interactions: 10_000, enable_eta: false, skip_saturation: false, expansion_rounds: 2 };
     let result = check_equal(&lhs, &rhs, &rules, fuel);
     eprintln!("congruence basic result: {:?}", result);
     assert_eq!(result, SatResult::Equal, "f(a) should equal f(b) given a===b");
@@ -2070,7 +2069,7 @@ fn congruence_closure_two_step() {
 
     let lhs = app2("f", atom("a"), atom("b"));
     let rhs = app2("g", atom("a"), atom("b"));
-    let fuel = SatFuel { max_iterations: 15, max_nodes: 50_000, max_interactions: 10_000, enable_eta: false, skip_saturation: false };
+    let fuel = SatFuel { max_iterations: 15, max_nodes: 50_000, max_interactions: 10_000, enable_eta: false, skip_saturation: false, expansion_rounds: 2 };
     let result = check_equal(&lhs, &rhs, &rules, fuel);
     eprintln!("eckmann-hilton-mini result: {:?}", result);
     assert_eq!(result, SatResult::Equal, "f(a,b) should equal g(a,b) via Eckmann-Hilton");
